@@ -147,3 +147,6 @@ CONFIG_PACKAGE_kmod-br-netfilter=y
 CONFIG_PACKAGE_kmod-nf-conntrack=y
 CONFIG_PACKAGE_kmod-veth=y
 CONFIG_PACKAGE_kmod-overlay=y
+
+# add tailscale
+CONFIG_PACKAGE_tailscale=y
