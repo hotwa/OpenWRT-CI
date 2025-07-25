@@ -85,6 +85,7 @@ CONFIG_PACKAGE_kmod-ipt-core=y
 CONFIG_PACKAGE_kmod-ipt-nat=y
 CONFIG_PACKAGE_kmod-ipt-conntrack=y
 CONFIG_PACKAGE_kmod-ipt-conntrack-extra=y
+CONFIG_PACKAGE_kmod-ipt-fullconenat=y
 CONFIG_PACKAGE_iptables=y
 CONFIG_PACKAGE_iptables-mod-nat-extra=y
 #组件调整
