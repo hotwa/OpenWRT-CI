@@ -5,19 +5,19 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=daed
-PKG_VERSION:=2025.05.25
-DAED_VERSION:=daed-d9d4515
-WING_VERSION:=wing-bcf41d1
-CORE_VERSION:=core-b5f9479
+PKG_VERSION:=2025.07.23
+DAED_VERSION:=daed-c3588a9
+WING_VERSION:=wing-6df3da2
+CORE_VERSION:=core-358f459
 WING_HASH_SHORT:=$(shell echo $(WING_VERSION) | cut -d- -f2)
 CORE_HASH_SHORT:=$(shell echo $(CORE_VERSION) | cut -d- -f2)
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=d9d4515b605878836e1cefddd177261a3ac57caf
+PKG_SOURCE_VERSION:=c3588a904c932d1fc83ee51096761776003fc25c
 PKG_SOURCE_URL:=https://github.com/daeuniverse/daed.git
-PKG_MIRROR_HASH:=skip
+PKG_MIRROR_HASH:=
 
 PKG_LICENSE:=AGPL-3.0-only MIT
 PKG_LICENSE_FILES:=LICENSE wing/LICENSE
@@ -34,13 +34,16 @@ GO_PKG_LDFLAGS:= \
 GO_PKG_LDFLAGS_X= \
 	$(GO_PKG)/db.AppName=$(PKG_NAME) \
 	$(GO_PKG)/db.AppVersion=$(DAED_VERSION)_$(WING_VERSION)_$(CORE_VERSION)
-GO_PKG_TAGS:=embedallowed,trace
-GO_PKG_TARGET_VARS:=$(filter-out CGO_ENABLED=%,$(GO_PKG_TARGET_VARS)) CGO_ENABLED=1
+GO_PKG_TAGS:=embedallowed
+GO_PKG_TARGET_VARS:=$(filter-out CGO_ENABLED=%,$(GO_PKG_TARGET_VARS)) \
+	CGO_ENABLED=1 \
+	GOEXPERIMENT=greenteagc
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/bpf.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
+GO_PKG_DEFAULT_LDFLAGS:=-w -s -extldflags "-static"
 TAR_CMD=$(HOST_TAR) -C $(BUILD_DIR)/ $(TAR_OPTIONS)
 
 define Package/daed/Default
@@ -77,7 +80,16 @@ define Build/Prepare
 		pushd $(PKG_BUILD_DIR)/dae-core ; \
 		git submodule update --init ; \
 		wget -qO - https://github.com/daeuniverse/dae/pull/763.patch | patch -p1 ; \
-		wget -qO - https://github.com/daeuniverse/dae/pull/822.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/pull/839.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/56fb759.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/af2e2c6.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/d96dc26.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/6ff101c.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/5740b94.patch | patch -p1 ; \
+		wget -qO - https://github.com/daeuniverse/dae/commit/cec1642.patch | patch -p1 ; \
+		sed -i 's/Warn("failed to write cached DNS resp")/Debug("failed to write cached DNS resp")/g' control/dns_control.go ; \
+		sed -i 's/Warn("failed to send DNS response")/Debug("failed to send DNS response")/g' control/dns_control.go ; \
+		sed -i 's/Warn("failed to send DNS reject response")/Debug("failed to send DNS reject response")/g' control/dns_control.go ; \
 		go mod tidy ; \
 		popd ; \
 		pushd $(BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)/wing ; \
@@ -117,20 +129,16 @@ define Build/Compile
 	( \
 		pushd $(PKG_BUILD_DIR) ; \
 		$(MAKE) deps ; \
-		export \
 		$(GO_GENERAL_BUILD_CONFIG_VARS) \
 		$(GO_PKG_BUILD_CONFIG_VARS) \
 		$(GO_PKG_BUILD_VARS); \
 		go generate ./... ; \
 		cd dae-core ; \
-		export \
 		BPF_CLANG="$(CLANG)" \
 		BPF_STRIP_FLAG="-strip=$(LLVM_STRIP)" \
 		BPF_CFLAGS="$(DAE_CFLAGS)" \
 		BPF_TARGET="bpfel,bpfeb" \
-		BPF_TRACE_TARGET="$(GO_ARCH)" ; \
 		go generate control/control.go ; \
-		go generate trace/trace.go ; \
 		popd ; \
 		$(call GoPackage/Build/Compile) ; \
 	)
