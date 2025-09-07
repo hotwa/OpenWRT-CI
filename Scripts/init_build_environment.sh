@@ -235,10 +235,10 @@ function install_dependencies() {
 		yarn config set registry "https://registry.npmmirror.com" --global
 	fi
 
-	apt install -y $BPO_FLAG golang-1.24-go
+	apt install -y $BPO_FLAG golang-1.25-go
 	rm -rf "/usr/bin/go" "/usr/bin/gofmt"
-	ln -svf "/usr/lib/go-1.24/bin/go" "/usr/bin/go"
-	ln -svf "/usr/lib/go-1.24/bin/gofmt" "/usr/bin/gofmt"
+	ln -svf "/usr/lib/go-1.25/bin/go" "/usr/bin/go"
+	ln -svf "/usr/lib/go-1.25/bin/gofmt" "/usr/bin/gofmt"
 	if [ -n "$CHN_NET" ]; then
 		go env -w GOPROXY=https://goproxy.cn,direct
 	fi
@@ -262,17 +262,11 @@ function install_dependencies() {
 	chmod 0755 "/usr/bin/upx-ucl"
 	ln -svf "/usr/bin/upx-ucl" "/usr/bin/upx"
 
-	git clone --filter=blob:none --no-checkout "https://github.com/openwrt/openwrt.git" "padjffs2"
-	pushd "padjffs2"
-	git config core.sparseCheckout true
-	echo "tools/padjffs2/src" >> ".git/info/sparse-checkout"
-	git checkout
-	cd "tools/padjffs2/src"
-	make
+	curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/main/tools/padjffs2/src/padjffs2.c"
+	gcc -Wall -Werror -o "padjffs2" "padjffs2.c"
 	strip "padjffs2"
-	rm -rf "/usr/bin/padjffs2"
+	rm -rf "padjffs2.c" "/usr/bin/padjffs2"
 	cp -fp "padjffs2" "/usr/bin/padjffs2"
-	popd
 
 	git clone --filter=blob:none --no-checkout "https://github.com/openwrt/luci.git" "po2lmo"
 	pushd "po2lmo"
