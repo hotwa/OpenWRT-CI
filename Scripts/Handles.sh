@@ -41,7 +41,7 @@ if [ -f "$NSS_PBUF" ]; then
 
 	sed -i 's/START=.*/START=86/g' $NSS_PBUF
 
-	cd $PKG_PATH && echo "qca-nss-pbuf has been fixed!"
+cd $PKG_PATH && echo "qca-nss-pbuf has been fixed!"
 fi
 
 #修复TailScale配置文件冲突
@@ -52,4 +52,12 @@ if [ -f "$TS_FILE" ]; then
 	sed -i '/\/files/d' $TS_FILE
 
 	cd $PKG_PATH && echo "tailscale has been fixed!"
+fi
+
+# bpf-headers 在 6.6.106 内核的回溯补丁上可能打补丁失败，移除冲突补丁以避免编译中断
+BPF_BACKPORT_PATCH="../target/linux/generic/backport-6.6/068-01-v6.7-netkit-bpf-Add-bpf-programmable-net-device.patch"
+if [ -f "$BPF_BACKPORT_PATCH" ]; then
+	echo " "
+	rm -f "$BPF_BACKPORT_PATCH"
+	cd $PKG_PATH && echo "removed conflicting bpf backport patch (068-01-...netkit-bpf...)"
 fi
