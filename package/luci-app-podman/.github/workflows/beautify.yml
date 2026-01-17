@@ -1,0 +1,122 @@
+name: Beautify JavaScript (changed files, with all option)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.js'
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      all:
+        description: 'Format all .js files'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  beautify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-cache-${{ hashFiles('**/package-lock.json') || hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-cache-
+
+      # no global install, use npx js-beautify
+      - name: Ensure js-beautifier is available
+        run: npm install js-beautify
+
+      # all-mode: collect all JS files when manually triggered with all=true
+      - name: Determine files to format (all-mode)
+        id: all-files
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.all == 'true' }}
+        run: |
+          set -euo pipefail
+          FILES=$(git ls-files '*.js' || true)
+          if [ -z "$FILES" ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$FILES" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      # changed-files for PR/push
+      - name: Get changed .js files
+        id: changed-files
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.all == 'true') }}
+        uses: tj-actions/changed-files@v47
+        with:
+          files: |
+            **/*.js
+
+      # combine the two file sources
+      - name: Collect files (pick all-mode or changed-files)
+        id: files
+        run: |
+          set -euo pipefail
+          ALL_FILES='${{ steps.all-files.outputs.files }}'
+          CHANGED_FILES='${{ steps.changed-files.outputs.all_changed_files }}'
+
+          if [ -n "$ALL_FILES" ]; then
+            printf '%s\n' "$ALL_FILES" | sed -e 's/\r$//' | sed '/^\s*$/d' > /tmp/files_list || true
+          else
+            printf '%s\n' "$CHANGED_FILES" | sed -e 's/\r$//' | sed '/^\s*$/d' > /tmp/files_list || true
+          fi
+
+          if [ ! -s /tmp/files_list ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/files_list >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      # formatting
+      - name: Format selected files with js-beautify
+        if: ${{ steps.files.outputs.files != '' }}
+        run: |
+          set -euo pipefail
+          echo "Files to format:"
+          printf '%s\n' "${{ steps.files.outputs.files }}"
+          echo "${{ steps.files.outputs.files }}" | while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if [ -f "$f" ]; then
+              echo "Formatting: $f"
+              npx js-beautify -r "$f"
+            else
+              echo "Skipping (not found): $f"
+            fi
+          done
+
+      # 5) Single commit & push step
+      - name: Commit & push formatting changes
+        if: ${{ steps.files.outputs.files != '' }}
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: |
+            ${{ steps.files.outputs.files }}
+          message: 'style: auto-format JavaScript (js-beautify) [skip ci]'
+          author_name: 'github-actions'
+          author_email: '41898282+github-actions[bot]@users.noreply.github.com'
+          push: true

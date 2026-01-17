@@ -1,0 +1,6 @@
+- Container Pause/Unpause UI
+- Smart Container Stop with Kill Fallback
+- Smart Pod Stop with Kill Fallback
+- Image Search
+- Pod Detail Page
+- Optimize Container Detail Mobile View
