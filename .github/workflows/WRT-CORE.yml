@@ -176,7 +176,8 @@ jobs:
           
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
-          make defconfig -j$(nproc) && make clean -j$(nproc)
+          # Minimal change: avoid cleaning to preserve caches and reduce build time
+          make defconfig -j$(nproc)
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'
