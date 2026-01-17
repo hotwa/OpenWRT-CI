@@ -27,6 +27,8 @@ CONFIG_PACKAGE_luci-app-gecoosac=y
 #CONFIG_PACKAGE_luci-app-pushbot=y
 #CONFIG_PACKAGE_luci-app-mwan3=y
 #CONFIG_PACKAGE_luci-app-lucky=y
+CONFIG_PACKAGE_podman=y
+CONFIG_PACKAGE_luci-app-podman=y
 #删除插件
 CONFIG_PACKAGE_luci-app-wol=n
 #参数调整

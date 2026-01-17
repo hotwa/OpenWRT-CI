@@ -1,0 +1,1035 @@
+#!/bin/sh
+# RPC backend for LuCI Podman app
+
+. /usr/share/libubox/jshn.sh
+
+# Read socket path from UCI config, fallback to default
+SOCKET=$(uci -q get podman.globals.socket_path 2>/dev/null)
+SOCKET="${SOCKET:-/run/podman/podman.sock}"
+API_BASE="/v5.0.0/libpod"
+
+# URL encode a string (preserves : / @ for image references)
+urlencode() {
+	local string="$1"
+	local strlen=${#string}
+	local encoded="" pos c o
+
+	for pos in $(seq 0 $((strlen - 1))); do
+		c=$(printf '%s' "$string" | cut -c $((pos + 1)))
+		case "$c" in
+			[-_.~a-zA-Z0-9:/@]) o="$c" ;;
+			*) printf -v o '%%%02x' "'$c" ;;
+		esac
+		encoded="${encoded}${o}"
+	done
+	echo "$encoded"
+}
+
+# Validate container name (alphanumeric, dash, underscore only)
+validate_container_name() {
+	local name="$1"
+	case "$name" in
+		*[!a-zA-Z0-9_-]*)
+			echo '{"error":"Invalid container name format"}'
+			exit 1
+			;;
+	esac
+}
+
+# Validate volume name (alphanumeric, dash, underscore, dot only)
+validate_volume_name() {
+	local name="$1"
+	case "$name" in
+		*[!a-zA-Z0-9_.-]*)
+			echo '{"error":"Invalid volume name format"}'
+			exit 1
+			;;
+	esac
+}
+
+# Validate query parameters (only allow safe URL characters)
+# Allows: alphanumeric, =, &, -, _, ., comma
+validate_query_params() {
+	local params="$1"
+	case "$params" in
+		*[!a-zA-Z0-9=\&_.,-]*)
+			echo '{"error":"Invalid query parameters"}'
+			exit 1
+			;;
+	esac
+}
+
+# Validate session ID format for security
+validate_session_id() {
+	local session_id="$1"
+	local prefix="$2"
+	case "$session_id" in
+		${prefix}_[0-9]*_[0-9]*_[0-9]*)
+			;;
+		*)
+			echo '{"error":"Invalid session ID format"}'
+			exit 1
+			;;
+	esac
+}
+
+# Get JSON parameters from input
+get_json_params() {
+	read -r input
+	json_load "$input"
+	for var in "$@"; do
+		json_get_var "$var" "$var"
+	done
+}
+
+# Validate required parameter
+require_param() {
+	local var_name="$1"
+	eval "local var_value=\"\$$var_name\""
+	if [ -z "$var_value" ]; then
+		echo "{\"error\":\"Missing required parameter: $var_name\"}"
+		exit 1
+	fi
+}
+
+# Make curl request with error handling
+curl_request() {
+	local method="$1"
+	local path="$2"
+	local data="$3"
+	local timeout="${4:-30}"
+	local result exit_code
+
+	if [ -n "$data" ]; then
+		result=$(curl -s -m "$timeout" --unix-socket "$SOCKET" -X "$method" \
+			-H "Content-Type: application/json" \
+			-d "$data" \
+			"http://localhost$path" 2>&1)
+		exit_code=$?
+	else
+		result=$(curl -s -m "$timeout" --unix-socket "$SOCKET" -X "$method" \
+			"http://localhost$path" 2>&1)
+		exit_code=$?
+	fi
+
+	if [ $exit_code -ne 0 ]; then
+		echo "{\"error\":\"Request failed\",\"details\":\"curl exit code $exit_code\"}"
+		return $exit_code
+	fi
+
+	# Check if result is an array and wrap it in an object for ubus compatibility
+	case "$result" in
+		\[*)
+			echo "{\"data\":$result}"
+			;;
+		*)
+			echo "$result"
+			;;
+	esac
+	return 0
+}
+
+# Add force parameter to path
+add_force() {
+	local path="$1"
+	local force="$2"
+	# Check for both "true" and "1" since JSON booleans become 1/0
+	if [ "$force" = "true" -o "$force" = "1" ]; then
+		echo "${path}?force=true"
+	else
+		echo "$path"
+	fi
+}
+
+case "$1" in
+	list)
+		cat <<EOF
+{
+	"containers_list": { "query": "" },
+	"container_inspect": { "id": "" },
+	"container_start": { "id": "" },
+	"container_stop": { "id": "" },
+	"container_restart": { "id": "" },
+	"container_remove": { "id": "", "force": false, "depend": false },
+	"container_logs": { "id": "", "params": "" },
+	"container_logs_stream": { "id": "", "params": "" },
+	"container_logs_status": { "session_id": "", "offset": 0 },
+	"container_logs_stop": { "session_id": "" },
+	"container_stats": { "id": "" },
+	"container_create": { "data": {} },
+	"container_rename": { "id": "", "name": "" },
+	"container_update": { "id": "", "data": {} },
+	"container_healthcheck_run": { "id": "" },
+	"container_top": { "id": "", "ps_args": "" },
+	"images_list": {},
+	"image_inspect": { "id": "" },
+	"image_remove": { "id": "", "force": false },
+	"image_pull": { "image": "" },
+	"image_pull_stream": { "image": "" },
+	"image_pull_status": { "session_id": "", "offset": 0 },
+	"networks_list": {},
+	"network_inspect": { "name": "" },
+	"network_remove": { "name": "", "force": false },
+	"network_create": { "data": {} },
+	"network_connect": { "name": "", "data": {} },
+	"network_disconnect": { "name": "", "data": {} },
+	"volumes_list": {},
+	"volume_inspect": { "name": "" },
+	"volume_remove": { "name": "", "force": false },
+	"volume_create": { "data": {} },
+	"volume_export": { "name": "" },
+	"volume_import": { "name": "", "data": "" },
+	"pods_list": {},
+	"pod_inspect": { "name": "" },
+	"pod_start": { "name": "" },
+	"pod_stop": { "name": "" },
+	"pod_restart": { "name": "" },
+	"pod_pause": { "name": "" },
+	"pod_unpause": { "name": "" },
+	"pod_remove": { "name": "", "force": false },
+	"pod_create": { "data": {} },
+	"pod_stats": { "name": "" },
+	"secrets_list": {},
+	"secret_inspect": { "name": "" },
+	"secret_create": { "name": "", "data": "" },
+	"secret_remove": { "name": "" },
+	"system_df": {},
+	"system_prune": { "all": false, "volumes": false },
+	"version": {},
+	"info": {},
+	"init_script_generate": { "name": "" },
+	"init_script_show": { "name": "" },
+	"init_script_status": { "name": "" },
+	"init_script_set_enabled": { "name": "", "enabled": false },
+	"init_script_remove": { "name": "" },
+	"container_recreate": { "command": [] }
+}
+EOF
+		;;
+	call)
+		# Check socket availability
+		if [ ! -S "$SOCKET" ]; then
+			echo '{"error":"Podman socket not found or not accessible"}'
+			exit 1
+		fi
+
+		case "$2" in
+			containers_list)
+				get_json_params query
+				path="${API_BASE}/containers/json"
+				if [ -n "$query" ]; then
+					validate_query_params "$query"
+					path="${path}?${query}"
+				fi
+				curl_request "GET" "$path"
+				;;
+			container_inspect)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "GET" "${API_BASE}/containers/${id_enc}/json"
+				;;
+			container_start)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "POST" "${API_BASE}/containers/${id_enc}/start"
+				;;
+			container_stop)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "POST" "${API_BASE}/containers/${id_enc}/stop"
+				;;
+			container_restart)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "POST" "${API_BASE}/containers/${id_enc}/restart"
+				;;
+			container_remove)
+				get_json_params id force depend
+				require_param id
+				id_enc=$(urlencode "$id")
+				# Build query parameters
+				query=""
+				[ "$force" = "true" -o "$force" = "1" ] && query="${query}force=true&"
+				[ "$depend" = "true" -o "$depend" = "1" ] && query="${query}depend=true&"
+				# Remove trailing &
+				query="${query%&}"
+				# Add ? if we have parameters
+				[ -n "$query" ] && query="?${query}"
+				curl_request "DELETE" "${API_BASE}/containers/${id_enc}${query}"
+				;;
+			container_logs)
+				get_json_params id params
+				require_param id
+				id_enc=$(urlencode "$id")
+				path="${API_BASE}/containers/${id_enc}/logs"
+				if [ -n "$params" ]; then
+					validate_query_params "$params"
+					path="${path}?${params}"
+				else
+					path="${path}?stdout=true&stderr=true&tail=1000"
+				fi
+
+				# Logs API returns binary stream format with Docker multiplexed headers
+				# Shell variables strip binary data, so save to temp file first
+				temp_file="/tmp/podman_logs_$$_${RANDOM}.log"
+				curl -s -m 60 --unix-socket "$SOCKET" -X GET "http://localhost${path}" > "$temp_file" 2>&1
+				exit_code=$?
+
+				if [ $exit_code -ne 0 ]; then
+					rm -f "$temp_file"
+					echo "{\"error\":\"Request failed\",\"details\":\"curl exit code $exit_code\"}"
+					exit 1
+				fi
+
+				# Base64 encode binary data for JSON transport
+				# Stream directly to stdout to avoid shell variable size limits
+				printf '{"data":"'
+				openssl base64 -A < "$temp_file"
+				printf '"}'
+				rm -f "$temp_file"
+				;;
+			container_logs_stream)
+				get_json_params id params
+				require_param id
+
+				# Generate secure session ID with current timestamp
+				current_timestamp=$(date +%s)
+				session_id="podman_logs_${current_timestamp}_$$_${RANDOM}"
+				id_enc=$(urlencode "$id")
+
+				# Build path with params
+				# Add since={current_timestamp} to only capture NEW logs from this moment forward
+				path="${API_BASE}/containers/${id_enc}/logs"
+				if [ -n "$params" ]; then
+					validate_query_params "$params"
+					# User provided params - append since parameter
+					path="${path}?${params}&since=${current_timestamp}"
+				else
+					# Default params with since to only get new logs
+					path="${path}?stdout=true&stderr=true&follow=true&since=${current_timestamp}"
+				fi
+
+				# Create a temporary script file to run in background
+				script_file="/tmp/${session_id}.sh"
+				cat > "$script_file" <<EOF
+#!/bin/sh
+curl -s -N --unix-socket "$SOCKET" -X GET "http://localhost${path}" > "/tmp/${session_id}.log" 2>&1
+echo \$? > "/tmp/${session_id}.status"
+rm -f "$script_file"
+EOF
+				chmod +x "$script_file"
+
+				# Start the script in background using nohup-like behavior
+				# Double fork to completely detach from parent process
+				sh -c "($script_file &)" >/dev/null 2>&1 </dev/null &
+
+				echo "{\"session_id\":\"${session_id}\"}"
+				;;
+			container_logs_status)
+				get_json_params session_id offset
+				require_param session_id
+				validate_session_id "$session_id" "podman_logs"
+
+				# Validate offset is numeric
+				case "$offset" in
+					''|*[!0-9]*) offset=0 ;;
+				esac
+
+				log_file="/tmp/${session_id}.log"
+				status_file="/tmp/${session_id}.status"
+
+				# Chunk size: 128KB max per poll (balances performance vs rpcd timeout)
+				# Tested: 128KB transfers in <5s even on slow connections
+				chunk_size=131072
+
+				# Job completed
+				if [ -f "$status_file" ]; then
+					exit_code=$(cat "$status_file")
+					success="false"
+					[ "$exit_code" = "0" ] && success="true"
+
+					output=""
+					if [ -f "$log_file" ]; then
+						# Get new output from offset, limit to chunk_size, and base64 encode
+						output=$(tail -c +$((offset + 1)) "$log_file" 2>/dev/null | head -c $chunk_size | openssl base64 -A)
+					fi
+
+					echo "{\"output\":\"${output}\",\"complete\":true,\"success\":${success}}"
+					rm -f "$log_file" "$status_file"
+					exit 0
+				fi
+
+				# Job in progress
+				if [ -f "$log_file" ]; then
+					# Get new output from offset, limit to chunk_size, and base64 encode
+					output=$(tail -c +$((offset + 1)) "$log_file" 2>/dev/null | head -c $chunk_size | openssl base64 -A)
+					echo "{\"output\":\"${output}\",\"complete\":false,\"success\":false}"
+					exit 0
+				fi
+
+				# Job not started yet
+				echo '{"output":"","complete":false,"success":false}'
+				;;
+			container_logs_stop)
+				get_json_params session_id
+				require_param session_id
+				validate_session_id "$session_id" "podman_logs"
+
+				# Kill the background curl process if still running
+				# Find curl process with our session log file
+				curl_pid=$(ps | grep "curl.*${session_id}.log" | grep -v grep | awk '{print $1}')
+				if [ -n "$curl_pid" ]; then
+					kill "$curl_pid" 2>/dev/null
+				fi
+
+				# Cleanup temp files
+				rm -f "/tmp/${session_id}.log" "/tmp/${session_id}.status" "/tmp/${session_id}.sh" 2>/dev/null
+
+				echo '{"success":true}'
+				;;
+			container_stats)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "GET" "${API_BASE}/containers/${id_enc}/stats?stream=false"
+				;;
+			container_create)
+				get_json_params data
+				curl_request "POST" "${API_BASE}/containers/create" "$data"
+				;;
+			container_rename)
+				get_json_params id name
+				require_param id
+				require_param name
+				id_enc=$(urlencode "$id")
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/containers/${id_enc}/rename?name=${name_enc}"
+				;;
+			container_update)
+				get_json_params id data
+				require_param id
+				require_param data
+				id_enc=$(urlencode "$id")
+
+				# Parse the data JSON to extract restart policy (query params) and other resources (body)
+				json_load "$data"
+				json_get_var restart_policy RestartPolicy
+				json_get_var restart_retries RestartRetries
+
+				# Build query parameters for restart policy
+				query=""
+				[ -n "$restart_policy" ] && query="${query}restartPolicy=${restart_policy}&"
+				[ -n "$restart_retries" ] && query="${query}restartRetries=${restart_retries}&"
+				# Remove trailing &
+				query="${query%&}"
+				# Add ? if we have parameters
+				[ -n "$query" ] && query="?${query}"
+
+				# Check if we have resource/health updates (cpu, memory, blockIO, health) to send as body
+				# If the JSON contains fields other than RestartPolicy/RestartRetries, send as body
+				# This is a simple check - if data contains 'cpu', 'memory', 'blockIO', or 'health', use body
+				case "$data" in
+					*cpu*|*memory*|*blockIO*|*health*|*no_healthcheck*)
+						# Send with body for resource/health updates
+						curl_request "POST" "${API_BASE}/containers/${id_enc}/update${query}" "$data"
+						;;
+					*)
+						# Query params only (restart policy) - but Podman still requires empty body
+						curl_request "POST" "${API_BASE}/containers/${id_enc}/update${query}" "{}"
+						;;
+				esac
+				;;
+			container_healthcheck_run)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "GET" "${API_BASE}/containers/${id_enc}/healthcheck"
+				;;
+			container_top)
+				get_json_params id ps_args
+				require_param id
+				id_enc=$(urlencode "$id")
+				path="${API_BASE}/containers/${id_enc}/top"
+				if [ -n "$ps_args" ]; then
+					ps_args_enc=$(urlencode "$ps_args")
+					path="${path}?ps_args=${ps_args_enc}"
+				fi
+				curl_request "GET" "$path"
+				;;
+			images_list)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/images/json"
+				;;
+			image_inspect)
+				get_json_params id
+				require_param id
+				id_enc=$(urlencode "$id")
+				curl_request "GET" "${API_BASE}/images/${id_enc}/json"
+				;;
+			image_remove)
+				get_json_params id force
+				require_param id
+				id_enc=$(urlencode "$id")
+				path=$(add_force "${API_BASE}/images/${id_enc}" "$force")
+				curl_request "DELETE" "$path"
+				;;
+			image_pull)
+				get_json_params image
+				require_param image
+				image_enc=$(urlencode "$image")
+				curl_request "POST" "${API_BASE}/images/pull?reference=${image_enc}"
+				;;
+			image_pull_stream)
+				get_json_params image
+				require_param image
+
+				# Generate secure session ID
+				session_id="podman_$(date +%s)_$$_${RANDOM}"
+				image_enc=$(urlencode "$image")
+
+				# Create a temporary script file to run in background
+				script_file="/tmp/${session_id}.sh"
+				cat > "$script_file" <<EOF
+#!/bin/sh
+curl -s --unix-socket "$SOCKET" -X POST "http://localhost${API_BASE}/images/pull?reference=${image_enc}" > "/tmp/${session_id}.log" 2>&1
+echo \$? > "/tmp/${session_id}.status"
+rm -f "$script_file"
+EOF
+				chmod +x "$script_file"
+
+				# Start the script in background using nohup-like behavior
+				# Double fork to completely detach from parent process
+				sh -c "($script_file &)" >/dev/null 2>&1 </dev/null &
+
+				echo "{\"session_id\":\"${session_id}\"}"
+				;;
+			image_pull_status)
+				get_json_params session_id offset
+				require_param session_id
+				validate_session_id "$session_id" "podman"
+
+				# Validate offset is numeric
+				case "$offset" in
+					''|*[!0-9]*) offset=0 ;;
+				esac
+
+				log_file="/tmp/${session_id}.log"
+				status_file="/tmp/${session_id}.status"
+
+				# Job completed
+				if [ -f "$status_file" ]; then
+					exit_code=$(cat "$status_file")
+					success="false"
+					[ "$exit_code" = "0" ] && success="true"
+
+					output=""
+					if [ -f "$log_file" ]; then
+						output=$(tail -c +$((offset + 1)) "$log_file" 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
+					fi
+
+					echo "{\"output\":\"${output}\",\"complete\":true,\"success\":${success}}"
+					rm -f "$log_file" "$status_file"
+					exit 0
+				fi
+
+				# Job in progress
+				if [ -f "$log_file" ]; then
+					output=$(tail -c +$((offset + 1)) "$log_file" 2>/dev/null | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
+					echo "{\"output\":\"${output}\",\"complete\":false,\"success\":false}"
+					exit 0
+				fi
+
+				# Job not started yet
+				echo '{"output":"","complete":false,"success":false}'
+				;;
+			networks_list)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/networks/json"
+				;;
+			network_inspect)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "GET" "${API_BASE}/networks/${name_enc}/json"
+				;;
+			network_remove)
+				get_json_params name force
+				require_param name
+				name_enc=$(urlencode "$name")
+				path=$(add_force "${API_BASE}/networks/${name_enc}" "$force")
+				curl_request "DELETE" "$path"
+				;;
+			network_create)
+				get_json_params data
+				curl_request "POST" "${API_BASE}/networks/create" "$data"
+				;;
+			network_connect)
+				get_json_params name data
+				require_param name
+				require_param data
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/networks/${name_enc}/connect" "$data"
+				;;
+			network_disconnect)
+				get_json_params name data
+				require_param name
+				require_param data
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/networks/${name_enc}/disconnect" "$data"
+				;;
+			volumes_list)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/volumes/json"
+				;;
+			volume_inspect)
+				get_json_params name
+				require_param name
+				validate_volume_name "$name"
+				name_enc=$(urlencode "$name")
+				curl_request "GET" "${API_BASE}/volumes/${name_enc}/json"
+				;;
+			volume_remove)
+				get_json_params name force
+				require_param name
+				validate_volume_name "$name"
+				name_enc=$(urlencode "$name")
+				path=$(add_force "${API_BASE}/volumes/${name_enc}" "$force")
+				curl_request "DELETE" "$path"
+				;;
+			volume_create)
+				get_json_params data
+				curl_request "POST" "${API_BASE}/volumes/create" "$data"
+				;;
+			volume_export)
+				get_json_params name
+				require_param name
+				validate_volume_name "$name"
+
+				# Use podman CLI since REST API doesn't support export yet
+				# Export to temp file
+				temp_file="/tmp/podman_volume_export_$$_${RANDOM}.tar.gz"
+				podman volume export "$name" | gzip > "$temp_file" 2>&1
+				exit_code=$?
+
+				if [ $exit_code -ne 0 ]; then
+					rm -f "$temp_file"
+					echo "{\"error\":\"Export failed\",\"details\":\"podman exit code $exit_code\"}"
+					exit 1
+				fi
+
+				# Base64 encode binary tar data for JSON transport (use openssl on OpenWrt)
+				encoded_data=$(openssl base64 -A < "$temp_file")
+				rm -f "$temp_file"
+
+				# Return as JSON with base64-encoded data
+				echo "{\"data\":\"${encoded_data}\"}"
+				;;
+			volume_import)
+				get_json_params name data compressed
+				require_param name
+				require_param data
+				validate_volume_name "$name"
+
+				# Base64 decode the uploaded tar data to temp file
+				temp_file="/tmp/podman_volume_import_$$_${RANDOM}.tar"
+				# Conditionally decompress based on compressed parameter
+				if [ "$compressed" = "true" ]; then
+					echo "$data" | openssl base64 -d | gunzip -c > "$temp_file"
+				else
+					echo "$data" | openssl base64 -d > "$temp_file"
+				fi
+				decode_exit=$?
+
+				if [ $decode_exit -ne 0 ]; then
+					rm -f "$temp_file"
+					echo "{\"error\":\"Failed to decode import data\"}"
+					exit 1
+				fi
+
+				podman volume exists "$name"
+				volume_exists=$?
+
+				if [ $volume_exists -ne 0 ]; then
+					# Create the volume first (import requires volume to exist)
+					podman volume create "$name" > /dev/null 2>&1
+					create_exit=$?
+
+					if [ $create_exit -ne 0 ]; then
+						rm -f "$temp_file"
+						echo "{\"error\":\"Failed to create volume\",\"details\":\"podman exit code $create_exit\"}"
+						exit 1
+					fi
+				fi
+
+				# Use podman CLI since REST API doesn't support import yet
+				podman volume import "$name" "$temp_file" > /dev/null 2>&1
+				exit_code=$?
+				rm -f "$temp_file"
+
+				if [ $exit_code -ne 0 ]; then
+					# Cleanup: remove the volume we just created if import fails
+					podman volume rm "$name" 2>/dev/null
+					echo "{\"error\":\"Import failed\",\"details\":\"podman exit code $exit_code\"}"
+					exit 1
+				fi
+
+				# Import success
+				echo "{\"success\":true}"
+				;;
+			pods_list)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/pods/json"
+				;;
+			pod_inspect)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "GET" "${API_BASE}/pods/${name_enc}/json"
+				;;
+			pod_start)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/pods/${name_enc}/start"
+				;;
+			pod_stop)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/pods/${name_enc}/stop"
+				;;
+			pod_restart)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/pods/${name_enc}/restart"
+				;;
+			pod_pause)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/pods/${name_enc}/pause"
+				;;
+			pod_unpause)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "POST" "${API_BASE}/pods/${name_enc}/unpause"
+				;;
+			pod_remove)
+				get_json_params name force
+				require_param name
+				name_enc=$(urlencode "$name")
+				path=$(add_force "${API_BASE}/pods/${name_enc}" "$force")
+				curl_request "DELETE" "$path"
+				;;
+			pod_create)
+				get_json_params data
+				curl_request "POST" "${API_BASE}/pods/create" "$data"
+				;;
+			pod_stats)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "GET" "${API_BASE}/pods/stats?stream=false&namesOrIDs=${name_enc}"
+				;;
+			secrets_list)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/secrets/json"
+				;;
+			secret_inspect)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "GET" "${API_BASE}/secrets/${name_enc}/json"
+				;;
+			secret_create)
+				get_json_params name data
+				require_param name
+				require_param data
+				# Base64 encode the secret data
+				data_b64=$(echo -n "$data" | base64)
+				# URL encode the name for query parameter
+				name_enc=$(urlencode "$name")
+				# Build JSON payload - just the base64 data as a JSON string
+				payload="\"${data_b64}\""
+				curl_request "POST" "${API_BASE}/secrets/create?name=${name_enc}" "$payload"
+				;;
+			secret_remove)
+				get_json_params name
+				require_param name
+				name_enc=$(urlencode "$name")
+				curl_request "DELETE" "${API_BASE}/secrets/${name_enc}"
+				;;
+			system_df)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/system/df"
+				;;
+			system_prune)
+				get_json_params all volumes
+				# Build query parameters (check for both "true" and "1" since JSON booleans become 1/0)
+				query=""
+				[ "$all" = "true" -o "$all" = "1" ] && query="${query}all=true&"
+				[ "$volumes" = "true" -o "$volumes" = "1" ] && query="${query}volumes=true&"
+				# Remove trailing &
+				query="${query%&}"
+				# Add ? if we have parameters
+				[ -n "$query" ] && query="?${query}"
+				curl_request "POST" "${API_BASE}/system/prune${query}"
+				;;
+			version)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/version"
+				;;
+			info)
+				read -r input  # consume ubus JSON input
+				curl_request "GET" "${API_BASE}/info"
+				;;
+			init_script_generate)
+				get_json_params name
+				require_param name
+				validate_container_name "$name"
+
+				# Read start priority from UCI, default to 90
+				start_priority=$(uci -q get podman.globals.init_start_priority 2>/dev/null)
+				start_priority="${start_priority:-90}"
+
+				script_name="container-${name}"
+				script_path="/etc/init.d/${script_name}"
+
+				# Generate procd init script
+				cat > "$script_path" <<EOF
+#!/bin/sh /etc/rc.common
+
+# Note: This init script is a "boot-time starter" only, not a supervisor
+# Podman's restart policy handles runtime restarts to avoid conflicts
+
+START=${start_priority}
+STOP=20
+USE_PROCD=1
+
+NAME=${script_name}
+PROG=/usr/bin/podman
+
+. /lib/functions.sh
+
+# Set to 1 to ignore missing container (useful for debugging)
+IGNORE_MISSING=\${IGNORE_MISSING:-0}
+
+start_service() {
+	# Wait for Podman socket with timeout
+	# Timeout set to 60s - Podman service runs at START=95, so should be ready
+	local max_wait=60
+	local count=0
+
+	logger -t \${NAME} "Waiting for Podman socket..."
+
+	while [ \$count -lt \$max_wait ]; do
+		if [ -S /run/podman/podman.sock ]; then
+			logger -t \${NAME} "Podman socket available after \${count}s"
+			break
+		fi
+		sleep 1
+		count=\$((count + 1))
+	done
+
+	if [ ! -S /run/podman/podman.sock ]; then
+		logger -t \${NAME} "Timeout: Podman socket not available after \${max_wait}s"
+		return 1
+	fi
+
+	# Check if container exists (unless IGNORE_MISSING=1)
+	if [ "\$IGNORE_MISSING" != "1" ]; then
+		if ! \$PROG container exists ${name} 2>/dev/null; then
+			logger -t \${NAME} "Container does not exist"
+			return 1
+		fi
+	fi
+
+	# Start container using procd with podman wait for monitoring
+	# If container is not running, start it first, then wait
+	procd_open_instance "\${NAME}"
+	procd_set_param command sh -c "
+		if ! \$PROG container inspect ${name} --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
+			logger -t \${NAME} 'Starting container ${name}'
+			\$PROG start ${name} || exit 1
+		else
+			logger -t \${NAME} 'Container ${name} already running'
+		fi
+		exec \$PROG wait ${name}
+	"
+	# NOTE: No respawn - Podman restart policy handles runtime restarts
+	# This ensures manual stops are respected
+	procd_close_instance
+}
+
+stop_service() {
+	logger -t \${NAME} "Stopping container ${name}"
+	\$PROG stop ${name} 2>/dev/null || true
+}
+EOF
+
+				chmod +x "$script_path"
+
+				if [ ! -x "$script_path" ]; then
+					echo '{"error":"Failed to create init script"}'
+					exit 1
+				fi
+
+				echo "{\"success\":true,\"path\":\"${script_path}\"}"
+				;;
+			init_script_show)
+				get_json_params name
+				require_param name
+				validate_container_name "$name"
+
+				script_name="container-${name}"
+				script_path="/etc/init.d/${script_name}"
+
+				if [ ! -f "$script_path" ]; then
+					echo '{"error":"Init script not found"}'
+					exit 1
+				fi
+
+				# Read script content and escape for JSON
+				content=$(cat "$script_path" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s\\n", $0}')
+				echo "{\"content\":\"${content}\"}"
+				;;
+			init_script_status)
+				get_json_params name
+				require_param name
+				validate_container_name "$name"
+
+				script_name="container-${name}"
+				script_path="/etc/init.d/${script_name}"
+				symlink_path="/etc/rc.d/S99${script_name}"
+
+				# Check if script exists
+				exists="false"
+				[ -f "$script_path" ] && exists="true"
+
+				# Check if enabled (symlink exists)
+				enabled="false"
+				[ -L "$symlink_path" ] && enabled="true"
+
+				echo "{\"exists\":${exists},\"enabled\":${enabled}}"
+				;;
+			init_script_set_enabled)
+				get_json_params name enabled
+				require_param name
+				validate_container_name "$name"
+
+				script_name="container-${name}"
+				script_path="/etc/init.d/${script_name}"
+
+				if [ ! -f "$script_path" ]; then
+					echo '{"error":"Init script not found. Generate it first."}'
+					exit 1
+				fi
+
+				# Check for both "true" and "1" since JSON booleans become 1/0
+				if [ "$enabled" = "true" -o "$enabled" = "1" ]; then
+					# Enable service
+					"${script_path}" enable >/dev/null 2>&1
+					exit_code=$?
+					if [ $exit_code -ne 0 ]; then
+						echo "{\"error\":\"Failed to enable service\",\"exit_code\":${exit_code}}"
+						exit 1
+					fi
+					echo '{"success":true,"enabled":true}'
+				else
+					# Disable service
+					"${script_path}" disable >/dev/null 2>&1
+					exit_code=$?
+					if [ $exit_code -ne 0 ]; then
+						echo "{\"error\":\"Failed to disable service\",\"exit_code\":${exit_code}}"
+						exit 1
+					fi
+					echo '{"success":true,"enabled":false}'
+				fi
+				;;
+			init_script_remove)
+				get_json_params name
+				require_param name
+				validate_container_name "$name"
+
+				script_name="container-${name}"
+				script_path="/etc/init.d/${script_name}"
+
+				if [ ! -f "$script_path" ]; then
+					# Not an error - already removed
+					echo '{"success":true,"message":"Init script does not exist"}'
+					exit 0
+				fi
+
+				# Disable first (removes symlinks)
+				"${script_path}" disable >/dev/null 2>&1
+
+				# Remove script file
+				rm -f "$script_path"
+
+				if [ -f "$script_path" ]; then
+					echo '{"error":"Failed to remove init script"}'
+					exit 1
+				fi
+
+				echo '{"success":true}'
+				;;
+			container_recreate)
+				get_json_params command
+				require_param command
+
+				# Security: Validate command structure
+				first_arg=$(echo "$command" | jsonfilter -e '@[0]' 2>/dev/null)
+				second_arg=$(echo "$command" | jsonfilter -e '@[1]' 2>/dev/null)
+
+				if [ "$first_arg" != "podman" ]; then
+					echo '{"error":"Invalid command: must start with podman"}'
+					exit 1
+				fi
+
+				# Only allow run/create subcommands for container recreation
+				case "$second_arg" in
+					run|create)
+						;;
+					*)
+						echo '{"error":"Invalid command: only run/create subcommands allowed"}'
+						exit 1
+						;;
+				esac
+
+				# Create temp script with properly quoted command
+				temp_script="/tmp/podman_cmd_$$_${RANDOM}.sh"
+				printf '#!/bin/sh\n/usr/bin/podman' > "$temp_script"
+
+				# Skip first element ("podman"), quote all remaining arguments
+				echo "$command" | jsonfilter -e '@[*]' | tail -n +2 | while IFS= read -r arg; do
+					# Escape single quotes for shell safety
+					escaped=$(printf '%s' "$arg" | sed "s/'/'\\\\''/g")
+					printf " '%s'" "$escaped" >> "$temp_script"
+				done
+
+				printf '\n' >> "$temp_script"
+				chmod +x "$temp_script"
+
+				# Execute and capture output
+				result=$("$temp_script" 2>&1)
+				exit_code=$?
+				rm -f "$temp_script"
+
+				if [ $exit_code -ne 0 ]; then
+					# Escape result for JSON
+					result_escaped=$(printf '%s' "$result" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')
+					echo "{\"error\":\"Command failed\",\"details\":\"${result_escaped}\",\"exit_code\":${exit_code}}"
+					exit 1
+				fi
+
+				echo '{"success":true}'
+				;;
+		esac
+		;;
+esac
