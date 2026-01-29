@@ -123,6 +123,31 @@ jobs:
             echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
           }
           echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
+
+      - name: Debug Go Version
+        run: |
+          echo "=== 1. 系统 Go (PATH) ==="
+          which go 2>/dev/null && go version || echo "❌ 无系统 Go"
+          
+          echo ""
+          echo "=== 2. feeds/packages/lang/golang/golang/Makefile ==="
+          find . -path "*/feeds/packages/lang/golang/golang/Makefile" -exec grep -E "GO_VERSION" {} \; 2>/dev/null || echo "❌ 未找到 feeds golang Makefile"
+          
+          echo ""
+          echo "=== 3. wrt/feeds/packages/lang/golang/golang/Makefile ==="
+          if [ -f "./wrt/feeds/packages/lang/golang/golang/Makefile" ]; then
+            grep -E "GO_VERSION" ./wrt/feeds/packages/lang/golang/golang/Makefile | head -5
+          else
+            echo "❌ wrt/feeds 尚未克隆或不存在"
+          fi
+          
+          echo ""
+          echo "=== 4. Host Go (staging_dir/hostpkg) ==="
+          if [ -d "./wrt/staging_dir/hostpkg/bin" ]; then
+            ls -la ./wrt/staging_dir/hostpkg/bin/go 2>/dev/null && ./wrt/staging_dir/hostpkg/bin/go version || echo "❌ Host Go 不存在或无法执行"
+          else
+            echo "❌ staging_dir/hostpkg 不存在（编译后才会出现）"
+          fi
       - name: Clone Code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
