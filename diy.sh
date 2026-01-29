@@ -50,6 +50,18 @@ else
   git reset --hard
   git pull
 fi
+
+# 升级 Go 版本到 1.25.6（解决 tailscale 编译问题）
+GOLANG_MK=$(find $WRT_DIR/include/lang -name "golang*.mk" 2>/dev/null | head -1)
+if [ -n "$GOLANG_MK" ] && [ -f "$GOLANG_MK" ]; then
+  echo "升级 Go 版本到 1.25.6..."
+  # 查找并替换 GO_VERSION
+  sed -i 's/GO_VERSION := 1\.[0-9]*\.[0-9]*/GO_VERSION := 1.25.6/' "$GOLANG_MK" 2>/dev/null || true
+  # 查找并替换 GOLANG_MIRROR_VERSION
+  sed -i 's/GOLANG_MIRROR_VERSION := 1\.[0-9]*\.[0-9]*/GOLANG_MIRROR_VERSION := 1.25.6/' "$GOLANG_MK" 2>/dev/null || true
+  cat "$GOLANG_MK" | grep -E "GO_VERSION|GOLANG_MIRROR_VERSION" || true
+fi
+
 #rm -rf feeds
 ./scripts/feeds update -a && ./scripts/feeds install -a
 
