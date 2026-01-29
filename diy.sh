@@ -53,18 +53,7 @@ fi
 #rm -rf feeds
 ./scripts/feeds update -a && ./scripts/feeds install -a
 
-# 添加 Openwrt-Passwall feeds（兼容 24+ / apk 体系）
-# 在 wrt 目录下修改 feeds.conf.default
-cp feeds.conf.default feeds.conf.default.bak 2>/dev/null || true
-# 在顶部添加 Passwall feeds
-cat > feeds.conf.default << 'EOF'
-src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
-src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
-EOF
-# 追加原有的 feeds
-cat feeds.conf.default.bak >> feeds.conf.default 2>/dev/null || true
-
-./scripts/feeds update -a && ./scripts/feeds install -a
+# 注意：Passwall 使用 xiaorouji 版本（在 Scripts/Packages.sh 中配置）
 
 cd package/
 $GITHUB_WORKSPACE/Scripts/Packages.sh
