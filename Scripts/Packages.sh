@@ -130,16 +130,7 @@ rm -rf ../feeds/packages/net/{v2ray-geodata,dae*}
 
 #更新golang为最新版
 rm -rf ../feeds/packages/lang/golang
-git clone -b 24.x https://github.com/sbwml/packages_lang_golang ../feeds/packages/lang/golang
-
-# 强制升级 Go 版本到 1.25.6（解决 tailscale 编译问题）
-# 修改 feeds/packages/lang/golang/golang/Makefile 中的版本定义
-if [ -f "../feeds/packages/lang/golang/golang/Makefile" ]; then
-  echo "升级 Go 版本到 1.25.6..."
-  sed -i 's/GO_VERSION_MAJOR_MINOR:=.*/GO_VERSION_MAJOR_MINOR:=1.25/' ../feeds/packages/lang/golang/golang/Makefile
-  sed -i 's/GO_VERSION_PATCH:=.*/GO_VERSION_PATCH:=6/' ../feeds/packages/lang/golang/golang/Makefile
-  grep -E "GO_VERSION" ../feeds/packages/lang/golang/golang/Makefile | head -5
-fi
+git clone -b 25.x https://github.com/sbwml/packages_lang_golang ../feeds/packages/lang/golang
 
 
 cp -r $GITHUB_WORKSPACE/package/* ./
