@@ -55,7 +55,9 @@ jobs:
         run: |
           sudo -E apt -yqq update
           sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+
+          # Docker容器内不需要/不支持 timedatectl，通过 env TZ 设置即可
+          # sudo -E timedatectl set-timezone "Asia/Shanghai"
 
           # 脚本权限修正
           if [ -d "Scripts" ]; then
