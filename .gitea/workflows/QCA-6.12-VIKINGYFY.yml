@@ -54,7 +54,10 @@ jobs:
       - name: Initialization Environment
         run: |
           sudo -E apt -yqq update
-          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3
+          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync
+
+          # 安装 pnpm (daed 编译需要)
+          sudo -E npm install -g pnpm
 
           # Docker容器内不需要/不支持 timedatectl，通过 env TZ 设置即可
           # sudo -E timedatectl set-timezone "Asia/Shanghai"
