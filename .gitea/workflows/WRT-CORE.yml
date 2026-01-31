@@ -39,7 +39,7 @@ on:
         type: string
       WRT_TEST:
         required: false
-        type: string
+        type: boolean
       CI_NAME:
         required: false
         type: string
@@ -157,15 +157,15 @@ jobs:
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
-      - name: Cache Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ./wrt/.ccache
-            ./wrt/staging_dir
-          key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}
-          restore-keys: |
-            ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
+      # - name: Cache Dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ./wrt/.ccache
+      #       ./wrt/staging_dir
+      #     key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}
+      #     restore-keys: |
+      #       ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
 
       - name: Refresh the cache
         run: |
@@ -201,14 +201,14 @@ jobs:
           make defconfig -j$(nproc)
 
       - name: Download Packages
-        if: env.WRT_TEST != 'true'
+        if: inputs.WRT_TEST != true
         run: |
           cd ./wrt/
 
           make download -j$(nproc)
 
       - name: Compile Firmware
-        if: env.WRT_TEST != 'true'
+        if: inputs.WRT_TEST != true
         run: |
           cd ./wrt/
 
@@ -240,7 +240,7 @@ jobs:
 
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_VER"-"".txt
 
-          if [[ $WRT_TEST != 'true' ]]; then
+          if [[ ${{ inputs.WRT_TEST }} != true ]]; then
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
             echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
 
@@ -258,27 +258,53 @@ jobs:
             make clean -j$(nproc)
           fi
 
-      - name: Release Firmware
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}
-          files: ./wrt/upload/*.*
-          body: |
-            这是个平台固件包，内含多个设备！
-            请注意选择你需要的设备固件！
+      - name: Release Firmware (Gitea API)
+        env:
+          GITEA_TOKEN: ${{secrets.GITEA_TOKEN}}
+          GITEA_INSTANCE: gitea.jmsu.top
+          REPO_OWNER: lingyuzeng
+          REPO_NAME: OpenWRT-CI
+        run: |
+          TAG_NAME="${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}"
+          BODY="这是个平台固件包，内含多个设备！
+请注意选择你需要的设备固件！
 
-            源码：${{env.WRT_REPO}}
-            分支：${{env.WRT_BRANCH}}
-            提交：${{env.WRT_HASH}}
+源码：${{env.WRT_REPO}}
+分支：${{env.WRT_BRANCH}}
+提交：${{env.WRT_HASH}}
 
-            配置：${{env.WRT_CONFIG}}
-            平台：${{env.WRT_TARGET}}
+配置：${{env.WRT_CONFIG}}
+平台：${{env.WRT_TARGET}}
 
-            登录地址：${{env.WRT_IP}}
-            登录密码：${{env.WRT_PW}}
+登录地址：${{env.WRT_IP}}
+登录密码：${{env.WRT_PW}}
 
-            WIFI名称：${{env.WRT_SSID}}
-            WIFI密码：${{env.WRT_WORD}}
+WIFI名称：${{env.WRT_SSID}}
+WIFI密码：${{env.WRT_WORD}}
 
-            内核版本：${{env.WRT_KVER}}
-            插件列表：${{env.WRT_LIST}}
+内核版本：${{env.WRT_KVER}}
+插件列表：${{env.WRT_LIST}}"
+
+          # 创建 tag
+          curl -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/tags" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"${TAG_NAME}\", \"message\": \"Auto release\", \"target\": \"${{env.WRT_HASH}}\"}"
+
+          # 创建 release
+          RELEASE_JSON=$(curl -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"${BODY}\"}")
+
+          # 提取 release ID
+          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+
+          # 上传固件文件
+          for FILE in ./wrt/upload/*.*; do
+            if [ -f "$FILE" ]; then
+              curl -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets" \
+                -H "Authorization: token ${GITEA_TOKEN}" \
+                -F "attachment=@${FILE}"
+            fi
+          done
