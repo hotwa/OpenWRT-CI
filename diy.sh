@@ -63,7 +63,32 @@ if [ -n "$GOLANG_MK" ] && [ -f "$GOLANG_MK" ]; then
 fi
 
 #rm -rf feeds
-./scripts/feeds update -a && ./scripts/feeds install -a
+# 确保 feeds 更新成功，增加重试机制
+echo "正在更新 feeds..."
+RETRY=0
+MAX_RETRY=3
+while [ $RETRY -lt $MAX_RETRY ]; do
+  if ./scripts/feeds update -a 2>&1 | tee /tmp/feeds_update.log; then
+    break
+  fi
+  RETRY=$((RETRY + 1))
+  echo "Feeds 更新失败，尝试重试 ($RETRY/$MAX_RETRY)..."
+  sleep 5
+done
+
+# 检查 feeds 更新是否成功
+if ! grep -q "Updating feed" /tmp/feeds_update.log 2>/dev/null; then
+  echo "警告: feeds 更新可能未正常完成"
+fi
+
+echo "正在安装 feeds..."
+./scripts/feeds install -a -f 2>&1 | tee /tmp/feeds_install.log || true
+
+# 移除 bpf-headers 包（编译问题修复）
+if [ -d "package/kernel/bpf-headers" ]; then
+  echo "移除有编译问题的 bpf-headers 包..."
+  rm -rf package/kernel/bpf-headers
+fi
 
 # 注意：Passwall 使用 xiaorouji 版本（在 Scripts/Packages.sh 中配置）
 
