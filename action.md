@@ -94,3 +94,154 @@ requested: fba2dd661b7be7b34d6bd17ed92f41c44a5e05953ad81ab34b4ec780e5e7dc41
 - 修改: 
   1. 将 `git clone -b 24.x ...` 改为 `git clone -b 25.x ...`
   2. 移除 sed 修改 GO_VERSION 的代码块
+
+---
+
+### [2026-01-30 08:15:00] Fix Applied & New Run Triggered
+- Current Run ID: 21499383909
+- Status/Conclusion: in_progress / null
+- Step/Reason: 等待编译
+- Retry: 1/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- N/A (编译尚未完成)
+
+#### Diagnosis
+- 已修复: Packages.sh 直接克隆 25.x golang 分支
+- 已移除: 手动 sed 修改版本的代码块
+
+#### Fix Applied
+- 文件: Scripts/Packages.sh
+- 修改: git clone -b 24.x -> git clone -b 25.x
+- 移除: sed 修改 GO_VERSION 的代码块
+- commit: c896c23
+- triggered new run: 21499383909
+
+
+---
+
+### [2026-01-30 10:06:00] Check #2
+- Current Run ID: 21499383909
+- Status/Conclusion: in_progress / null
+- Step/Reason: 正在编译 IPQ60XX-NOWIFI 和 IPQ60XX-WIFI
+- Retry: 1/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- N/A (编译进行中)
+
+#### Diagnosis
+- 编译已开始，预计需要 1-3 小时完成
+- 已应用修复: 使用 25.x golang 分支
+
+---
+
+### [2026-01-30 10:37:00] Check #3
+- Current Run ID: 21499383909
+- Status/Conclusion: in_progress / null
+- Step/Reason: 正在编译中
+- Retry: 1/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- 编译任务仍在进行中
+- 预计总耗时 1-3 小时
+
+---
+
+### [2026-01-30 12:06:00] Check #4
+- Current Run ID: 21499383909
+- Status/Conclusion: in_progress / null
+- Step/Reason: 正在编译
+  - IPQ60XX-NOWIFI / VIKINGYFY/immortalwrt
+  - IPQ60XX-WIFI / VIKINGYFY/immortalwrt
+- Retry: 1/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- 编译进行中
+
+---
+
+### [2026-01-30 13:12:00] Check #5
+- Current Run ID: 21499383909
+- Status/Conclusion: in_progress / null
+- Step/Reason: 正在编译
+  - IPQ60XX-NOWIFI / VIKINGYFY/immortalwrt
+  - IPQ60XX-WIFI / VIKINGYFY/immortalwrt
+- Retry: 1/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- 编译进行中
+
+---
+
+### [2026-01-30 14:14:00] Check #6
+- Current Run ID: 21499383909
+- Status/Conclusion: completed / cancelled
+- Step/Reason: 编译被取消
+- Retry: 1/10
+- Next: 已触发新编译
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21499383909
+
+#### Key Log Lines
+- 编译在 2026-01-30 06:14:47 被取消
+- 可能原因: GitHub Actions 超时或手动取消
+
+---
+
+### [2026-01-30 14:15:00] Re-triggered
+- New Run ID: 21506439410
+- Status/Conclusion: in_progress / null
+- Step/Reason: 等待编译
+- Retry: 2/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21506439410
+
+#### Key Log Lines
+- 已重新触发编译
+
+---
+
+### [2026-01-31 10:50:00] Check #7
+- Current Run ID: 21520097563
+- Status/Conclusion: completed / cancelled
+- Step/Reason: 编译超时被取消（Compile Firmware 步骤）
+- Retry: 3/10
+- Next: 已触发新编译
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21520097563
+
+#### Key Log Lines
+- IPQ60XX-NOWIFI: Compile Firmware 15:17:19 开始，21:02:41 取消
+- IPQ60XX-WIFI: Compile Firmware 15:16:58 开始，21:02:42 取消
+- 运行时间约 5 小时 45 分钟
+
+#### Diagnosis
+- **取消原因**: GitHub Actions 超时限制（免费账户 max 6 小时）
+- 两个并行编译任务都卡在 "Compile Firmware" 步骤
+- ccache 优化已生效，但编译时间仍超过 6 小时窗口
+- 建议: 考虑优化编译配置或启用 GitHub Actions Plus 延长超时
+
+#### Fix Applied
+- 无代码修改（超时非代码问题）
+- 需要重新触发编译
+
+---
+
+### [2026-01-31 10:55:00] Re-triggered
+- New Run ID: 21537451361
+- Status/Conclusion: in_progress / null
+- Step/Reason: 等待编译
+- Retry: 4/10
+- Next: 继续监控
+- Links: https://github.com/hotwa/OpenWRT-CI/actions/runs/21537451361
+
+#### Key Log Lines
+- N/A (等待编译开始)
