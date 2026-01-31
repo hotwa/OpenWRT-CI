@@ -274,18 +274,25 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"tag_name\": \"${TAG_NAME}\", \"message\": \"Auto release\", \"target\": \"${{ env.WRT_HASH }}\"}"
 
-          # 创建 release (使用 heredoc 避免 YAML 解析问题)
-          RELEASE_JSON=$(cat <<EOF | curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
+          # 构建 release body
+          RELEASE_BODY="这是个平台固件包，内含多个设备！"
+          RELEASE_BODY="${RELEASE_BODY}\n\n源码：${{ env.WRT_REPO }}"
+          RELEASE_BODY="${RELEASE_BODY}\n分支：${{ env.WRT_BRANCH }}"
+          RELEASE_BODY="${RELEASE_BODY}\n提交：${{ env.WRT_HASH }}"
+          RELEASE_BODY="${RELEASE_BODY}\n\n配置：${{ env.WRT_CONFIG }}"
+          RELEASE_BODY="${RELEASE_BODY}\n平台：${{ env.WRT_TARGET }}"
+          RELEASE_BODY="${RELEASE_BODY}\n\n登录地址：${{ env.WRT_IP }}"
+          RELEASE_BODY="${RELEASE_BODY}\n登录密码：${{ env.WRT_PW }}"
+          RELEASE_BODY="${RELEASE_BODY}\n\nWIFI名称：${{ env.WRT_SSID }}"
+          RELEASE_BODY="${RELEASE_BODY}\nWIFI密码：${{ env.WRT_WORD }}"
+          RELEASE_BODY="${RELEASE_BODY}\n\n内核版本：${{ env.WRT_KVER }}"
+          RELEASE_BODY="${RELEASE_BODY}\n插件列表：${{ env.WRT_LIST }}"
+
+          # 创建 release
+          RELEASE_JSON=$(curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
             -H "Authorization: token ${GITEA_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data-binary @-
-{
-  "tag_name": "${TAG_NAME}",
-  "name": "${TAG_NAME}",
-  "body": "这是个平台固件包，内含多个设备！\n\n源码：${{ env.WRT_REPO }}\n分支：${{ env.WRT_BRANCH }}\n提交：${{ env.WRT_HASH }}\n\n配置：${{ env.WRT_CONFIG }}\n平台：${{ env.WRT_TARGET }}\n\n登录地址：${{ env.WRT_IP }}\n登录密码：${{ env.WRT_PW }}\n\nWIFI名称：${{ env.WRT_SSID }}\nWIFI密码：${{ env.WRT_WORD }}\n\n内核版本：${{ env.WRT_KVER }}\n插件列表：${{ env.WRT_LIST }}"
-}
-EOF
-)
+            --data-raw "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"${RELEASE_BODY}\"}")
 
           RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
 
