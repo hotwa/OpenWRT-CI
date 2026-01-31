@@ -65,7 +65,7 @@ env:
 
 jobs:
   core:
-    name: ${{inputs.WRT_SOURCE}}
+    name: Build Firmware
     runs-on: [heavy]  # 使用 Gitea heavy runner（无超时限制）
     steps:
       - name: Install Build Dependencies
@@ -258,49 +258,49 @@ jobs:
             make clean -j$(nproc)
           fi
 
-      - name: Release Firmware (Gitea API)
-        env:
-          GITEA_TOKEN: ${{secrets.GITEA_TOKEN}}
-          GITEA_INSTANCE: gitea.jmsu.top
-          REPO_OWNER: lingyuzeng
-          REPO_NAME: OpenWRT-CI
-        run: |
-          set -e
-          TAG_NAME="${{ env.CI_NAME }}-${{ env.WRT_CONFIG }}_${{ env.WRT_DATE }}"
-          
-          # 创建 tag
-          curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/tags" \
-            -H "Authorization: token ${GITEA_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"${TAG_NAME}\", \"message\": \"Auto release\", \"target\": \"${{ env.WRT_HASH }}\"}"
-
-          # 构建 release body
-          RELEASE_BODY="这是个平台固件包，内含多个设备！"
-          RELEASE_BODY="${RELEASE_BODY}\n\n源码：${{ env.WRT_REPO }}"
-          RELEASE_BODY="${RELEASE_BODY}\n分支：${{ env.WRT_BRANCH }}"
-          RELEASE_BODY="${RELEASE_BODY}\n提交：${{ env.WRT_HASH }}"
-          RELEASE_BODY="${RELEASE_BODY}\n\n配置：${{ env.WRT_CONFIG }}"
-          RELEASE_BODY="${RELEASE_BODY}\n平台：${{ env.WRT_TARGET }}"
-          RELEASE_BODY="${RELEASE_BODY}\n\n登录地址：${{ env.WRT_IP }}"
-          RELEASE_BODY="${RELEASE_BODY}\n登录密码：${{ env.WRT_PW }}"
-          RELEASE_BODY="${RELEASE_BODY}\n\nWIFI名称：${{ env.WRT_SSID }}"
-          RELEASE_BODY="${RELEASE_BODY}\nWIFI密码：${{ env.WRT_WORD }}"
-          RELEASE_BODY="${RELEASE_BODY}\n\n内核版本：${{ env.WRT_KVER }}"
-          RELEASE_BODY="${RELEASE_BODY}\n插件列表：${{ env.WRT_LIST }}"
-
-          # 创建 release
-          RELEASE_JSON=$(curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
-            -H "Authorization: token ${GITEA_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-raw "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"${RELEASE_BODY}\"}")
-
-          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
-
-          # 上传固件文件
-          for FILE in ./wrt/upload/*.*; do
-            if [ -f "$FILE" ]; then
-              curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets" \
-                -H "Authorization: token ${GITEA_TOKEN}" \
-                -F "attachment=@${FILE}"
-            fi
-          done
+      # - name: Release Firmware (Gitea API)
+      #   env:
+      #     GITEA_TOKEN: ${{secrets.GITEA_TOKEN}}
+      #     GITEA_INSTANCE: gitea.jmsu.top
+      #     REPO_OWNER: lingyuzeng
+      #     REPO_NAME: OpenWRT-CI
+      #   run: |
+      #     set -e
+      #     TAG_NAME="${{ env.CI_NAME }}-${{ env.WRT_CONFIG }}_${{ env.WRT_DATE }}"
+      #
+      #     # 创建 tag
+      #     curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/tags" \
+      #       -H "Authorization: token ${GITEA_TOKEN}" \
+      #       -H "Content-Type: application/json" \
+      #       -d "{\"tag_name\": \"${TAG_NAME}\", \"message\": \"Auto release\", \"target\": \"${{ env.WRT_HASH }}\"}"
+      #
+      #     # 构建 release body
+      #     RELEASE_BODY="这是个平台固件包，内含多个设备！"
+      #     RELEASE_BODY="${RELEASE_BODY}\n\n源码：${{ env.WRT_REPO }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n分支：${{ env.WRT_BRANCH }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n提交：${{ env.WRT_HASH }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n\n配置：${{ env.WRT_CONFIG }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n平台：${{ env.WRT_TARGET }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n\n登录地址：${{ env.WRT_IP }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n登录密码：${{ env.WRT_PW }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n\nWIFI名称：${{ env.WRT_SSID }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\nWIFI密码：${{ env.WRT_WORD }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n\n内核版本：${{ env.WRT_KVER }}"
+      #     RELEASE_BODY="${RELEASE_BODY}\n插件列表：${{ env.WRT_LIST }}"
+      #
+      #     # 创建 release
+      #     RELEASE_JSON=$(curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
+      #       -H "Authorization: token ${GITEA_TOKEN}" \
+      #       -H "Content-Type: application/json" \
+      #       --data-raw "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"${RELEASE_BODY}\"}")
+      #
+      #     RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+      #
+      #     # 上传固件文件
+      #     for FILE in ./wrt/upload/*.*; do
+      #       if [ -f "$FILE" ]; then
+      #         curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets" \
+      #           -H "Authorization: token ${GITEA_TOKEN}" \
+      #           -F "attachment=@${FILE}"
+      #       fi
+      #     done
