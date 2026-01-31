@@ -43,7 +43,7 @@ env:
 
 jobs:
   core:
-    name: ${{ inputs.WRT_SOURCE }}
+    name: Build-Core
     runs-on: buildx
     steps:
       - name: Checkout Projects
