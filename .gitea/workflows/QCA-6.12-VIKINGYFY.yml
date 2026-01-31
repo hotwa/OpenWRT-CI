@@ -1,4 +1,3 @@
-# .gitea/workflows/QCA-6.12-VIKINGYFY.yml
 name: QCA-6.12-VIKINGYFY
 
 on:
@@ -10,33 +9,145 @@ on:
         type: string
       TEST:
         description: '仅输出配置文件，不编译固件。'
-        default: 'false'
+        default: false
         required: false
         type: boolean
 
+env:
+  # Gitea 自动注入 Secrets
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+
+  # 固件通用配置
+  WRT_THEME: argon
+  WRT_NAME: DAE-WRT
+  WRT_SSID: DAE-WRT
+  WRT_WORD: 12345678
+  WRT_IP: 192.168.10.1
+  WRT_PW: password
+  WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+  WRT_BRANCH: main
+  WRT_SOURCE: VIKINGYFY/immortalwrt
+  WRT_DIR: wrt
+
+  # 接收输入参数
+  WRT_PACKAGE: ${{ inputs.PACKAGE }}
+  WRT_TEST: ${{ inputs.TEST }}
+  CI_NAME: QCA-6.12-VIKINGYFY
+
 jobs:
-  config:
-    name: ${{ matrix.CONFIG }}
+  build:
+    name: Build-${{ matrix.CONFIG }}
     runs-on: buildx
     strategy:
       fail-fast: false
       matrix:
         CONFIG: [IPQ60XX-NOWIFI, IPQ60XX-WIFI]
-        SOURCE: [VIKINGYFY/immortalwrt]
-        BRANCH: [main]
 
-    uses: ./.gitea/workflows/WRT-CORE.yml
-    with:
+    env:
       WRT_CONFIG: ${{ matrix.CONFIG }}
-      WRT_THEME: argon
-      WRT_NAME: DAE-WRT
-      WRT_SSID: DAE-WRT
-      WRT_WORD: 12345678
-      WRT_IP: 192.168.10.1
-      WRT_PW: 无
-      WRT_REPO: https://github.com/${{ matrix.SOURCE }}.git
-      WRT_BRANCH: ${{ matrix.BRANCH }}
-      WRT_SOURCE: ${{ matrix.SOURCE }}
-      WRT_PACKAGE: ${{ inputs.PACKAGE }}
-      WRT_TEST: ${{ inputs.TEST }}
-      CI_NAME: ${{ gitea.workflow }}
+
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@v4
+
+      - name: Initialization Environment
+        run: |
+          sudo -E apt -yqq update
+          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+
+          # 脚本权限修正
+          if [ -d "Scripts" ]; then
+            chmod +x Scripts/*.sh
+          fi
+
+      - name: Initialization Values
+        run: |
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_VER=SNAPSHOT" >> $GITHUB_ENV
+
+          # 检查 Config 文件是否存在
+          if [ -f "./Config/${{ matrix.CONFIG }}.txt" ]; then
+            TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' "./Config/${{ matrix.CONFIG }}.txt" | tr '[:lower:]' '[:upper:]')
+            echo "WRT_TARGET=$TARGET" >> $GITHUB_ENV
+
+            # 自动探测架构
+            ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' "./Config/${{ matrix.CONFIG }}.txt" | head -n 1)
+            echo "WRT_ARCH=$ARCH" >> $GITHUB_ENV
+          else
+            echo "::error::Config file ./Config/${{ matrix.CONFIG }}.txt not found!"
+            exit 1
+          fi
+
+      - name: Clone Code
+        run: |
+          git clone --depth=1 --single-branch --branch ${{ env.WRT_BRANCH }} ${{ env.WRT_REPO }} ./wrt/
+          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir
+          key: ${{ env.WRT_ARCH }}-${{ env.WRT_CONFIG }}-${{ hashFiles('wrt/feeds.conf.default') }}
+          restore-keys: |
+            ${{ env.WRT_ARCH }}-${{ env.WRT_CONFIG }}-
+
+      - name: Update Feeds
+        run: |
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Custom Packages & Settings
+        run: |
+          # 运行自定义包脚本
+          cd ./wrt/package/
+          bash "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          bash "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+
+          cd ..
+          # 加载函数库并生成配置
+          . "$GITHUB_WORKSPACE/Scripts/function.sh"
+          generate_config
+
+          # 运行自定义设置脚本
+          bash "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+
+          # 生成最终配置
+          make defconfig
+
+      - name: Download Packages
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make download -j$(nproc)
+
+      - name: Compile Firmware
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Package Firmware
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/ && mkdir -p ./upload/firmware
+
+          cp .config ./upload/firmware/Config-${{ matrix.CONFIG }}.txt
+
+          # 整理固件文件
+          find ./bin/targets/ -type f -name "*${{ env.WRT_TARGET }}*" -exec cp -f {} ./upload/firmware/ \;
+
+          # 如果需要，也可以打包 bin/packages (可选)
+          # mkdir -p ./upload/packages
+          # cp -r ./bin/packages/* ./upload/packages/
+
+      - name: Upload Artifacts
+        if: env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.CONFIG }}_${{ env.WRT_DATE }}
+          path: ./wrt/upload/firmware/*
