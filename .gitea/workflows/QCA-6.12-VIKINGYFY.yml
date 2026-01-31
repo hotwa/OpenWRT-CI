@@ -104,7 +104,14 @@ jobs:
       - name: Update Feeds
         run: |
           cd ./wrt/
-          ./scripts/feeds update -a
+
+          # 防止 git 权限报错
+          git config --global --add safe.directory '*'
+
+          echo "Updating feeds..."
+          ./scripts/feeds update -a -f
+
+          echo "Installing feeds..."
           ./scripts/feeds install -a
 
       - name: Custom Packages & Settings
