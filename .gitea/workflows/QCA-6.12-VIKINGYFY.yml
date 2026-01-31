@@ -54,7 +54,8 @@ jobs:
       - name: Initialization Environment
         run: |
           sudo -E apt -yqq update
-          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync
+          # 添加 npm 以支持 node/pnpm 安装
+          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync npm
 
           # 安装 pnpm (daed 编译需要)
           sudo -E npm install -g pnpm
