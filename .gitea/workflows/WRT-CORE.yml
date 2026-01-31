@@ -68,11 +68,12 @@ jobs:
     name: ${{inputs.WRT_SOURCE}}
     runs-on: [heavy]  # 使用 Gitea heavy runner（无超时限制）
     steps:
-      - name: Install BC
+      - name: Install Build Dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt -yqq install bc
+          sudo apt-get update -yqq
+          sudo apt-get install -yqq --no-install-recommends bc build-essential python3 python3-pip gawk rsync tar bzip2 gzip zip unzip libssl-dev libncurses5-dev libncursesw5-dev libc6-dev chrpath time
 
       - name: Free Disk Space
         uses: endersonmenezes/free-disk-space@v2
@@ -94,16 +95,16 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt -yqq purge firefox
-          sudo -E apt -yqq update
-          sudo -E apt -yqq full-upgrade
-          sudo -E apt -yqq autoremove --purge
-          sudo -E apt -yqq autoclean
-          sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix libfuse-dev
+          sudo apt-get update -yqq
+          sudo apt-get purge -yqq firefox 2>/dev/null || true
+          sudo apt-get full-upgrade -yqq
+          sudo apt-get autoremove --purge -yqq
+          sudo apt-get autoclean -yqq
+          sudo apt-get clean -yqq
+          sudo apt-get install -yqq --no-install-recommends dos2unix libfuse-dev
           sudo bash $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
-          sudo -E systemctl daemon-reload
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          sudo systemctl daemon-reload 2>/dev/null || true
+          sudo timedatectl set-timezone "Asia/Shanghai"
 
       - name: Initialization Values
         run: |
