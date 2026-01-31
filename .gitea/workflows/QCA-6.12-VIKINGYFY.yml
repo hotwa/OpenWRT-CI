@@ -1,14 +1,7 @@
-# CI项目
+# .gitea/workflows/QCA-6.12-VIKINGYFY.yml
 name: QCA-6.12-VIKINGYFY
 
-# CI计划
 on:
-  # 自动编译：当 Auto-Clean 运行完成后
-  workflow_run:
-    workflows: ["Auto-Clean"]
-    types:
-      - completed
-  # 手动编译
   workflow_dispatch:
     inputs:
       PACKAGE:
@@ -21,14 +14,9 @@ on:
         required: false
         type: boolean
 
-# CI权限 (Gitea 会忽略，但保留也无妨)
-permissions: write-all
-
-# CI任务
 jobs:
   config:
     name: ${{ matrix.CONFIG }}
-    # 关键修改：匹配你的 Runner Label (runner-build-1 等都有 buildx 标签)
     runs-on: buildx
     strategy:
       fail-fast: false
@@ -37,32 +25,18 @@ jobs:
         SOURCE: [VIKINGYFY/immortalwrt]
         BRANCH: [main]
 
-    # 关键修改：指向 Gitea 目录下的核心工作流
     uses: ./.gitea/workflows/WRT-CORE.yml
     with:
-      # 编译配置
       WRT_CONFIG: ${{ matrix.CONFIG }}
-      # 默认主题
       WRT_THEME: argon
-      # 默认主机名
       WRT_NAME: DAE-WRT
-      # 默认WIFI名称
       WRT_SSID: DAE-WRT
-      # 默认WIFI密码
       WRT_WORD: 12345678
-      # 默认地址
       WRT_IP: 192.168.10.1
-      # 默认密码
       WRT_PW: 无
-      # 源码链接
       WRT_REPO: https://github.com/${{ matrix.SOURCE }}.git
-      # 源码分支
       WRT_BRANCH: ${{ matrix.BRANCH }}
-      # 源码名称
       WRT_SOURCE: ${{ matrix.SOURCE }}
-      # 插件调整
       WRT_PACKAGE: ${{ inputs.PACKAGE }}
-      # 仅输出配置文件
       WRT_TEST: ${{ inputs.TEST }}
-
       CI_NAME: ${{ gitea.workflow }}
