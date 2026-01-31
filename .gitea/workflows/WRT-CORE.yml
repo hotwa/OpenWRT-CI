@@ -14,7 +14,7 @@ on:
       WRT_REPO:   { required: true, type: string }
       WRT_BRANCH: { required: true, type: string }
       WRT_SOURCE: { required: false, type: string }
-      WRT_PACKAGE:{ required: false, type: string }
+      WRT_PACKAGE: { required: false, type: string }
       WRT_TEST:   { required: false, type: string }
       CI_NAME:    { required: false, type: string }
       WRT_ARCH:   { required: false, type: string }
