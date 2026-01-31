@@ -48,6 +48,7 @@ on:
         type: string
 
 env:
+  DEBIAN_FRONTEND: noninteractive
   # Gitea 自动注入 GITEA_TOKEN，也兼容 GITHUB_TOKEN 变量名
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   WRT_CONFIG: ${{ inputs.WRT_CONFIG }}
