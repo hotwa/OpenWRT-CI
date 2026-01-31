@@ -1,86 +1,55 @@
-# 云编译公用核心
+# .gitea/workflows/WRT-CORE.yml
 name: WRT-CORE
 
 on:
   workflow_call:
     inputs:
-      WRT_CONFIG:
-        required: true
-        type: string
-      WRT_THEME:
-        required: true
-        type: string
-      WRT_NAME:
-        required: true
-        type: string
-      WRT_SSID:
-        required: true
-        type: string
-      WRT_WORD:
-        required: true
-        type: string
-      WRT_IP:
-        required: true
-        type: string
-      WRT_PW:
-        required: false
-        type: string
-      WRT_REPO:
-        required: true
-        type: string
-      WRT_BRANCH:
-        required: true
-        type: string
-      WRT_SOURCE:
-        required: false
-        type: string
-      WRT_PACKAGE:
-        required: false
-        type: string
-      WRT_TEST:
-        required: false
-        type: string
-      CI_NAME:
-        required: false
-        type: string
-      WRT_ARCH:
-        required: false
-        type: string
+      WRT_CONFIG: { required: true, type: string }
+      WRT_THEME:  { required: true, type: string }
+      WRT_NAME:   { required: true, type: string }
+      WRT_SSID:   { required: true, type: string }
+      WRT_WORD:   { required: true, type: string }
+      WRT_IP:     { required: true, type: string }
+      WRT_PW:     { required: true, type: string }
+      WRT_REPO:   { required: true, type: string }
+      WRT_BRANCH: { required: true, type: string }
+      WRT_SOURCE: { required: false, type: string }
+      WRT_PACKAGE:{ required: false, type: string }
+      WRT_TEST:   { required: false, type: string }
+      CI_NAME:    { required: false, type: string }
+      WRT_ARCH:   { required: false, type: string }
 
 env:
   DEBIAN_FRONTEND: noninteractive
-  # Gitea 自动注入 GITEA_TOKEN，也兼容 GITHUB_TOKEN 变量名
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  WRT_CONFIG: ${{ inputs.WRT_CONFIG }}
-  WRT_THEME: ${{ inputs.WRT_THEME }}
-  WRT_NAME: ${{ inputs.WRT_NAME }}
-  WRT_SSID: ${{ inputs.WRT_SSID }}
-  WRT_WORD: ${{ inputs.WRT_WORD }}
-  WRT_IP: ${{ inputs.WRT_IP }}
-  WRT_PW: ${{ inputs.WRT_PW }}
-  WRT_REPO: ${{ inputs.WRT_REPO }}
-  WRT_BRANCH: ${{ inputs.WRT_BRANCH }}
+  TZ: Asia/Shanghai
+
+  # Gitea 上建议准备一个 PAT 作为 secrets.GITEA_TOKEN（比“自动注入 token”更可控）
+  GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+
+  WRT_CONFIG:  ${{ inputs.WRT_CONFIG }}
+  WRT_THEME:   ${{ inputs.WRT_THEME }}
+  WRT_NAME:    ${{ inputs.WRT_NAME }}
+  WRT_SSID:    ${{ inputs.WRT_SSID }}
+  WRT_WORD:    ${{ inputs.WRT_WORD }}
+  WRT_IP:      ${{ inputs.WRT_IP }}
+  WRT_PW:      ${{ inputs.WRT_PW }}
+  WRT_REPO:    ${{ inputs.WRT_REPO }}
+  WRT_BRANCH:  ${{ inputs.WRT_BRANCH }}
   WRT_PACKAGE: ${{ inputs.WRT_PACKAGE }}
-  WRT_TEST: ${{ inputs.WRT_TEST }}
-  WRT_DIR: 'wrt'
-  CI_NAME: ${{ inputs.CI_NAME }}
-  WRT_ARCH: ${{ inputs.WRT_ARCH }}
+  WRT_TEST:    ${{ inputs.WRT_TEST }}
+  WRT_DIR:     wrt
+  CI_NAME:     ${{ inputs.CI_NAME }}
+  WRT_ARCH:    ${{ inputs.WRT_ARCH }}
 
 jobs:
   core:
     name: ${{ inputs.WRT_SOURCE }}
-    # 关键修改：匹配你的 Runner Label
     runs-on: buildx
     steps:
-      - name: Install BC
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt -yqq update
-          sudo -E apt -yqq install bc
+      - name: Checkout Projects
+        uses: https://github.com/actions/checkout@v4
 
       - name: Free Disk Space
-        # 增加 https 前缀
         uses: https://github.com/endersonmenezes/free-disk-space@v2
         with:
           remove_android: true
@@ -88,131 +57,152 @@ jobs:
           remove_haskell: true
           remove_tool_cache: true
           remove_swap: true
-          # 针对 Runner 优化：保留部分常用工具以加速
           remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
           remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/share/glade* /usr/local/share/chromium /usr/local/share/powershell"
           testing: false
 
-      - name: Checkout Projects
-        # 增加 https 前缀
-        uses: https://github.com/actions/checkout@v4
-
-      - name: Initialization Environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
+      - name: Init Environment (minimal)
         run: |
+          set -eux
           sudo -E apt -yqq update
-          sudo -E apt -yqq install dos2unix libfuse-dev
-          chmod +x $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
-          sudo bash $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          sudo -E apt -yqq install bc dos2unix libfuse-dev git curl ca-certificates build-essential
+          chmod +x "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"
+          sudo bash "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"
 
       - name: Initialization Values
         run: |
+          set -eux
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
           echo "WRT_MARK=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)" >> $GITHUB_ENV
-          echo "WRT_VER=$(basename $WRT_REPO)-$WRT_BRANCH" >> $GITHUB_ENV
-
-          if [ -f "./Config/$WRT_CONFIG.txt" ]; then
-             echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
-          else
-             echo "WRT_TARGET=UNKNOWN" >> $GITHUB_ENV
-          fi
-
+          echo "WRT_VER=$(echo $WRT_REPO | cut -d '/' -f 4)-$WRT_BRANCH" >> $GITHUB_ENV
+          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
 
-          if [ -z "$WRT_ARCH" ] && [ -f "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" ]; then
-            export WRT_ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt | head -n 1)
+          if [ -z "${WRT_ARCH:-}" ]; then
+            WRT_ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" | head -n 1)
             echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
           fi
           echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
 
       - name: Clone Code
         run: |
-          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
-          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          set -eux
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" ./wrt/
+          cd ./wrt/
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+
+      - name: Diagnostics (version + package format)
+        run: |
+          set -eux
+          cd wrt
+          git log -1 --oneline
+          [ -f include/version.mk ] && grep -E 'VERSION_(NUMBER|CODE|REPO|DIST)' -n include/version.mk || true
+          find bin/packages -maxdepth 3 -type f \( -name "*.apk" -o -name "*.ipk" \) | head -n 20 || true
 
       - name: Check Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
-      - name: Cache Dependencies
-        # Gitea 支持 Actions Cache
+      # ✅ 建议：只 cache dl + ccache（staging_dir 太大太脏，容易拖慢）
+      - name: Cache dl + ccache
         uses: https://github.com/actions/cache@v4
         with:
           path: |
+            ./wrt/dl
             ./wrt/.ccache
-            ./wrt/staging_dir
-          key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}
+          key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_HASH }}
           restore-keys: |
-            ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
+            ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-
+            ${{ env.WRT_ARCH }}-
 
       - name: Update Feeds
         run: |
+          set -eux
           cd ./wrt/
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Custom Packages
         run: |
+          set -eux
           cd ./wrt/package/
-          bash $GITHUB_WORKSPACE/Scripts/Packages.sh
-          bash $GITHUB_WORKSPACE/Scripts/Handles.sh
+          bash "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          bash "$GITHUB_WORKSPACE/Scripts/Handles.sh"
 
       - name: Custom Settings
         run: |
-          . $GITHUB_WORKSPACE/Scripts/function.sh
+          set -eux
+          . "$GITHUB_WORKSPACE/Scripts/function.sh"
           cd ./wrt/
-          generate_config && cat .config
-          bash $GITHUB_WORKSPACE/Scripts/Settings.sh
-          make defconfig -j$(nproc)
+          generate_config
+          bash "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+          make defconfig -j"$(nproc)"
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'
         run: |
+          set -eux
           cd ./wrt/
-          make download -j$(nproc)
+          make download -j"$(nproc)"
 
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
         run: |
+          set -eux
           cd ./wrt/
-          make -j$(nproc) || make -j1 V=s
+          make -j"$(nproc)" || make -j1 V=s
 
-      - name: Package Firmware
+      - name: Index package repo (for opkg/apk repo)
+        if: env.WRT_TEST != 'true'
         run: |
-          cd ./wrt/ && mkdir ./upload/
-          cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_VER"-"".txt
+          set -eux
+          cd ./wrt/
+          make package/index
 
-          if [[ $WRT_TEST != 'true' ]]; then
-            find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n 1 > kver.tmp || echo "unknown" > kver.tmp
-            echo "WRT_KVER=$(cat kver.tmp)" >> $GITHUB_ENV
-            rm kver.tmp
+      - name: Package Firmware + Packages Repo
+        run: |
+          set -eux
+          cd ./wrt/
+          mkdir -p ./upload/firmware ./upload/packages
+          cp -f ./.config ./upload/firmware/Config-"$WRT_CONFIG"-"$WRT_VER".txt
 
-            find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ' > list.tmp || echo "none" > list.tmp
-            echo "WRT_LIST=$(cat list.tmp)" >> $GITHUB_ENV
-            rm list.tmp
-
+          if [[ "${WRT_TEST}" != 'true' ]]; then
             find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
 
-            find ./bin/targets/ -type f -iname "*$WRT_TARGET*" -exec sh -c '
-              FILE="$1"
-              WRT_VER="$2"
-              WRT_TARGET="$3"
-              EXT="${FILE##*.}"
-              NAME=$(basename "$FILE" | cut -d. -f1 | grep -io "$WRT_TARGET.*")
-              mv -f "$FILE" "./upload/$WRT_VER-$NAME.$EXT"
-            ' _ {} "$WRT_VER" "$WRT_TARGET" \;
+            # firmware
+            cp -a ./bin/targets ./upload/firmware/
 
-            find ./bin/targets/ -type f -not -path "*/upload/*" -exec mv -f {} ./upload/ \; 2>/dev/null || true
-
-            make clean -j$(nproc)
+            # packages repo（后续你可以发布到静态站点，路由器直接 opkg/apk 安装）
+            cp -a ./bin/packages ./upload/packages/
           fi
 
       - name: Upload Artifacts
         uses: https://github.com/actions/upload-artifact@v4
         with:
-          name: Firmware-${{ env.WRT_CONFIG }}-${{ env.WRT_DATE }}
-          path: ./wrt/upload/*
+          name: Build-${{ env.WRT_CONFIG }}-${{ env.WRT_DATE }}
+          path: ./wrt/upload/**
           compression-level: 0
+
+      - name: Create Gitea Release
+        if: env.WRT_TEST != 'true'
+        uses: https://gitea.com/actions/gitea-release-action@v1
+        with:
+          # 如需指定 Gitea URL（内网/自签名）可加 server_url: https://gitea.example.com
+          tag_name: ${{ env.CI_NAME }}-${{ env.WRT_CONFIG }}_${{ env.WRT_DATE }}
+          name: ${{ env.CI_NAME }}-${{ env.WRT_CONFIG }}_${{ env.WRT_DATE }}
+          body: |
+            源码：${{ env.WRT_REPO }}
+            分支：${{ env.WRT_BRANCH }}
+            提交：${{ env.WRT_HASH }}
+            配置：${{ env.WRT_CONFIG }}
+            平台：${{ env.WRT_TARGET }}
+            登录地址：${{ env.WRT_IP }}
+            登录密码：${{ env.WRT_PW }}
+            WIFI名称：${{ env.WRT_SSID }}
+            WIFI密码：${{ env.WRT_WORD }}
+          files: |-
+            wrt/upload/firmware/**/*
+            wrt/upload/packages/**/*
+          token: ${{ secrets.GITEA_TOKEN }}
