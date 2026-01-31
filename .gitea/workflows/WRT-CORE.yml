@@ -1,4 +1,4 @@
-#云编译公用核心
+# 云编译公用核心
 name: WRT-CORE
 
 on:
@@ -23,7 +23,7 @@ on:
         required: true
         type: string
       WRT_PW:
-        required: true
+        required: false
         type: string
       WRT_REPO:
         required: true
@@ -39,268 +39,179 @@ on:
         type: string
       WRT_TEST:
         required: false
-        type: boolean
+        type: string
       CI_NAME:
         required: false
         type: string
       WRT_ARCH:
         required: false
         type: string
+
 env:
-  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-  WRT_CONFIG: ${{inputs.WRT_CONFIG}}
-  WRT_THEME: ${{inputs.WRT_THEME}}
-  WRT_NAME: ${{inputs.WRT_NAME}}
-  WRT_SSID: ${{inputs.WRT_SSID}}
-  WRT_WORD: ${{inputs.WRT_WORD}}
-  WRT_IP: ${{inputs.WRT_IP}}
-  WRT_PW: ${{inputs.WRT_PW}}
-  WRT_REPO: ${{inputs.WRT_REPO}}
-  WRT_BRANCH: ${{inputs.WRT_BRANCH}}
-  WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
-  WRT_TEST: ${{inputs.WRT_TEST}}
+  # Gitea 自动注入 GITEA_TOKEN，也兼容 GITHUB_TOKEN 变量名
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  WRT_CONFIG: ${{ inputs.WRT_CONFIG }}
+  WRT_THEME: ${{ inputs.WRT_THEME }}
+  WRT_NAME: ${{ inputs.WRT_NAME }}
+  WRT_SSID: ${{ inputs.WRT_SSID }}
+  WRT_WORD: ${{ inputs.WRT_WORD }}
+  WRT_IP: ${{ inputs.WRT_IP }}
+  WRT_PW: ${{ inputs.WRT_PW }}
+  WRT_REPO: ${{ inputs.WRT_REPO }}
+  WRT_BRANCH: ${{ inputs.WRT_BRANCH }}
+  WRT_PACKAGE: ${{ inputs.WRT_PACKAGE }}
+  WRT_TEST: ${{ inputs.WRT_TEST }}
   WRT_DIR: 'wrt'
-  CI_NAME: ${{inputs.CI_NAME}}
-  WRT_ARCH: ${{inputs.WRT_ARCH}}
+  CI_NAME: ${{ inputs.CI_NAME }}
+  WRT_ARCH: ${{ inputs.WRT_ARCH }}
 
 jobs:
   core:
-    name: Build Firmware
-    runs-on: [heavy]  # 使用 Gitea heavy runner（无超时限制）
+    name: ${{ inputs.WRT_SOURCE }}
+    # 关键修改：匹配你的 Runner Label
+    runs-on: buildx
     steps:
-      - name: Install Build Dependencies
+      - name: Install BC
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -yqq
-          sudo apt-get install -yqq --no-install-recommends bc build-essential python3 python3-pip gawk rsync tar bzip2 gzip zip unzip libssl-dev libncurses5-dev libncursesw5-dev libc6-dev chrpath time
+          sudo -E apt -yqq update
+          sudo -E apt -yqq install bc
 
       - name: Free Disk Space
-        uses: endersonmenezes/free-disk-space@v2
+        # 增加 https 前缀
+        uses: https://github.com/endersonmenezes/free-disk-space@v2
         with:
           remove_android: true
           remove_dotnet: true
           remove_haskell: true
           remove_tool_cache: true
           remove_swap: true
+          # 针对 Runner 优化：保留部分常用工具以加速
           remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
           remove_packages_one_command: true
-          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/share/glade* /usr/local/share/chromium /usr/local/share/powershell"
           testing: false
 
       - name: Checkout Projects
-        uses: actions/checkout@main
+        # 增加 https 前缀
+        uses: https://github.com/actions/checkout@v4
 
       - name: Initialization Environment
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -yqq
-          sudo apt-get purge -yqq firefox 2>/dev/null || true
-          sudo apt-get full-upgrade -yqq
-          sudo apt-get autoremove --purge -yqq
-          sudo apt-get autoclean -yqq
-          sudo apt-get clean -yqq
-          sudo apt-get install -yqq --no-install-recommends dos2unix libfuse-dev
+          sudo -E apt -yqq update
+          sudo -E apt -yqq install dos2unix libfuse-dev
+          chmod +x $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
           sudo bash $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
-          sudo systemctl daemon-reload 2>/dev/null || true
-          sudo timedatectl set-timezone "Asia/Shanghai"
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
 
       - name: Initialization Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
           echo "WRT_MARK=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)" >> $GITHUB_ENV
-          echo "WRT_VER=$(echo $WRT_REPO | cut -d '/' -f 4)-$WRT_BRANCH" >> $GITHUB_ENV
-          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          echo "WRT_VER=$(basename $WRT_REPO)-$WRT_BRANCH" >> $GITHUB_ENV
+
+          if [ -f "./Config/$WRT_CONFIG.txt" ]; then
+             echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          else
+             echo "WRT_TARGET=UNKNOWN" >> $GITHUB_ENV
+          fi
+
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
 
-          echo "WRT_CI=$WRT_CI" >> $GITHUB_ENV
-          [[ -z $WRT_ARCH ]] && {
+          if [ -z "$WRT_ARCH" ] && [ -f "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" ]; then
             export WRT_ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt | head -n 1)
             echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
-          }
+          fi
           echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
-
-      - name: Debug Go Version
-        run: |
-          echo "=== 1. 系统 Go (PATH) ==="
-          which go 2>/dev/null && go version || echo "❌ 无系统 Go"
-
-          echo ""
-          echo "=== 2. feeds/packages/lang/golang/golang/Makefile ==="
-          find . -path "*/feeds/packages/lang/golang/golang/Makefile" -exec grep -E "GO_VERSION" {} \; 2>/dev/null || echo "❌ 未找到 feeds golang Makefile"
-
-          echo ""
-          echo "=== 3. wrt/feeds/packages/lang/golang/golang/Makefile ==="
-          if [ -f "./wrt/feeds/packages/lang/golang/golang/Makefile" ]; then
-            grep -E "GO_VERSION" ./wrt/feeds/packages/lang/golang/golang/Makefile | head -5
-          else
-            echo "❌ wrt/feeds 尚未克隆或不存在"
-          fi
-
-          echo ""
-          echo "=== 4. Host Go (staging_dir/hostpkg) ==="
-          if [ -d "./wrt/staging_dir/hostpkg/bin" ]; then
-            ls -la ./wrt/staging_dir/hostpkg/bin/go 2>/dev/null && ./wrt/staging_dir/hostpkg/bin/go version || echo "❌ Host Go 不存在或无法执行"
-          else
-            echo "❌ staging_dir/hostpkg 不存在（编译后才会出现）"
-          fi
 
       - name: Clone Code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
-
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
       - name: Check Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
-      # - name: Cache Dependencies
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ./wrt/.ccache
-      #       ./wrt/staging_dir
-      #     key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}
-      #     restore-keys: |
-      #       ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
-
-      - name: Refresh the cache
-        run: |
-          if [ -d "./wrt/staging_dir" ]; then
-            find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
-                find "$dir" -type f -exec touch {} +
-            done
-          fi
+      - name: Cache Dependencies
+        # Gitea 支持 Actions Cache
+        uses: https://github.com/actions/cache@v4
+        with:
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir
+          key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}
+          restore-keys: |
+            ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
 
       - name: Update Feeds
         run: |
           cd ./wrt/
-
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Custom Packages
         run: |
           cd ./wrt/package/
-
-          $GITHUB_WORKSPACE/Scripts/Packages.sh
-          $GITHUB_WORKSPACE/Scripts/Handles.sh
+          bash $GITHUB_WORKSPACE/Scripts/Packages.sh
+          bash $GITHUB_WORKSPACE/Scripts/Handles.sh
 
       - name: Custom Settings
         run: |
           . $GITHUB_WORKSPACE/Scripts/function.sh
           cd ./wrt/
-
           generate_config && cat .config
-
-          $GITHUB_WORKSPACE/Scripts/Settings.sh
-
+          bash $GITHUB_WORKSPACE/Scripts/Settings.sh
           make defconfig -j$(nproc)
 
       - name: Download Packages
-        if: inputs.WRT_TEST != true
+        if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
-
           make download -j$(nproc)
 
       - name: Compile Firmware
-        if: inputs.WRT_TEST != true
+        if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
-
           make -j$(nproc) || make -j1 V=s
-
-      - name: Delete Old Cache
-        if: false
-        run: |
-          echo "缓存保留以加速后续编译"
-          echo "========cache status========"
-          echo "ccache: $(du -sh ./wrt/.ccache | cut -f 1)"
-          echo "staging: $(du -sh ./wrt/staging_dir | cut -f 1)"
-
-      - name: Machine Information
-        run: |
-          cd ./wrt/
-
-          echo "======================="
-          lscpu | grep -E "name|Core|Thread"
-          echo "======================="
-          df -h
-          echo "======================="
-          du -h --max-depth=1
-          echo "======================="
 
       - name: Package Firmware
         run: |
           cd ./wrt/ && mkdir ./upload/
-
           cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_VER"-"".txt
 
-          if [[ ${{ inputs.WRT_TEST }} != true ]]; then
-            echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
-            echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+          if [[ $WRT_TEST != 'true' ]]; then
+            find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -n 1 > kver.tmp || echo "unknown" > kver.tmp
+            echo "WRT_KVER=$(cat kver.tmp)" >> $GITHUB_ENV
+            rm kver.tmp
+
+            find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ' > list.tmp || echo "none" > list.tmp
+            echo "WRT_LIST=$(cat list.tmp)" >> $GITHUB_ENV
+            rm list.tmp
 
             find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
 
-            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
-              EXT=$(basename $FILE | cut -d '.' -f 2-)
-              NAME=$(basename $FILE | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
-              NEW_FILE="$WRT_VER"-"$NAME"-""."$EXT"
-              mv -f $FILE ./upload/$NEW_FILE
-            done
+            find ./bin/targets/ -type f -iname "*$WRT_TARGET*" -exec sh -c '
+              FILE="$1"
+              WRT_VER="$2"
+              WRT_TARGET="$3"
+              EXT="${FILE##*.}"
+              NAME=$(basename "$FILE" | cut -d. -f1 | grep -io "$WRT_TARGET.*")
+              mv -f "$FILE" "./upload/$WRT_VER-$NAME.$EXT"
+            ' _ {} "$WRT_VER" "$WRT_TARGET" \;
 
-            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+            find ./bin/targets/ -type f -not -path "*/upload/*" -exec mv -f {} ./upload/ \; 2>/dev/null || true
 
             make clean -j$(nproc)
           fi
 
-      # - name: Release Firmware (Gitea API)
-      #   env:
-      #     GITEA_TOKEN: ${{secrets.GITEA_TOKEN}}
-      #     GITEA_INSTANCE: gitea.jmsu.top
-      #     REPO_OWNER: lingyuzeng
-      #     REPO_NAME: OpenWRT-CI
-      #   run: |
-      #     set -e
-      #     TAG_NAME="${{ env.CI_NAME }}-${{ env.WRT_CONFIG }}_${{ env.WRT_DATE }}"
-      #
-      #     # 创建 tag
-      #     curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/tags" \
-      #       -H "Authorization: token ${GITEA_TOKEN}" \
-      #       -H "Content-Type: application/json" \
-      #       -d "{\"tag_name\": \"${TAG_NAME}\", \"message\": \"Auto release\", \"target\": \"${{ env.WRT_HASH }}\"}"
-      #
-      #     # 构建 release body
-      #     RELEASE_BODY="这是个平台固件包，内含多个设备！"
-      #     RELEASE_BODY="${RELEASE_BODY}\n\n源码：${{ env.WRT_REPO }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n分支：${{ env.WRT_BRANCH }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n提交：${{ env.WRT_HASH }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n\n配置：${{ env.WRT_CONFIG }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n平台：${{ env.WRT_TARGET }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n\n登录地址：${{ env.WRT_IP }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n登录密码：${{ env.WRT_PW }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n\nWIFI名称：${{ env.WRT_SSID }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\nWIFI密码：${{ env.WRT_WORD }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n\n内核版本：${{ env.WRT_KVER }}"
-      #     RELEASE_BODY="${RELEASE_BODY}\n插件列表：${{ env.WRT_LIST }}"
-      #
-      #     # 创建 release
-      #     RELEASE_JSON=$(curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases" \
-      #       -H "Authorization: token ${GITEA_TOKEN}" \
-      #       -H "Content-Type: application/json" \
-      #       --data-raw "{\"tag_name\": \"${TAG_NAME}\", \"name\": \"${TAG_NAME}\", \"body\": \"${RELEASE_BODY}\"}")
-      #
-      #     RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
-      #
-      #     # 上传固件文件
-      #     for FILE in ./wrt/upload/*.*; do
-      #       if [ -f "$FILE" ]; then
-      #         curl -s -X POST "https://${GITEA_INSTANCE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/releases/${RELEASE_ID}/assets" \
-      #           -H "Authorization: token ${GITEA_TOKEN}" \
-      #           -F "attachment=@${FILE}"
-      #       fi
-      #     done
+      - name: Upload Artifacts
+        uses: https://github.com/actions/upload-artifact@v4
+        with:
+          name: Firmware-${{ env.WRT_CONFIG }}-${{ env.WRT_DATE }}
+          path: ./wrt/upload/*
+          compression-level: 0
