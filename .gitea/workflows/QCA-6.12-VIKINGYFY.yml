@@ -1,4 +1,4 @@
-#CI项目
+#CI项目 - Gitea Actions 版本（无 workflow_call）
 name: QCA-6.12-VIKINGYFY
 
 #CI计划
@@ -7,22 +7,25 @@ on:
   workflow_dispatch:
     inputs:
       PACKAGE:
-        description: '手动调整插件包，多个请用\n符号隔开。'
+        description: '手动调整插件包，多个请用换行符号隔开。'
         required: false
         type: string
       TEST:
         description: '仅输出配置文件，不编译固件。'
-        default: 'false'
+        default: false
         required: false
         type: boolean
   # 定时编译（可选）
   schedule:
     - cron: '0 0 * * *'  # 每天凌晨
 
-#CI任务
+env:
+  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
 jobs:
-  config:
+  build:
     name: ${{matrix.CONFIG}}
+    runs-on: [heavy]  # 使用 Gitea heavy runner（无超时限制）
     strategy:
       fail-fast: false
       matrix:
@@ -30,32 +33,143 @@ jobs:
         SOURCE: [VIKINGYFY/immortalwrt]
         BRANCH: [main]
 
-    #调用公用编译核心WRT-CORE.yml
-    uses: ./.gitea/workflows/WRT-CORE.yml
-    with:
-      #编译配置
+    env:
       WRT_CONFIG: ${{matrix.CONFIG}}
-      #默认主题
       WRT_THEME: argon
-      #默认主机名
       WRT_NAME: DAE-WRT
-      #默认WIFI名称
       WRT_SSID: DAE-WRT
-      #默认WIFI密码
       WRT_WORD: 12345678
-      #默认地址
       WRT_IP: 192.168.10.1
-      #默认密码，仅作提示，修改无用
       WRT_PW: 无
-      #源码链接
       WRT_REPO: https://github.com/${{matrix.SOURCE}}.git
-      #源码分支
       WRT_BRANCH: ${{matrix.BRANCH}}
-      #源码名称
       WRT_SOURCE: ${{matrix.SOURCE}}
-      #插件调整
-      WRT_PACKAGE: ${{inputs.PACKAGE}}
-      #仅输出配置文件
-      WRT_TEST: ${{inputs.TEST}}
+      WRT_PACKAGE: ${{inputs.PACKAGE || ''}}
+      WRT_TEST: ${{inputs.TEST || false}}
+      CI_NAME: QCA-6.12-VIKINGYFY
+      WRT_DIR: wrt
 
-      CI_NAME: ${{gitea.workflow}}
+    steps:
+      - name: Checkout Projects
+        uses: actions/checkout@main
+
+      - name: Install Build Dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -yqq
+          sudo apt-get install -yqq --no-install-recommends bc build-essential python3 python3-pip gawk rsync tar bzip2 gzip zip unzip libssl-dev libncurses5-dev libncursesw5-dev libc6-dev chrpath time
+
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v2
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/share/glade* /usr/local/share/chromium /usr/local/share/powershell"
+          testing: false
+
+      - name: Initialization Environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -yqq
+          sudo apt-get purge -yqq firefox 2>/dev/null || true
+          sudo apt-get full-upgrade -yqq
+          sudo apt-get autoremove --purge -yqq
+          sudo apt-get autoclean -yqq
+          sudo apt-get clean -yqq
+          sudo apt-get install -yqq --no-install-recommends dos2unix libfuse-dev
+          sudo bash $GITHUB_WORKSPACE/Scripts/init_build_environment.sh
+          sudo systemctl daemon-reload 2>/dev/null || true
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: Initialization Values
+        run: |
+          echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_MARK=$(echo $GITHUB_REPOSITORY | cut -d '/' -f 1)" >> $GITHUB_ENV
+          echo "WRT_VER=$(echo $WRT_REPO | cut -d '/' -f 4)-$WRT_BRANCH" >> $GITHUB_ENV
+          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          echo "WRT_KVER=none" >> $GITHUB_ENV
+          echo "WRT_LIST=none" >> $GITHUB_ENV
+          echo "WRT_CI=$WRT_CI" >> $GITHUB_ENV
+
+          if [ -z "$WRT_ARCH" ]; then
+            export WRT_ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt | head -n 1)
+            echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
+          fi
+          echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
+
+      - name: Clone Code
+        run: |
+          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./$WRT_DIR/
+          cd ./$WRT_DIR/
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+
+      - name: Check Scripts
+        run: |
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+
+      - name: Update Feeds
+        run: |
+          cd ./$WRT_DIR/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Custom Packages
+        run: |
+          cd ./$WRT_DIR/package/
+          $GITHUB_WORKSPACE/Scripts/Packages.sh
+          $GITHUB_WORKSPACE/Scripts/Handles.sh
+
+      - name: Custom Settings
+        run: |
+          . $GITHUB_WORKSPACE/Scripts/function.sh
+          cd ./$WRT_DIR/
+          generate_config && cat .config
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+          make defconfig -j$(nproc)
+
+      - name: Download Packages
+        if: inputs.TEST != true
+        run: |
+          cd ./$WRT_DIR/
+          make download -j$(nproc)
+
+      - name: Compile Firmware
+        if: inputs.TEST != true
+        run: |
+          cd ./$WRT_DIR/
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Package Firmware
+        if: inputs.TEST != true
+        run: |
+          cd ./$WRT_DIR/ && mkdir ./upload/
+          cp -f ./.config ./upload/Config-$WRT_CONFIG-$WRT_VER-.txt
+
+          echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
+          echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
+
+          find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+
+          for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
+            EXT=$(basename $FILE | cut -d '.' -f 2-)
+            NAME=$(basename $FILE | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
+            NEW_FILE=$WRT_VER-$NAME-. $EXT
+            mv -f $FILE ./upload/$NEW_FILE
+          done
+
+          find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+
+      - name: Show Build Results
+        if: inputs.TEST != true
+        run: |
+          echo "=== 编译完成 ==="
+          ls -la ./$WRT_DIR/upload/
+          echo ""
+          echo "固件位置: ./$WRT_DIR/upload/"
