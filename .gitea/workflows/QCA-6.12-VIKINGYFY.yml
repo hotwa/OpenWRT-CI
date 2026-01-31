@@ -51,6 +51,16 @@ jobs:
       - name: Checkout Projects
         uses: actions/checkout@v4
 
+      - name: Debug Environment
+        run: |
+          echo "=== Debug Environment Info ==="
+          echo "runner_name: $RUNNER_NAME"
+          echo "runner_os: $RUNNER_OS"
+          echo " HOME: $HOME"
+          echo "USER: $USER"
+          echo "PATH: $PATH"
+          echo "============================="
+
       - name: Initialization Environment
         run: |
           sudo -E apt -yqq update
