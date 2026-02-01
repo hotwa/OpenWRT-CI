@@ -1,15 +1,6 @@
-# .gitea/workflows/QCA-6.12-VIKINGYFY.yml
 name: QCA-6.12-VIKINGYFY
 
 on:
-  #推送时自动编译
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-  #手动编译
   workflow_dispatch:
     inputs:
       PACKAGE:
@@ -127,22 +118,11 @@ jobs:
           # 防止 git 权限报错
           git config --global --add safe.directory '*'
 
-          # 配置 Go 模块代理，避免 yq 等 Go 包编译时下载超时
-          export GOPROXY=https://goproxy.cn,direct
-          export GOSUMDB=sum.golang.org
-          echo "Go 模块代理已配置: $GOPROXY"
-
           echo "Updating feeds..."
           ./scripts/feeds update -a -f
 
           echo "Installing feeds..."
           ./scripts/feeds install -a
-
-          # 移除 bpf-headers 包（编译问题修复）
-          if [ -d "package/kernel/bpf-headers" ]; then
-            echo "移除有编译问题的 bpf-headers 包..."
-            rm -rf package/kernel/bpf-headers
-          fi
 
       - name: Custom Packages & Settings
         run: |
