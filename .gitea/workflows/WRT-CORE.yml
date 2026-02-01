@@ -159,6 +159,21 @@ jobs:
             sed -i 's/DEPENDS:=+libelf/DEPENDS:=+libelf @LINUX_6_6/' "$BPF_HEADERS_MK"
           fi
 
+      - name: Install Host Dependencies
+        run: |
+          set -eux
+          cd ./wrt/
+          
+          # 编译缺失的 host 工具（消除 WARNING）
+          echo "编译 host jq..."
+          make -j1 package/host/jq/compile || echo "jq 编译失败，但可继续"
+          
+          echo "编译 python3-pysocks..."
+          make -j1 package/feeds/packages/python3-pysocks/compile || echo "python3-pysocks 编译失败，但可继续"
+          
+          echo "编译 python3-unidecode..."
+          make -j1 package/feeds/packages/python3-unidecode/compile || echo "python3-unidecode 编译失败，但可继续"
+
       - name: Custom Packages
         run: |
           set -eux
