@@ -127,6 +127,11 @@ jobs:
           # 防止 git 权限报错
           git config --global --add safe.directory '*'
 
+          # 配置 Go 模块代理，避免 yq 等 Go 包编译时下载超时
+          export GOPROXY=https://goproxy.cn,direct
+          export GOSUMDB=sum.golang.org
+          echo "Go 模块代理已配置: $GOPROXY"
+
           echo "Updating feeds..."
           ./scripts/feeds update -a -f
 

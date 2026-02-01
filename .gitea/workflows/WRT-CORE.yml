@@ -149,6 +149,12 @@ jobs:
         run: |
           set -eux
           cd ./wrt/
+          
+          # 配置 Go 模块代理，避免 yq 等 Go 包编译时下载超时
+          export GOPROXY=https://goproxy.cn,direct
+          export GOSUMDB=sum.golang.org
+          echo "Go 模块代理已配置: $GOPROXY"
+          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 

@@ -62,6 +62,11 @@ if [ -n "$GOLANG_MK" ] && [ -f "$GOLANG_MK" ]; then
   cat "$GOLANG_MK" | grep -E "GO_VERSION|GOLANG_MIRROR_VERSION" || true
 fi
 
+# 配置 Go 模块代理，避免 yq 等 Go 包编译时下载超时
+export GOPROXY=https://goproxy.cn,direct
+export GOSUMDB=sum.golang.org
+echo "Go 模块代理已配置: $GOPROXY"
+
 #rm -rf feeds
 # 确保 feeds 更新成功，增加重试机制
 echo "正在更新 feeds..."
