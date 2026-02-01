@@ -1,6 +1,14 @@
 name: QCA-6.12-VIKINGYFY
 
 on:
+  #推送时自动编译
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  #手动编译
   workflow_dispatch:
     inputs:
       PACKAGE:
@@ -123,6 +131,12 @@ jobs:
 
           echo "Installing feeds..."
           ./scripts/feeds install -a
+
+          # 移除 bpf-headers 包（编译问题修复）
+          if [ -d "package/kernel/bpf-headers" ]; then
+            echo "移除有编译问题的 bpf-headers 包..."
+            rm -rf package/kernel/bpf-headers
+          fi
 
       - name: Custom Packages & Settings
         run: |
