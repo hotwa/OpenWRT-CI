@@ -84,10 +84,11 @@ fi
 echo "正在安装 feeds..."
 ./scripts/feeds install -a -f 2>&1 | tee /tmp/feeds_install.log || true
 
-# 移除 bpf-headers 包（编译问题修复）
-if [ -d "package/kernel/bpf-headers" ]; then
-  echo "移除有编译问题的 bpf-headers 包..."
-  rm -rf package/kernel/bpf-headers
+# 修复 bpf-headers 编译问题（添加内核版本条件）
+BPF_HEADERS_MK="package/kernel/bpf-headers/Makefile"
+if [ -f "$BPF_HEADERS_MK" ]; then
+  echo "修复 bpf-headers Makefile..."
+  sed -i 's/DEPENDS:=+libelf/DEPENDS:=+libelf @LINUX_6_6/' "$BPF_HEADERS_MK"
 fi
 
 # 注意：Passwall 使用 xiaorouji 版本（在 Scripts/Packages.sh 中配置）
