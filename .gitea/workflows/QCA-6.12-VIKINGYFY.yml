@@ -73,7 +73,9 @@ jobs:
         run: |
           sudo -E apt -yqq update
           # 添加 npm 以支持 node/pnpm 安装，添加 cmake 以支持 zstd 等工具编译
-          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync npm cmake
+          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync npm cmake \
+            clang llvm lld \
+            libelf-dev elfutils
 
           # 安装 pnpm (daed 编译需要)
           sudo -E npm install -g pnpm
@@ -85,6 +87,8 @@ jobs:
           if [ -d "Scripts" ]; then
             chmod +x Scripts/*.sh
           fi
+
+          clang --version || true
 
       - name: Initialization Values
         run: |
@@ -132,13 +136,6 @@ jobs:
           echo "Installing feeds..."
           ./scripts/feeds install -a
 
-          # 修复 bpf-headers 编译问题（添加内核版本条件）
-          BPF_HEADERS_MK="package/kernel/bpf-headers/Makefile"
-          if [ -f "$BPF_HEADERS_MK" ]; then
-            echo "修复 bpf-headers Makefile..."
-            sed -i 's/DEPENDS:=+libelf/DEPENDS:=+libelf @LINUX_6_6/' "$BPF_HEADERS_MK"
-          fi
-
       - name: Install Host Dependencies
         run: |
           cd ./wrt/
@@ -176,6 +173,12 @@ jobs:
         run: |
           cd ./wrt/
           make download -j$(nproc)
+
+      - name: Verify clang for bpf
+        run: |
+          which clang || true
+          clang --version || true
+          ls -la /usr/bin/clang* || true
 
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
