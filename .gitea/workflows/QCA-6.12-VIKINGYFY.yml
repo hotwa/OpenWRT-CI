@@ -46,6 +46,10 @@ env:
 jobs:
   build:
     name: Build-${{ matrix.CONFIG }}
+    # 使用 Docker 容器固定工具链版本，避免 zstd/tar/git 差异导致 hash mismatch
+    container:
+      image: openwrtorg/ci:latest
+      options: --cpus 4
     runs-on: buildx
     strategy:
       fail-fast: false
@@ -61,34 +65,18 @@ jobs:
 
       - name: Debug Environment
         run: |
-          echo "=== Debug Environment Info ==="
-          echo "runner_name: $RUNNER_NAME"
-          echo "runner_os: $RUNNER_OS"
-          echo " HOME: $HOME"
-          echo "USER: $USER"
-          echo "PATH: $PATH"
-          echo "============================="
+          echo "=== 工具链版本 ==="
+          git --version
+          tar --version 2>&1 | head -1
+          zstd --version 2>&1 | head -1
+          clang --version | head -1
+          echo "=================="
 
-      - name: Initialization Environment
+      - name: Fix Git EOL
         run: |
-          sudo -E apt -yqq update
-          # 添加 npm 以支持 node/pnpm 安装，添加 cmake 以支持 zstd 等工具编译
-          sudo -E apt -yqq install bc dos2unix libfuse-dev build-essential git python3 rsync npm cmake \
-            clang llvm lld \
-            libelf-dev elfutils
-
-          # 安装 pnpm (daed 编译需要)
-          sudo -E npm install -g pnpm
-
-          # Docker容器内不需要/不支持 timedatectl，通过 env TZ 设置即可
-          # sudo -E timedatectl set-timezone "Asia/Shanghai"
-
-          # 脚本权限修正
-          if [ -d "Scripts" ]; then
-            chmod +x Scripts/*.sh
-          fi
-
-          clang --version || true
+          # 统一 EOL 设置，避免 .tar.zst 字节差异
+          git config --global core.autocrlf false
+          git config --global core.eol lf
 
       - name: Initialization Values
         run: |
@@ -168,17 +156,16 @@ jobs:
           # 生成最终配置
           make defconfig
 
-      - name: Download Packages
-        if: env.WRT_TEST != 'true'
-        run: |
-          cd ./wrt/
-          make download -j$(nproc)
-
       - name: Verify clang for bpf
         run: |
           which clang || true
           clang --version || true
-          ls -la /usr/bin/clang* || true
+
+      - name: Download Packages
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          bash "$GITHUB_WORKSPACE/Scripts/hash-fix.sh"
 
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
