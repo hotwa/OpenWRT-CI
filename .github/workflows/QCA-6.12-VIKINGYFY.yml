@@ -67,3 +67,5 @@ jobs:
       WRT_TEST: ${{inputs.TEST}}
 
       CI_NAME: ${{github.workflow}}
+      RUNNER_LABELS: '["self-hosted","linux","x64","runner-fleet"]'
+      JOB_TIMEOUT_MINUTES: 7200
