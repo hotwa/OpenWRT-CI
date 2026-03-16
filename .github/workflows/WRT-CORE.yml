@@ -46,6 +46,14 @@ on:
       WRT_ARCH:
         required: false
         type: string
+      RUNNER_LABELS:
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES:
+        required: false
+        type: number
+        default: 360
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -66,15 +74,22 @@ env:
 jobs:
   core:
     name: ${{inputs.WRT_SOURCE}}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.RUNNER_LABELS) }}
+    timeout-minutes: ${{ inputs.JOB_TIMEOUT_MINUTES }}
     steps:
       - name: Install BC
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt -yqq install bc
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo -E"
+          else
+            SUDO=""
+          fi
+          ${SUDO} apt -yqq install bc
 
       - name: Free Disk Space
+        if: ${{ !contains(inputs.RUNNER_LABELS, 'self-hosted') }}
         uses: endersonmenezes/free-disk-space@v2
         with:
           remove_android: true
@@ -93,16 +108,25 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt -yqq purge firefox
-          sudo -E apt -yqq update
-          sudo -E apt -yqq full-upgrade
-          sudo -E apt -yqq autoremove --purge
-          sudo -E apt -yqq autoclean
-          sudo -E apt -yqq clean
-          sudo -E apt -yqq install dos2unix python3-netifaces libfuse-dev
-          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-          sudo -E systemctl daemon-reload
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo -E"
+          else
+            SUDO=""
+          fi
+          ${SUDO} apt -yqq purge firefox || true
+          ${SUDO} apt -yqq update
+          ${SUDO} apt -yqq full-upgrade
+          ${SUDO} apt -yqq autoremove --purge
+          ${SUDO} apt -yqq autoclean
+          ${SUDO} apt -yqq clean
+          ${SUDO} apt -yqq install dos2unix python3-netifaces libfuse-dev
+          ${SUDO} bash -lc 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            ${SUDO} systemctl daemon-reload
+          fi
+          if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            ${SUDO} timedatectl set-timezone "Asia/Shanghai"
+          fi
 #          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 #          sudo mkdir -p /mnt/build_wrt
 #          sudo chown $USER:$USER /mnt/build_wrt
@@ -139,9 +163,9 @@ jobs:
           path: |
             ./wrt/.ccache
             ./wrt/staging_dir
-          key: ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-${{ env.WRT_DATE }}
+          key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_DATE }}
           restore-keys: |
-            ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}-
+            ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-
 
       - name: Refresh the cache
         run: |
@@ -195,7 +219,7 @@ jobs:
       - name: Delete Old Cache
         run: |
           # 获取缓存列表并删除
-          gh cache list --key ${{ env.WRT_ARCH }}-${{ hashFiles('**/repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
+          gh cache list --key ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
             gh cache delete "$key"
           done
           # 输出缓存状态
