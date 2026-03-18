@@ -8,8 +8,13 @@ INIT_SCRIPT="$ROOT_DIR/Scripts/init_build_environment.sh"
 [ -f "$WORKFLOW" ] || { echo "missing workflow"; exit 1; }
 [ -f "$INIT_SCRIPT" ] || { echo "missing init script"; exit 1; }
 
-grep -q 'GOPROXY=https://goproxy.cn,direct' "$WORKFLOW" || {
+grep -q 'GOPROXY=https://goproxy.cn|direct' "$WORKFLOW" || {
   echo "workflow missing GOPROXY export"
+  exit 1
+}
+
+grep -q 'go env -w GOPROXY=https://goproxy.cn\\|direct' "$INIT_SCRIPT" || {
+  echo "init script missing GOPROXY fallback setting"
   exit 1
 }
 
