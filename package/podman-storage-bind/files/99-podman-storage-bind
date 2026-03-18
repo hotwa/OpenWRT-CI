@@ -1,0 +1,5 @@
+#!/bin/sh
+
+/etc/init.d/podman-storage-bind enable >/dev/null 2>&1 || true
+
+exit 0
