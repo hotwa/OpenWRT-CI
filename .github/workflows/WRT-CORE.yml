@@ -86,6 +86,7 @@ jobs:
           else
             SUDO=""
           fi
+          ${SUDO} apt -yqq update
           ${SUDO} apt -yqq install bc
 
       - name: Free Disk Space
@@ -150,9 +151,9 @@ jobs:
 
       - name: Configure Go Module Access
         run: |
-          echo "GOPROXY=https://goproxy.cn,direct" >> $GITHUB_ENV
+          echo "GOPROXY=direct" >> $GITHUB_ENV
           echo "GOSUMDB=off" >> $GITHUB_ENV
-          echo "GOPROXY=https://goproxy.cn,direct"
+          echo "GOPROXY=direct"
           echo "GOSUMDB=off"
       - name: Clone Code
         run: |
