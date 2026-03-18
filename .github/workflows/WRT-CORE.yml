@@ -147,6 +147,13 @@ jobs:
             echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
           }
           echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
+
+      - name: Configure Go Module Access
+        run: |
+          echo "GOPROXY=https://goproxy.cn,direct" >> $GITHUB_ENV
+          echo "GOSUMDB=off" >> $GITHUB_ENV
+          echo "GOPROXY=https://goproxy.cn,direct"
+          echo "GOSUMDB=off"
       - name: Clone Code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
@@ -163,6 +170,8 @@ jobs:
           path: |
             ./wrt/.ccache
             ./wrt/staging_dir
+            ./wrt/dl/go-mod-cache
+            ./wrt/tmp/go-build
           key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_DATE }}
           restore-keys: |
             ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-
