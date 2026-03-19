@@ -13,6 +13,11 @@ grep -q 'GOPROXY=https://proxy.golang.org|https://goproxy.cn|direct' "$WORKFLOW"
   exit 1
 }
 
+grep -q 'GOSUMDB=off' "$WORKFLOW" || {
+  echo "workflow missing GOSUMDB override"
+  exit 1
+}
+
 grep -q './wrt/dl/go-mod-cache' "$WORKFLOW" || {
   echo "workflow missing go mod cache path"
   exit 1
@@ -20,6 +25,11 @@ grep -q './wrt/dl/go-mod-cache' "$WORKFLOW" || {
 
 grep -q './wrt/tmp/go-build' "$WORKFLOW" || {
   echo "workflow missing go build cache path"
+  exit 1
+}
+
+grep -q 'go env -w GOSUMDB=off' "$INIT_SCRIPT" || {
+  echo "init script missing GOSUMDB setting"
   exit 1
 }
 

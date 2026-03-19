@@ -282,6 +282,7 @@ function install_dependencies() {
 	ln -svf "/usr/lib/go-1.25/bin/gofmt" "/usr/bin/gofmt"
 	if [ -n "$CHN_NET" ]; then
 		go env -w GOPROXY=https://proxy.golang.org|https://goproxy.cn|direct
+		go env -w GOSUMDB=off
 	fi
 
 	apt install gh -y
