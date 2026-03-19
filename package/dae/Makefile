@@ -15,7 +15,7 @@ OUTBOUND_URL:=https://github.com/LostAttractor/outbound.git
 GIT_BRANCH:=next
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_VERSION:=$(shell git ls-remote $(PKG_SOURCE_URL) $(GIT_BRANCH) | cut -c1-7)
-PKG_MIRROR_HASH:=
+PKG_MIRROR_HASH:=skip
 
 PKG_LICENSE:=AGPL-3.0-only
 PKG_LICENSE_FILE:=LICENSE
