@@ -64,7 +64,8 @@ UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
 UPDATE_PACKAGE "luci-app-tailscale-community" "Tokisaki-Galaxy/luci-app-tailscale-community" "master" "pkg" "luci-app-tailscale" "62ca0d7bfde024d7e956aeb74cec6d033d5920c0"
-UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
+# 临时移除 podman，跳过 luci-app-podman 拉取。
+# UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
 
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "lisaac/luci-app-diskman" "master"
