@@ -1,0 +1,27 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+retry_set_accept_dns() {
+	local attempt=0
+
+	command -v tailscale >/dev/null 2>&1 || return 0
+	pgrep -x tailscaled >/dev/null 2>&1 || return 0
+
+	while [ "$attempt" -lt 5 ]; do
+		tailscale set --accept-dns=false >/dev/null 2>&1 && return 0
+		attempt=$((attempt + 1))
+		sleep 2
+	done
+
+	return 0
+}
+
+start() {
+	retry_set_accept_dns
+}
+
+restart() {
+	start
+}
