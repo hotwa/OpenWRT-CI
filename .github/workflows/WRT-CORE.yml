@@ -151,9 +151,7 @@ jobs:
       - name: Configure Go Module Access
         run: |
           echo "GOPROXY=https://proxy.golang.org|https://goproxy.cn|direct" >> $GITHUB_ENV
-          echo "GOSUMDB=off" >> $GITHUB_ENV
           echo "GOPROXY=https://proxy.golang.org|https://goproxy.cn|direct"
-          echo "GOSUMDB=off"
       - name: Clone Code
         run: |
           git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
