@@ -108,6 +108,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          . $GITHUB_WORKSPACE/Scripts/retry.sh
           if command -v sudo >/dev/null 2>&1; then
             SUDO="sudo -E"
           else
@@ -120,7 +121,9 @@ jobs:
           ${SUDO} apt -yqq autoclean
           ${SUDO} apt -yqq clean
           ${SUDO} apt -yqq install dos2unix python3-netifaces libfuse-dev
-          ${SUDO} bash -lc 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          retry_cmd 5 15 curl -fsSL https://build-scripts.immortalwrt.org/init_build_environment.sh -o /tmp/init_build_environment.sh
+          ${SUDO} bash /tmp/init_build_environment.sh
+          rm -f /tmp/init_build_environment.sh
           if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
             ${SUDO} systemctl daemon-reload
           fi
@@ -156,7 +159,8 @@ jobs:
           echo "GOSUMDB=off"
       - name: Clone Code
         run: |
-          git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
+          . $GITHUB_WORKSPACE/Scripts/retry.sh
+          retry_cmd 5 15 git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
@@ -188,10 +192,11 @@ jobs:
 
       - name: Update Feeds
         run: |
+          . $GITHUB_WORKSPACE/Scripts/retry.sh
           cd ./wrt/
 
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          retry_cmd 5 15 ./scripts/feeds update -a
+          retry_cmd 5 15 ./scripts/feeds install -a
 
       - name: Custom Packages
         run: |

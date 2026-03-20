@@ -1,4 +1,5 @@
 #!/bin/bash
+. "$(dirname "$(realpath "$0")")/retry.sh"
 
 #安装和更新软件包
 UPDATE_PACKAGE() {
@@ -30,9 +31,9 @@ UPDATE_PACKAGE() {
 	done
 
 	# 克隆 GitHub 仓库
-	git clone --depth=1 --single-branch --branch $PKG_BRANCH "https://github.com/$PKG_REPO.git"
+	retry_cmd 5 15 git clone --depth=1 --single-branch --branch $PKG_BRANCH "https://github.com/$PKG_REPO.git"
 	if [ -n "$PKG_COMMIT" ]; then
-		git -C "$REPO_NAME" fetch --depth=1 origin "$PKG_COMMIT"
+		retry_cmd 5 15 git -C "$REPO_NAME" fetch --depth=1 origin "$PKG_COMMIT"
 		git -C "$REPO_NAME" checkout --detach "$PKG_COMMIT"
 	fi
 
