@@ -16,13 +16,28 @@ grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'uses: softprops/action-gh-release@v2' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not pin action-gh-release to @v2"
+grep -q 'name: Release Firmware' "$WORKFLOW" || {
+  echo "WRT-CORE.yml is missing the Release Firmware step"
   exit 1
 }
 
-grep -q 'working_directory: ./wrt/upload' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not upload release assets from ./wrt/upload"
+grep -q 'gh release create' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not use the official gh CLI to create releases"
+  exit 1
+}
+
+grep -q 'gh release upload' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not use the official gh CLI to upload release assets"
+  exit 1
+}
+
+grep -q 'GH_TOKEN: ${{secrets.GITHUB_TOKEN}}' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not pass GITHUB_TOKEN to gh as GH_TOKEN"
+  exit 1
+}
+
+grep -q 'retry_cmd 5 15 gh release upload' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not retry gh release upload"
   exit 1
 }
 
