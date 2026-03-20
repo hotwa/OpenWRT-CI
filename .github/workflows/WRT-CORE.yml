@@ -204,12 +204,16 @@ jobs:
         run: |
           . $GITHUB_WORKSPACE/Scripts/function.sh
           cd ./wrt/
-          
+
           generate_config && cat .config
-          
+
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
           make defconfig -j$(nproc) && make clean -j$(nproc)
+          grep -q '^CONFIG_PACKAGE_luci-app-tailscale-community=y$' .config || {
+            echo "ERROR: luci-app-tailscale-community was dropped from .config after defconfig"
+            exit 1
+          }
 
       - name: Download Packages
         if: env.WRT_TEST != 'true'

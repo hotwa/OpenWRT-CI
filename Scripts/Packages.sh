@@ -39,6 +39,12 @@ UPDATE_PACKAGE() {
 	# 处理克隆的仓库
 	if [[ "$PKG_SPECIAL" == "pkg" ]]; then
 		find ./$REPO_NAME/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} ./ \;
+		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
+			test -d "./luci-app-tailscale-community" || {
+				echo "ERROR: luci-app-tailscale-community was not extracted into package/."
+				exit 1
+			}
+		fi
 		rm -rf ./$REPO_NAME/
 	elif [[ "$PKG_SPECIAL" == "name" ]]; then
 		mv -f $REPO_NAME $PKG_NAME
