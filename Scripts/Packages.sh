@@ -39,14 +39,32 @@ UPDATE_PACKAGE() {
 
 	# 处理克隆的仓库
 	if [[ "$PKG_SPECIAL" == "pkg" ]]; then
-		find ./$REPO_NAME/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} ./ \;
+		# Extract into a staging directory first so repo cleanup cannot delete packages
+		# when the repository name and package directory name are identical.
+		local EXTRACT_DIR="./.${REPO_NAME}.pkg-extract"
+		rm -rf "$EXTRACT_DIR"
+		mkdir -p "$EXTRACT_DIR"
+
+		find ./$REPO_NAME/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} "$EXTRACT_DIR"/ \;
 		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
-			test -d "./luci-app-tailscale-community" || {
-				echo "ERROR: luci-app-tailscale-community was not extracted into package/."
+			test -d "$EXTRACT_DIR/$PKG_NAME" || {
+				echo "ERROR: luci-app-tailscale-community was not extracted into the staging directory."
 				exit 1
 			}
 		fi
 		rm -rf ./$REPO_NAME/
+		for EXTRACTED_PATH in "$EXTRACT_DIR"/*; do
+			[ -e "$EXTRACTED_PATH" ] || continue
+			rm -rf "./$(basename "$EXTRACTED_PATH")"
+			mv -f "$EXTRACTED_PATH" ./
+		done
+		rm -rf "$EXTRACT_DIR"
+		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
+			test -d "./luci-app-tailscale-community" || {
+				echo "ERROR: luci-app-tailscale-community was removed after repository cleanup."
+				exit 1
+			}
+		fi
 	elif [[ "$PKG_SPECIAL" == "name" ]]; then
 		mv -f $REPO_NAME $PKG_NAME
 	fi
