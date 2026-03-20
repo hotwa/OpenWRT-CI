@@ -286,11 +286,23 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}
+          path: ./wrt/upload/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Release Firmware
-        uses: softprops/action-gh-release@master
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}
-          files: ./wrt/upload/*.*
+          working_directory: ./wrt/upload
+          files: |
+            *.*
+          preserve_order: true
+          fail_on_unmatched_files: true
           body: |
             这是个平台固件包，内含多个设备！
             请注意选择你需要的设备固件！
