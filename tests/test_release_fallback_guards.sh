@@ -31,6 +31,16 @@ grep -q 'gh release upload' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'gh release create -R "$GITHUB_REPOSITORY"' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not force gh release create to target the workflow repository"
+  exit 1
+}
+
+grep -q 'gh release upload -R "$GITHUB_REPOSITORY"' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not force gh release upload to target the workflow repository"
+  exit 1
+}
+
 grep -q 'GH_TOKEN: ${{secrets.GITHUB_TOKEN}}' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not pass GITHUB_TOKEN to gh as GH_TOKEN"
   exit 1

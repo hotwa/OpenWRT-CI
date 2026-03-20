@@ -330,9 +330,9 @@ jobs:
 
           cd ./wrt/upload
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            retry_cmd 5 15 gh release upload "$TAG" ./* --clobber
-            gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+          if gh release view -R "$GITHUB_REPOSITORY" "$TAG" >/dev/null 2>&1; then
+            retry_cmd 5 15 gh release upload -R "$GITHUB_REPOSITORY" "$TAG" ./* --clobber
+            gh release edit -R "$GITHUB_REPOSITORY" "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
           else
-            retry_cmd 5 15 gh release create "$TAG" ./* --title "$TAG" --notes-file "$NOTES_FILE"
+            retry_cmd 5 15 gh release create -R "$GITHUB_REPOSITORY" "$TAG" ./* --title "$TAG" --notes-file "$NOTES_FILE"
           fi
