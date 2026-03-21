@@ -1,0 +1,14 @@
+#!/bin/sh
+
+[ -f "/etc/config/tailscale" ] && exit 0
+
+cat >/etc/config/tailscale <<'EOF'
+config settings 'settings'
+	option log_stderr '1'
+	option log_stdout '1'
+	option port '41641'
+	option state_file '/etc/tailscale/tailscaled.state'
+	option fw_mode 'nftables'
+EOF
+
+exit 0
