@@ -46,8 +46,18 @@ grep -q 'GH_TOKEN: ${{secrets.GITHUB_TOKEN}}' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'actions: write' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not grant actions: write permission for cache cleanup"
+  exit 1
+}
+
 grep -q 'retry_cmd 5 15 gh release upload' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not retry gh release upload"
+  exit 1
+}
+
+grep -q 'WARN: failed to delete cache \$key' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not tolerate cache deletion failures"
   exit 1
 }
 

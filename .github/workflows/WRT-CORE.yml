@@ -78,6 +78,7 @@ jobs:
     timeout-minutes: ${{ inputs.JOB_TIMEOUT_MINUTES }}
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Install BC
         env:
@@ -243,10 +244,19 @@ jobs:
 
       - name: Delete Old Cache
         run: |
-          # 获取缓存列表并删除
-          gh cache list --key ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
-            gh cache delete "$key"
-          done
+          # 获取缓存列表并删除；缓存清理失败不应阻断已完成的构建
+          cache_keys="$(gh cache list --key ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}- --json key --jq '.[] | .key')" || {
+            echo "WARN: failed to list caches"
+            cache_keys=""
+          }
+
+          if [ -n "$cache_keys" ]; then
+            printf '%s\n' "$cache_keys" | while read -r key; do
+              [ -n "$key" ] || continue
+              gh cache delete "$key" || echo "WARN: failed to delete cache $key"
+            done
+          fi
+
           # 输出缓存状态
           echo "========cache status========"
           echo "ccache: $(du -sh ./wrt/.ccache | cut -f 1)"
