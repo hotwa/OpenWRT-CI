@@ -41,6 +41,11 @@ grep -q 'gh release upload -R "$GITHUB_REPOSITORY"' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'WRT_INFO_VALUE="${WRT_SOURCE%%/\*}"' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not compute a fallback release filename prefix"
+  exit 1
+}
+
 grep -q 'GH_TOKEN: ${{secrets.GITHUB_TOKEN}}' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not pass GITHUB_TOKEN to gh as GH_TOKEN"
   exit 1
@@ -53,6 +58,11 @@ grep -q 'actions: write' "$WORKFLOW" || {
 
 grep -q 'retry_cmd 5 15 gh release upload' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not retry gh release upload"
+  exit 1
+}
+
+grep -q 'for asset in "${assets\[@\]}"; do' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not upload release assets one by one"
   exit 1
 }
 
