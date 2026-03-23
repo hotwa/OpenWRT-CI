@@ -117,13 +117,60 @@ jobs:
           else
             SUDO=""
           fi
-          ${SUDO} apt -yqq purge firefox || true
-          ${SUDO} apt -yqq update
-          ${SUDO} apt -yqq full-upgrade
-          ${SUDO} apt -yqq autoremove --purge
-          ${SUDO} apt -yqq autoclean
-          ${SUDO} apt -yqq clean
-          ${SUDO} apt -yqq install dos2unix python3-netifaces libfuse-dev
+
+          run_with_sudo() {
+            if [ -n "$SUDO" ]; then
+              sudo -E "$@"
+            else
+              "$@"
+            fi
+          }
+
+          run_apt() {
+            run_with_sudo apt -yqq "$@"
+          }
+
+          reset_ubuntu_mirrors() {
+            echo "WARN: resetting Ubuntu mirrors to official archives before retrying apt update" >&2
+
+            if [ -f /etc/apt/sources.list ]; then
+              run_with_sudo sed -i \
+                -e 's,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
+                -e 's,https\?://mirrors\.ustc\.edu\.cn/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
+                -e 's,https\?://[^ ]*/ubuntu \([^ ]*-security\) ,http://security.ubuntu.com/ubuntu \1 ,g' \
+                /etc/apt/sources.list
+            fi
+
+            while IFS= read -r sources_file; do
+              run_with_sudo sed -i \
+                -e 's,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
+                -e 's,https\?://mirrors\.ustc\.edu\.cn/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
+                -e '/^URIs: /s,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
+                "$sources_file"
+            done < <(find /etc/apt -maxdepth 2 -type f \( -name '*.sources' -o -name '*.list' \) 2>/dev/null)
+
+            run_with_sudo rm -rf /var/lib/apt/lists/*
+          }
+
+          apt_retry_update() {
+            if retry_cmd 3 15 run_apt update; then
+              return 0
+            fi
+
+            if grep -RqsE 'mirrors\.cloud\.tencent\.com/ubuntu|mirrors\.ustc\.edu\.cn/ubuntu' /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/*.sources 2>/dev/null; then
+              reset_ubuntu_mirrors
+            fi
+
+            retry_cmd 3 15 run_apt update
+          }
+
+          run_apt purge firefox || true
+          apt_retry_update
+          retry_cmd 3 15 run_apt full-upgrade
+          run_apt autoremove --purge
+          run_apt autoclean
+          run_apt clean
+          retry_cmd 3 15 run_apt install dos2unix python3-netifaces libfuse-dev
           retry_cmd 5 15 curl -fsSL https://build-scripts.immortalwrt.org/init_build_environment.sh -o /tmp/init_build_environment.sh
           ${SUDO} bash /tmp/init_build_environment.sh
           rm -f /tmp/init_build_environment.sh
