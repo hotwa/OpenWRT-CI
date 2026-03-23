@@ -15,8 +15,8 @@ grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale
 	exit 1
 }
 
-grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "codex/tailscale-data-plane-fixes"' "$PACKAGES_SH" || {
-	echo "Packages.sh does not track the pinned hotwa repair branch"
+grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "master"' "$PACKAGES_SH" || {
+	echo "Packages.sh does not track the pinned hotwa master branch"
 	exit 1
 }
 
