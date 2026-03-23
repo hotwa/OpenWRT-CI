@@ -8,6 +8,7 @@ HANDLES_SH="$ROOT_DIR/Scripts/Handles.sh"
 TAILSCALE_CONFIG="$ROOT_DIR/files/etc/config/tailscale"
 TAILSCALE_UCI_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallback"
 TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
+TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
@@ -15,6 +16,7 @@ TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
 [ -f "$TAILSCALE_CONFIG" ] || { echo "missing default tailscale UCI config overlay"; exit 1; }
 [ -f "$TAILSCALE_UCI_DEFAULTS" ] || { echo "missing tailscale UCI fallback defaults script"; exit 1; }
 [ -f "$TAILSCALE_DNS_GUARD" ] || { echo "missing tailscale DNS guard init script"; exit 1; }
+[ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
 
 grep -q 'test -d "./luci-app-tailscale-community"' "$PACKAGES_SH" || {
   echo "Packages.sh does not verify luci-app-tailscale-community extraction"
@@ -31,17 +33,22 @@ grep -q 'CONFIG_PACKAGE_luci-app-tailscale-community=y' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'for test_file in ./tests/test_\*.sh; do' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not execute repository smoke tests"
+  exit 1
+}
+
 if grep -q 'sed -i '\''/\\/files/d'\'' \$TS_FILE' "$HANDLES_SH"; then
   echo "Handles.sh still strips tailscale package files, which removes /etc/config/tailscale at runtime"
   exit 1
 fi
 
-grep -q "^config settings 'settings'$" "$TAILSCALE_CONFIG" || {
+tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^config settings 'settings'$" || {
   echo "default tailscale UCI config overlay is missing the settings section"
   exit 1
 }
 
-grep -q "^	option fw_mode 'nftables'$" "$TAILSCALE_CONFIG" || {
+tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option fw_mode 'nftables'$" || {
   echo "default tailscale UCI config overlay is missing fw_mode nftables"
   exit 1
 }
@@ -58,6 +65,21 @@ grep -q "config settings 'settings'" "$TAILSCALE_UCI_DEFAULTS" || {
 
 grep -q '/etc/config/tailscale' "$TAILSCALE_DNS_GUARD" || {
   echo "tailscale DNS guard does not ensure the runtime UCI config exists"
+  exit 1
+}
+
+grep -q '/etc/config/nikki' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not gate itself on Nikki being installed"
+  exit 1
+}
+
+grep -q '100.64.0.0/10' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not preserve the CGNAT range"
+  exit 1
+}
+
+grep -q 'fd7a:115c:a1e0::/48' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not preserve the Tailscale ULA range"
   exit 1
 }
 

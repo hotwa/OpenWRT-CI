@@ -88,7 +88,7 @@ UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
 UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
-UPDATE_PACKAGE "luci-app-tailscale-community" "Tokisaki-Galaxy/luci-app-tailscale-community" "master" "pkg" "luci-app-tailscale" "62ca0d7bfde024d7e956aeb74cec6d033d5920c0"
+UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "codex/tailscale-data-plane-fixes" "pkg" "luci-app-tailscale" "c96a1ff4ddc809e2eedb44512f286d2346d97450"
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
 
