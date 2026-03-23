@@ -173,6 +173,12 @@ jobs:
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
 
+      - name: Repository Smoke Tests
+        run: |
+          for test_file in ./tests/test_*.sh; do
+            bash "$test_file"
+          done
+
       - name: Cache Dependencies
         uses: actions/cache@v4
         with:
