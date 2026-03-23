@@ -116,11 +116,14 @@ function remove_wifi() {
 function set_kernel_size() {
   #修改jdc ax1800 pro 的内核大小为12M
   image_file='./target/linux/qualcommax/image/ipq60xx.mk'
+  sed -i "/^define Device\/emmc-common/,/^endef/ s/KERNEL_SIZE := 6144k/KERNEL_SIZE := 12288k/" $image_file
+  sed -i "/^define Device\/nand-common/,/^endef/ s/^endef/\tKERNEL_SIZE := 8192k\nendef/" $image_file
   sed -i "/^define Device\/jdcloud_re-ss-01/,/^endef/ { /KERNEL_SIZE := 6144k/s//KERNEL_SIZE := 12288k/ }" $image_file
   sed -i "/^define Device\/jdcloud_re-cs-02/,/^endef/ { /KERNEL_SIZE := 6144k/s//KERNEL_SIZE := 12288k/ }" $image_file
   sed -i "/^define Device\/jdcloud_re-cs-07/,/^endef/ { /KERNEL_SIZE := 6144k/s//KERNEL_SIZE := 12288k/ }" $image_file
-  sed -i "/^define Device\/redmi_ax5-jdcloud/,/^endef/ { /KERNEL_SIZE := 6144k/s//KERNEL_SIZE := 12288k/ }" $image_file
+#  sed -i "/^define Device\/redmi_ax5-jdcloud/,/^endef/ s/^endef/  KERNEL_SIZE := 12288k\nendef/" $image_file
   sed -i "/^define Device\/linksys_mr/,/^endef/ { /KERNEL_SIZE := 8192k/s//KERNEL_SIZE := 12288k/ }" $image_file
+  cat $image_file
 }
 #开启内存回收补丁
 function enable_skb_recycler() {
