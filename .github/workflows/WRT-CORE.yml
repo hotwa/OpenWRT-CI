@@ -262,6 +262,9 @@ jobs:
 
           $GITHUB_WORKSPACE/Scripts/Packages.sh
           $GITHUB_WORKSPACE/Scripts/Handles.sh
+          cd $GITHUB_WORKSPACE
+          mkdir -p ./wrt/files
+          cp -rf ./files/. ./wrt/files/
 
       - name: Custom Settings
         run: |
