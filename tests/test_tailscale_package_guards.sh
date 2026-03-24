@@ -6,6 +6,7 @@ PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 HANDLES_SH="$ROOT_DIR/Scripts/Handles.sh"
 TAILSCALE_CONFIG="$ROOT_DIR/files/etc/config/tailscale"
+TAILSCALE_SETTINGS_ENABLE="$ROOT_DIR/files/etc/uci-defaults/94-tailscale-settings-enable"
 TAILSCALE_UCI_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallback"
 TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
 TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard"
@@ -18,6 +19,7 @@ TAILSCALE_QUAD100_HEALTH_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$HANDLES_SH" ] || { echo "missing Handles.sh"; exit 1; }
 [ -f "$TAILSCALE_CONFIG" ] || { echo "missing default tailscale UCI config overlay"; exit 1; }
+[ -f "$TAILSCALE_SETTINGS_ENABLE" ] || { echo "missing tailscale settings enable defaults script"; exit 1; }
 [ -f "$TAILSCALE_UCI_DEFAULTS" ] || { echo "missing tailscale UCI fallback defaults script"; exit 1; }
 [ -f "$TAILSCALE_DNS_GUARD" ] || { echo "missing tailscale DNS guard init script"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
@@ -69,6 +71,11 @@ tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option fw_mode 'nftables'$" || {
   exit 1
 }
 
+tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option disable_magic_dns '1'$" || {
+  echo "default tailscale UCI config overlay is missing disable_magic_dns"
+  exit 1
+}
+
 grep -q '\[ -f "/etc/config/tailscale" \] && exit 0' "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not preserve existing config"
   exit 1
@@ -76,6 +83,21 @@ grep -q '\[ -f "/etc/config/tailscale" \] && exit 0' "$TAILSCALE_UCI_DEFAULTS" |
 
 grep -q "config settings 'settings'" "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not recreate the settings section"
+  exit 1
+}
+
+grep -q "option disable_magic_dns '1'" "$TAILSCALE_UCI_DEFAULTS" || {
+  echo "tailscale UCI fallback defaults script does not recreate disable_magic_dns"
+  exit 1
+}
+
+grep -q '/etc/init.d/tailscale-settings enable' "$TAILSCALE_SETTINGS_ENABLE" || {
+  echo "tailscale settings defaults script does not enable tailscale-settings"
+  exit 1
+}
+
+grep -q '/etc/init.d/tailscale-settings start' "$TAILSCALE_SETTINGS_ENABLE" || {
+  echo "tailscale settings defaults script does not start tailscale-settings"
   exit 1
 }
 
