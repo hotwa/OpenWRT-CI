@@ -35,4 +35,24 @@ grep -q "/etc/config/nikki" "$NIKKI_GUARD" || {
 	exit 1
 }
 
+grep -q 'nikki.@router_access_control\[0\].enabled' "$NIKKI_GUARD" || {
+	echo "Nikki guard does not gate itself on the router access control section"
+	exit 1
+}
+
+grep -q 'services/mosdns' "$NIKKI_GUARD" || {
+	echo "Nikki guard does not preserve the mosdns router access bypass"
+	exit 1
+}
+
+grep -q 'services/dnsmasq' "$NIKKI_GUARD" || {
+	echo "Nikki guard does not preserve the dnsmasq router access bypass"
+	exit 1
+}
+
+grep -q 'services/tailscale' "$NIKKI_GUARD" || {
+	echo "Nikki guard does not preserve the tailscale router access bypass"
+	exit 1
+}
+
 echo "tailscale fork and Nikki guard test passed"

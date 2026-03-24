@@ -10,6 +10,7 @@ TAILSCALE_UCI_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallba
 TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
 TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard"
 TAILSCALE_NIKKI_BOOT_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-nikki-guard"
+TAILSCALE_MAGICDNS_FORWARD="$ROOT_DIR/files/etc/uci-defaults/98-tailscale-magicdns-forward"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
@@ -19,6 +20,7 @@ TAILSCALE_NIKKI_BOOT_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-nikki-guard"
 [ -f "$TAILSCALE_DNS_GUARD" ] || { echo "missing tailscale DNS guard init script"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_BOOT_GUARD" ] || { echo "missing Nikki tailscale boot guard init script"; exit 1; }
+[ -f "$TAILSCALE_MAGICDNS_FORWARD" ] || { echo "missing tailscale MagicDNS forwarding defaults script"; exit 1; }
 [ "$(git ls-files --stage -- "$TAILSCALE_NIKKI_BOOT_GUARD" | awk '{print $1}')" = "100755" ] || {
   echo "Nikki tailscale boot guard init script is not marked executable"
   exit 1
@@ -79,6 +81,11 @@ grep -q '/etc/config/nikki' "$TAILSCALE_NIKKI_GUARD" || {
   exit 1
 }
 
+grep -q 'nikki.@router_access_control\[0\].enabled' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not verify the router access control section exists"
+  exit 1
+}
+
 grep -q '/etc/init.d/tailscale-nikki-guard enable' "$TAILSCALE_NIKKI_GUARD" || {
   echo "Nikki tailscale compatibility guard does not enable the boot guard"
   exit 1
@@ -91,6 +98,36 @@ grep -q '100.64.0.0/10' "$TAILSCALE_NIKKI_GUARD" || {
 
 grep -q 'fd7a:115c:a1e0::/48' "$TAILSCALE_NIKKI_GUARD" || {
   echo "Nikki tailscale compatibility guard does not preserve the Tailscale ULA range"
+  exit 1
+}
+
+grep -q 'services/mosdns' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not preserve the mosdns router access bypass"
+  exit 1
+}
+
+grep -q 'services/dnsmasq' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not preserve the dnsmasq router access bypass"
+  exit 1
+}
+
+grep -q 'services/tailscale' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not preserve the tailscale router access bypass"
+  exit 1
+}
+
+grep -q '/headscale.jmsu.top/223.5.5.5' "$TAILSCALE_MAGICDNS_FORWARD" || {
+  echo "MagicDNS forwarding defaults script does not pin headscale.jmsu.top to 223.5.5.5"
+  exit 1
+}
+
+grep -q '/derper.jmsu.top/223.5.5.5' "$TAILSCALE_MAGICDNS_FORWARD" || {
+  echo "MagicDNS forwarding defaults script does not pin derper.jmsu.top to 223.5.5.5"
+  exit 1
+}
+
+grep -q '/hs.jmsu.top/100.100.100.100' "$TAILSCALE_MAGICDNS_FORWARD" || {
+  echo "MagicDNS forwarding defaults script does not forward hs.jmsu.top to 100.100.100.100"
   exit 1
 }
 

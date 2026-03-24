@@ -2,6 +2,7 @@
 
 [ -f "/etc/config/nikki" ] || exit 0
 command -v uci >/dev/null 2>&1 || exit 0
+uci -q get "nikki.@router_access_control[0].enabled" >/dev/null 2>&1 || exit 0
 
 changed=0
 
@@ -19,6 +20,13 @@ ensure_list_entry() {
 
 ensure_list_entry "nikki.proxy.reserved_ip" "100.64.0.0/10"
 ensure_list_entry "nikki.proxy.reserved_ip6" "fd7a:115c:a1e0::/48"
+ensure_list_entry "nikki.@router_access_control[0].cgroup" "services/dnsmasq"
+ensure_list_entry "nikki.@router_access_control[0].cgroup" "services/tailscale"
+ensure_list_entry "nikki.@router_access_control[0].cgroup" "services/mosdns"
+ensure_list_entry "nikki.@router_access_control[0].user" "dnsmasq"
+ensure_list_entry "nikki.@router_access_control[0].user" "mosdns"
+ensure_list_entry "nikki.@router_access_control[0].group" "dnsmasq"
+ensure_list_entry "nikki.@router_access_control[0].group" "mosdns"
 
 if [ -x /etc/init.d/tailscale-nikki-guard ]; then
 	/etc/init.d/tailscale-nikki-guard enable >/dev/null 2>&1 || true
