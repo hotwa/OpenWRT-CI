@@ -20,6 +20,10 @@ ensure_list_entry() {
 ensure_list_entry "nikki.proxy.reserved_ip" "100.64.0.0/10"
 ensure_list_entry "nikki.proxy.reserved_ip6" "fd7a:115c:a1e0::/48"
 
+if [ -x /etc/init.d/tailscale-nikki-guard ]; then
+	/etc/init.d/tailscale-nikki-guard enable >/dev/null 2>&1 || true
+fi
+
 [ "$changed" -eq 1 ] && uci commit nikki
 
 exit 0

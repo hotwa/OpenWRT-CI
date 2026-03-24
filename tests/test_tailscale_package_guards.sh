@@ -9,6 +9,7 @@ TAILSCALE_CONFIG="$ROOT_DIR/files/etc/config/tailscale"
 TAILSCALE_UCI_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallback"
 TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
 TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard"
+TAILSCALE_NIKKI_BOOT_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-nikki-guard"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
@@ -17,6 +18,11 @@ TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard
 [ -f "$TAILSCALE_UCI_DEFAULTS" ] || { echo "missing tailscale UCI fallback defaults script"; exit 1; }
 [ -f "$TAILSCALE_DNS_GUARD" ] || { echo "missing tailscale DNS guard init script"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
+[ -f "$TAILSCALE_NIKKI_BOOT_GUARD" ] || { echo "missing Nikki tailscale boot guard init script"; exit 1; }
+[ "$(git ls-files --stage -- "$TAILSCALE_NIKKI_BOOT_GUARD" | awk '{print $1}')" = "100755" ] || {
+  echo "Nikki tailscale boot guard init script is not marked executable"
+  exit 1
+}
 
 grep -q 'test -d "./luci-app-tailscale-community"' "$PACKAGES_SH" || {
   echo "Packages.sh does not verify luci-app-tailscale-community extraction"
@@ -70,6 +76,11 @@ grep -q '/etc/config/tailscale' "$TAILSCALE_DNS_GUARD" || {
 
 grep -q '/etc/config/nikki' "$TAILSCALE_NIKKI_GUARD" || {
   echo "Nikki tailscale compatibility guard does not gate itself on Nikki being installed"
+  exit 1
+}
+
+grep -q '/etc/init.d/tailscale-nikki-guard enable' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not enable the boot guard"
   exit 1
 }
 
