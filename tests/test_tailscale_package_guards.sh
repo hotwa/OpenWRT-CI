@@ -11,6 +11,8 @@ TAILSCALE_DNS_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-accept-dns-guard"
 TAILSCALE_NIKKI_GUARD="$ROOT_DIR/files/etc/uci-defaults/97-tailscale-nikki-guard"
 TAILSCALE_NIKKI_BOOT_GUARD="$ROOT_DIR/files/etc/init.d/tailscale-nikki-guard"
 TAILSCALE_MAGICDNS_FORWARD="$ROOT_DIR/files/etc/uci-defaults/98-tailscale-magicdns-forward"
+TAILSCALE_QUAD100_HEALTH="$ROOT_DIR/files/etc/init.d/tailscale-quad100-health"
+TAILSCALE_QUAD100_HEALTH_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale-quad100-health"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
@@ -21,8 +23,14 @@ TAILSCALE_MAGICDNS_FORWARD="$ROOT_DIR/files/etc/uci-defaults/98-tailscale-magicd
 [ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_BOOT_GUARD" ] || { echo "missing Nikki tailscale boot guard init script"; exit 1; }
 [ -f "$TAILSCALE_MAGICDNS_FORWARD" ] || { echo "missing tailscale MagicDNS forwarding defaults script"; exit 1; }
+[ -f "$TAILSCALE_QUAD100_HEALTH" ] || { echo "missing tailscale Quad100 health init script"; exit 1; }
+[ -f "$TAILSCALE_QUAD100_HEALTH_DEFAULTS" ] || { echo "missing tailscale Quad100 health defaults script"; exit 1; }
 [ "$(git ls-files --stage -- "$TAILSCALE_NIKKI_BOOT_GUARD" | awk '{print $1}')" = "100755" ] || {
   echo "Nikki tailscale boot guard init script is not marked executable"
+  exit 1
+}
+[ "$(git ls-files --stage -- "$TAILSCALE_QUAD100_HEALTH" | awk '{print $1}')" = "100755" ] || {
+  echo "tailscale Quad100 health init script is not marked executable"
   exit 1
 }
 
@@ -128,6 +136,16 @@ grep -q '/derper.jmsu.top/223.5.5.5' "$TAILSCALE_MAGICDNS_FORWARD" || {
 
 grep -q '/hs.jmsu.top/100.100.100.100' "$TAILSCALE_MAGICDNS_FORWARD" || {
   echo "MagicDNS forwarding defaults script does not forward hs.jmsu.top to 100.100.100.100"
+  exit 1
+}
+
+grep -q '100.100.100.100' "$TAILSCALE_QUAD100_HEALTH" || {
+  echo "tailscale Quad100 health guard does not target Quad100"
+  exit 1
+}
+
+grep -q '/etc/init.d/tailscale-quad100-health enable' "$TAILSCALE_QUAD100_HEALTH_DEFAULTS" || {
+  echo "tailscale Quad100 health defaults script does not enable the guard"
   exit 1
 }
 
