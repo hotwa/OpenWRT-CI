@@ -289,10 +289,10 @@ jobs:
             echo "ERROR: python3 was dropped from .config after defconfig"
             exit 1
           }
-          if grep -q '^CONFIG_PACKAGE_python3-light=y$' .config; then
-            echo "ERROR: python3-light is still enabled after defconfig"
+          grep -q '^CONFIG_PACKAGE_python3-venv=y$' .config || {
+            echo "ERROR: python3-venv was dropped from .config after defconfig"
             exit 1
-          fi
+          }
           test -f "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
             echo "ERROR: uv profile script is missing from files overlay"
             exit 1
