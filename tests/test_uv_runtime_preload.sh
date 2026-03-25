@@ -10,6 +10,9 @@ FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$FETCH_SCRIPT" ] || { echo "missing fetch_uv_runtime.sh"; exit 1; }
 
+PYTHON_SPLIT_MATCHES="$(find "$ROOT_DIR/wrt/feeds" "$ROOT_DIR/wrt/package" -type f \( -name 'Makefile' -o -name '*.mk' \) 2>/dev/null \
+  | xargs grep -nE 'Package/python3(|-[^:]+)|python3-light|venv' 2>/dev/null || true)"
+
 grep -q '^CONFIG_PACKAGE_python3=y$' "$GENERAL" || {
   echo "GENERAL.txt does not enable full python3"
   exit 1
@@ -18,6 +21,13 @@ grep -q '^CONFIG_PACKAGE_python3=y$' "$GENERAL" || {
 if grep -q '^CONFIG_PACKAGE_python3-light=y$' "$GENERAL"; then
   echo "GENERAL.txt still enables python3-light"
   exit 1
+fi
+
+if printf '%s\n' "$PYTHON_SPLIT_MATCHES" | grep -q 'Package/python3-venv'; then
+  grep -q '^CONFIG_PACKAGE_python3-venv=y$' "$GENERAL" || {
+    echo "GENERAL.txt does not enable python3-venv even though the checked-out buildroot exposes it"
+    exit 1
+  }
 fi
 
 grep -q '\$GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh' "$WORKFLOW" || {
