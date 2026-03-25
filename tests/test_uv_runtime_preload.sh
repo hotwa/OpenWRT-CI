@@ -49,4 +49,29 @@ grep -q 'cp -rf ./files/. ./wrt/files/' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'uv-aarch64-unknown-linux-musl' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not support aarch64 musl uv assets"
+  exit 1
+}
+
+grep -q 'uv-x86_64-unknown-linux-musl' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not support x86_64 musl uv assets"
+  exit 1
+}
+
+grep -q 'UV_PYTHON_INSTALL_MIRROR' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not prepare a local Python install mirror"
+  exit 1
+}
+
+grep -q 'python-build-standalone' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not mirror python-build-standalone assets"
+  exit 1
+}
+
+grep -q "3.10 3.11 3.12 3.13" "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not target Python 3.10-3.13"
+  exit 1
+}
+
 echo "uv runtime preload guard test passed"
