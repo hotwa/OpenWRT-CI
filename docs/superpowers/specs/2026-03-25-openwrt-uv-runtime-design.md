@@ -10,7 +10,7 @@ Integrate `uv` into this OpenWrt build repository so supported firmware images b
 
 - a directly executable `uv` command in the default shell `PATH`
 - full system `python3` instead of `python3-light`
-- precreated `uv` runtime directories with environment variables for cache and managed Python storage
+- precreated `uv` runtime directories with mount-aware environment variables for cache and managed Python storage
 - preloaded CPython 3.10, 3.11, 3.12, and 3.13 assets for supported architectures, avoiding network downloads at first use whenever possible
 
 ## Background
@@ -30,7 +30,7 @@ Relevant current behavior:
 - Replace `python3-light` with full `python3`
 - Preload the `uv` musl binary into the image for supported architectures
 - Precreate `uv` storage directories under `/opt/uv`
-- Export `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and `UV_PYTHON_CACHE_DIR` via shell profile
+- Export `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and `UV_PYTHON_CACHE_DIR` only after `/mnt/*` storage is mounted, with `/opt/uv` as a fallback
 - Attempt to preload managed CPython 3.10 through 3.13 into `uv`'s managed Python directory layout
 - Fall back safely when preloading some Python versions is not possible
 - Add smoke-test level CI checks that confirm the expected rootfs artifacts are present
@@ -59,7 +59,9 @@ On supported firmware images:
 - `uv --version` works immediately after login
 - `python3 --version` uses the system-provided OpenWrt Python package
 - `uv venv --python 3.10`, `3.11`, `3.12`, and `3.13` should avoid network downloads when the preload step succeeds
-- `uv` cache and managed Python storage live under `/opt/uv`, not under user-home hidden directories
+- immutable Python mirror assets live under `/opt/uv/python-mirror`
+- mutable `uv` cache and managed Python install directories switch to mounted `/mnt/*` storage after boot when that storage is available
+- if no suitable `/mnt/*` storage is mounted, `uv` falls back to `/opt/uv`
 
 On unsupported firmware images:
 
@@ -79,6 +81,9 @@ The integration is split into three layers:
 
 3. **Managed Python preload layer**
    CI prepares `/opt/uv/python`, `/opt/uv/python-cache`, `/opt/uv/python-mirror`, and `/opt/uv/cache`, then downloads the managed CPython 3.10-3.13 source archives into a local mirror layout that `uv` can consume without external network access.
+
+4. **Mount-aware storage layer**
+   Boot-time logic waits for `/mnt/*` storage to be available, prefers `/mnt/mmc` when present, creates mutable `uv` directories there, and only then exports `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and `UV_PYTHON_CACHE_DIR` to point at the mounted storage. The immutable mirror path remains rooted in `/opt/uv/python-mirror`.
 
 ## Repository Changes
 
@@ -125,15 +130,42 @@ Responsibilities:
 Add:
 
 - `files/etc/profile.d/uv.sh`
+- `files/etc/init.d/uv-storage`
+- `files/etc/rc.d/S99uv-storage` (or an equivalent image-time enablement path)
 
-Contents should export:
+`files/etc/profile.d/uv.sh` should:
 
-- `UV_CACHE_DIR=/opt/uv/cache`
-- `UV_PYTHON_INSTALL_DIR=/opt/uv/python`
-- `UV_PYTHON_CACHE_DIR=/opt/uv/python-cache`
-- `UV_PYTHON_INSTALL_MIRROR=file:///opt/uv/python-mirror`
+- source a generated runtime environment file if present
+- otherwise fall back to `/opt/uv`
+- always export `UV_PYTHON_INSTALL_MIRROR=file:///opt/uv/python-mirror`
+- therefore cover interactive login shells automatically
 
-This keeps future runtime path changes configurable via environment variables, which is explicitly desired.
+`files/etc/init.d/uv-storage` should:
+
+- run after block-device mounts are expected to be available
+- be enabled in the image so it executes automatically on every boot
+- detect a mounted writable `/mnt/*` directory
+- prefer `/mnt/mmc` when present
+- create the mutable directories under the mounted storage, e.g. `/mnt/mmc/uv/cache`, `/mnt/mmc/uv/python`, and `/mnt/mmc/uv/python-cache`
+- write a small runtime environment file, e.g. `/tmp/uv-env.sh`, exporting:
+  - `UV_CACHE_DIR`
+  - `UV_PYTHON_INSTALL_DIR`
+  - `UV_PYTHON_CACHE_DIR`
+- avoid changing `UV_PYTHON_INSTALL_MIRROR`, which should continue to point at the immutable rootfs mirror
+
+The boot-time enablement requirement is:
+
+- the service must be enabled in the firmware image, not left disabled for first boot
+- the service start order must be late enough that automount or block-mount processing has already run
+- the service may be rerun safely if mounted storage appears later than expected
+
+The scope of the generated runtime environment file is:
+
+- interactive login shells inherit it via `/etc/profile.d/uv.sh`
+- non-interactive callers that need mounted-path behavior must explicitly source `/tmp/uv-env.sh`
+- future LuCI wrappers and shell helpers should source `/tmp/uv-env.sh` before invoking `uv`
+
+This keeps future runtime path changes configurable via environment variables, while ensuring the preferred mutable storage only becomes active after `/mnt/*` is mounted.
 
 ### Workflow Integration
 
@@ -189,11 +221,12 @@ The exact `<build-id>` and `<artifact-name>` values should come from the release
 
 ### Why Not Use Home-Directory Defaults
 
-Using `/opt/uv` is preferred over `~/.local/share/uv` because:
+Using `/opt/uv` plus mount-aware `/mnt/*` overrides is preferred over `~/.local/share/uv` because:
 
 - firmware rootfs should not depend on a specific login user
 - root-owned system storage is clearer for preloaded assets
 - later path changes can be handled entirely with environment variables
+- mutable `uv` state can live on larger mounted storage without moving the immutable preloaded mirror assets out of the firmware image
 
 ### Acceptable Fallback
 
@@ -272,6 +305,8 @@ Add or extend repository tests to verify:
 
 - `Config/GENERAL.txt` selects full `python3`, not `python3-light`
 - `files/etc/profile.d/uv.sh` exists and exports the expected variables
+- `files/etc/init.d/uv-storage` exists
+- `files/etc/rc.d/S99uv-storage` or an equivalent enablement mechanism exists in the image overlay
 - `files/usr/bin/uv` exists after the preload script runs for supported architectures
 - `files/opt/uv/python`, `files/opt/uv/python-cache`, `files/opt/uv/python-mirror`, and `files/opt/uv/cache` exist
 
@@ -282,6 +317,8 @@ For supported architectures, the workflow should assert before image compilation
 - `uv` is executable in the staged rootfs
 - at least one requested managed CPython version was staged successfully into the local mirror
 - the profile exports include `UV_PYTHON_INSTALL_MIRROR`
+- the init script writes mount-aware values for `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and `UV_PYTHON_CACHE_DIR` only after a writable `/mnt/*` path is available
+- the firmware image includes the boot enablement for `uv-storage`
 
 If all managed Python versions fail to preload, the workflow should still continue, but the warning must be prominent.
 
@@ -299,6 +336,7 @@ This change is considered successful when a freshly flashed supported device can
 
 - run `uv --version`
 - run `python3 --version`
+- on devices with mounted writable `/mnt/*` storage, show `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and `UV_PYTHON_CACHE_DIR` pointing at that mounted storage after boot
 - create a virtual environment with one of the mirrored Python versions without requiring external network access
 
 ## LuCI Follow-Up
@@ -306,9 +344,11 @@ This change is considered successful when a freshly flashed supported device can
 `luci-app-uv` is intentionally deferred until the CLI path is proven stable. The later LuCI app should assume:
 
 - `uv` lives at `/usr/bin/uv`
-- storage lives under `/opt/uv`
+- immutable seed storage lives under `/opt/uv`
+- mutable runtime storage should prefer mounted `/mnt/mmc` or another writable `/mnt/*` path
 - configuration can be represented as environment variables or a small UCI wrapper
 - local Python asset mirroring lives under `/opt/uv/python-mirror`
+- any non-interactive wrapper that wants mounted-storage behavior should source `/tmp/uv-env.sh` first
 
 This keeps the current work focused on a stable runtime foundation.
 
@@ -331,10 +371,12 @@ This keeps the current work focused on a stable runtime foundation.
 - Preloading managed CPython may require adaptation if upstream asset naming or layout changes
 - Full `python3` plus four managed CPython versions will noticeably increase image size
 - Some OpenWrt targets may not have enough storage headroom for all four preloaded versions
+- mounted `/mnt/*` storage may appear later than expected or may not be writable at boot
 
 ## Risk Mitigations
 
 - keep the architecture allowlist narrow at first
 - separate mandatory `uv` failures from optional CPython preload failures
 - expose storage paths via environment variables so later tuning does not require a redesign
+- treat `/opt/uv` as the fallback location if mounted storage is absent or unusable
 - defer LuCI work until runtime behavior is validated on real devices
