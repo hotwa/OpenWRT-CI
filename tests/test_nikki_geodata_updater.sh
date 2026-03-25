@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPDATER="$ROOT_DIR/files/usr/bin/nikki-geodata-updater"
+CRON_BOOTSTRAP="$ROOT_DIR/files/etc/uci-defaults/99-nikki-geodata-cron"
 
 [ -f "$UPDATER" ] || { echo "missing nikki geodata updater script"; exit 1; }
 
@@ -55,6 +56,35 @@ grep -q '/etc/init.d/"$SERVICE_NAME" restart' "$UPDATER" || {
 
 grep -q 'restoring previous geodata after restart failure' "$UPDATER" || {
   echo "updater script does not log rollback on restart failure"
+  exit 1
+}
+
+[ -f "$CRON_BOOTSTRAP" ] || { echo "missing Nikki cron bootstrap script"; exit 1; }
+
+sh -n "$CRON_BOOTSTRAP"
+
+grep -q '/etc/crontabs/root' "$CRON_BOOTSTRAP" || {
+  echo "cron bootstrap does not target /etc/crontabs/root"
+  exit 1
+}
+
+grep -q 'grep -qF' "$CRON_BOOTSTRAP" || {
+  echo "cron bootstrap does not de-duplicate the cron job"
+  exit 1
+}
+
+grep -q 'crontab /etc/crontabs/root' "$CRON_BOOTSTRAP" || {
+  echo "cron bootstrap does not reload crond after modifications"
+  exit 1
+}
+
+grep -q '/usr/bin/nikki-geodata-updater' "$CRON_BOOTSTRAP" || {
+  echo "cron bootstrap does not inspect existing Nikki updater cron entries conservatively"
+  exit 1
+}
+
+grep -q '30 3 \* \* 0 /usr/bin/nikki-geodata-updater >/tmp/nikki-geodata-updater.log 2>&1' "$CRON_BOOTSTRAP" || {
+  echo "cron bootstrap does not install the weekly Nikki geodata update job"
   exit 1
 }
 
