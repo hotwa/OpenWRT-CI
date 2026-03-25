@@ -285,6 +285,50 @@ jobs:
             echo "ERROR: luci-app-tailscale-community was dropped from .config after defconfig"
             exit 1
           }
+          grep -q '^CONFIG_PACKAGE_python3=y$' .config || {
+            echo "ERROR: python3 was dropped from .config after defconfig"
+            exit 1
+          }
+          if grep -q '^CONFIG_PACKAGE_python3-light=y$' .config; then
+            echo "ERROR: python3-light is still enabled after defconfig"
+            exit 1
+          fi
+          test -f "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
+            echo "ERROR: uv profile script is missing from files overlay"
+            exit 1
+          }
+          test -f "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
+            echo "ERROR: uv init script is missing from files overlay"
+            exit 1
+          }
+          test -L "$GITHUB_WORKSPACE/files/etc/rc.d/S99uv-storage" || {
+            echo "ERROR: uv init service is not enabled in files overlay"
+            exit 1
+          }
+          test -x "$GITHUB_WORKSPACE/files/usr/bin/uv-runtime-smoke" || {
+            echo "ERROR: uv runtime smoke helper is missing or not executable"
+            exit 1
+          }
+          grep -q 'UV_PYTHON_INSTALL_MIRROR=file:///opt/uv/python-mirror' "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
+            echo "ERROR: uv profile script does not export the immutable mirror"
+            exit 1
+          }
+          grep -q '/tmp/uv-env.sh' "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
+            echo "ERROR: uv profile script does not source /tmp/uv-env.sh"
+            exit 1
+          }
+          grep -q 'UV_CACHE_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
+            echo "ERROR: uv init script does not write UV_CACHE_DIR"
+            exit 1
+          }
+          grep -q 'UV_PYTHON_INSTALL_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
+            echo "ERROR: uv init script does not write UV_PYTHON_INSTALL_DIR"
+            exit 1
+          }
+          grep -q 'UV_PYTHON_CACHE_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
+            echo "ERROR: uv init script does not write UV_PYTHON_CACHE_DIR"
+            exit 1
+          }
           make clean -j$(nproc)
 
       - name: Download Packages

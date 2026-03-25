@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="$ROOT_DIR/files/etc/profile.d/uv.sh"
 INIT="$ROOT_DIR/files/etc/init.d/uv-storage"
 RC_LINK="$ROOT_DIR/files/etc/rc.d/S99uv-storage"
+SMOKE="$ROOT_DIR/files/usr/bin/uv-runtime-smoke"
 
 [ -f "$PROFILE" ] || { echo "missing uv profile script"; exit 1; }
 [ -f "$INIT" ] || { echo "missing uv init script"; exit 1; }
@@ -56,6 +57,18 @@ grep -q 'UV_PYTHON_INSTALL_DIR' "$INIT" || {
 
 grep -q 'UV_PYTHON_CACHE_DIR' "$INIT" || {
   echo "uv init script does not write UV_PYTHON_CACHE_DIR"
+  exit 1
+}
+
+[ -f "$SMOKE" ] || { echo "missing uv runtime smoke helper"; exit 1; }
+
+grep -q 'python3 -m venv /tmp/uv-smoke-venv' "$SMOKE" || {
+  echo "uv runtime smoke helper does not validate python3 -m venv"
+  exit 1
+}
+
+grep -q '. /tmp/uv-env.sh' "$SMOKE" || {
+  echo "uv runtime smoke helper does not source /tmp/uv-env.sh"
   exit 1
 }
 
