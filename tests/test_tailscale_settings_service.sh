@@ -8,7 +8,10 @@ TAILSCALE_SETTINGS_ENABLE="$ROOT_DIR/files/etc/uci-defaults/94-tailscale-setting
 
 [ -f "$TAILSCALE_CONFIG" ] || { echo "missing tailscale config overlay"; exit 1; }
 [ -f "$TAILSCALE_FALLBACK" ] || { echo "missing tailscale fallback defaults"; exit 1; }
-[ -f "$TAILSCALE_SETTINGS_ENABLE" ] || { echo "missing tailscale-settings enable defaults"; exit 1; }
+[ ! -e "$TAILSCALE_SETTINGS_ENABLE" ] || {
+  echo "tailscale-settings enable defaults should be absent so the reconciler stays opt-in"
+  exit 1
+}
 
 tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option disable_magic_dns '1'$" || {
   echo "tailscale config does not explicitly disable MagicDNS takeover"
@@ -20,14 +23,4 @@ grep -q "option disable_magic_dns '1'" "$TAILSCALE_FALLBACK" || {
   exit 1
 }
 
-grep -q '/etc/init.d/tailscale-settings enable' "$TAILSCALE_SETTINGS_ENABLE" || {
-  echo "tailscale-settings defaults do not enable the settings reconciler"
-  exit 1
-}
-
-grep -q '/etc/init.d/tailscale-settings start' "$TAILSCALE_SETTINGS_ENABLE" || {
-  echo "tailscale-settings defaults do not start the settings reconciler"
-  exit 1
-}
-
-echo "tailscale settings service test passed"
+echo "tailscale settings opt-in test passed"

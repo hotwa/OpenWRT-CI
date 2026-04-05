@@ -19,7 +19,10 @@ TAILSCALE_QUAD100_HEALTH_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$HANDLES_SH" ] || { echo "missing Handles.sh"; exit 1; }
 [ -f "$TAILSCALE_CONFIG" ] || { echo "missing default tailscale UCI config overlay"; exit 1; }
-[ -f "$TAILSCALE_SETTINGS_ENABLE" ] || { echo "missing tailscale settings enable defaults script"; exit 1; }
+[ ! -e "$TAILSCALE_SETTINGS_ENABLE" ] || {
+  echo "tailscale settings enable defaults script should be absent so tailscale-settings stays opt-in"
+  exit 1
+}
 [ -f "$TAILSCALE_UCI_DEFAULTS" ] || { echo "missing tailscale UCI fallback defaults script"; exit 1; }
 [ -f "$TAILSCALE_DNS_GUARD" ] || { echo "missing tailscale DNS guard init script"; exit 1; }
 [ -f "$TAILSCALE_NIKKI_GUARD" ] || { echo "missing Nikki tailscale compatibility guard"; exit 1; }
@@ -115,16 +118,6 @@ if grep -q "list ip '192.168.11.2'" "$TAILSCALE_UCI_DEFAULTS"; then
   echo "tailscale UCI fallback defaults script still hardcodes a LAN bypass sample IP"
   exit 1
 fi
-
-grep -q '/etc/init.d/tailscale-settings enable' "$TAILSCALE_SETTINGS_ENABLE" || {
-  echo "tailscale settings defaults script does not enable tailscale-settings"
-  exit 1
-}
-
-grep -q '/etc/init.d/tailscale-settings start' "$TAILSCALE_SETTINGS_ENABLE" || {
-  echo "tailscale settings defaults script does not start tailscale-settings"
-  exit 1
-}
 
 grep -q '/etc/config/tailscale' "$TAILSCALE_DNS_GUARD" || {
   echo "tailscale DNS guard does not ensure the runtime UCI config exists"
