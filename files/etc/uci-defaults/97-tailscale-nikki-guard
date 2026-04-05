@@ -30,6 +30,7 @@ ensure_list_entry "nikki.@router_access_control[0].group" "mosdns"
 
 if [ -x /etc/init.d/tailscale-nikki-guard ]; then
 	/etc/init.d/tailscale-nikki-guard enable >/dev/null 2>&1 || true
+	/etc/init.d/tailscale-nikki-guard start >/dev/null 2>&1 || true
 fi
 
 [ "$changed" -eq 1 ] && uci commit nikki

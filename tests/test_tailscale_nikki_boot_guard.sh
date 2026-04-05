@@ -44,4 +44,44 @@ grep -q 'services/tailscale' "$BOOT_GUARD" || {
 	exit 1
 }
 
+grep -q 'nft list table inet nikki' "$BOOT_GUARD" || {
+	echo "boot guard does not verify the live Nikki nft table"
+	exit 1
+}
+
+grep -q 'fd7a:115c:a1e0::/48' "$BOOT_GUARD" || {
+	echo "boot guard does not check the live Tailscale ULA range"
+	exit 1
+}
+
+grep -q 'config_load tailscale' "$BOOT_GUARD" || {
+	echo "boot guard does not load tailscale UCI for LAN bypass hosts"
+	exit 1
+}
+
+grep -q 'lan_bypass_host' "$BOOT_GUARD" || {
+	echo "boot guard does not support tailscale LAN bypass host sections"
+	exit 1
+}
+
+grep -q 'tailscale_managed' "$BOOT_GUARD" || {
+	echo "boot guard does not mark managed Nikki LAN bypass sections"
+	exit 1
+}
+
+grep -q 'local value="\$1"' "$BOOT_GUARD" || {
+	echo "boot guard does not accept config_list_foreach values first for managed bypass copies"
+	exit 1
+}
+
+grep -q 'local option="\$2"' "$BOOT_GUARD" || {
+	echo "boot guard does not pass the destination option as the second append_bypass_value argument"
+	exit 1
+}
+
+grep -Eq 'fd7a:115c:a1e0::/48\|fc00::/7|fc00::/7\|fd7a:115c:a1e0::/48' "$BOOT_GUARD" || {
+	echo "boot guard does not accept a covering fc00::/7 runtime set for the Tailscale ULA range"
+	exit 1
+}
+
 echo "tailscale Nikki boot guard test passed"

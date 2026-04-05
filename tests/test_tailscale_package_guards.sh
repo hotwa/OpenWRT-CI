@@ -76,6 +76,16 @@ tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option disable_magic_dns '1'$" || 
   exit 1
 }
 
+tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^config lan_bypass_host$" || {
+  echo "default tailscale UCI config overlay is missing the LAN bypass host section"
+  exit 1
+}
+
+tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option enabled '0'$" || {
+  echo "default tailscale UCI config overlay is missing the disabled LAN bypass host template"
+  exit 1
+}
+
 grep -q '\[ -f "/etc/config/tailscale" \] && exit 0' "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not preserve existing config"
   exit 1
@@ -88,6 +98,11 @@ grep -q "config settings 'settings'" "$TAILSCALE_UCI_DEFAULTS" || {
 
 grep -q "option disable_magic_dns '1'" "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not recreate disable_magic_dns"
+  exit 1
+}
+
+grep -q "config lan_bypass_host" "$TAILSCALE_UCI_DEFAULTS" || {
+  echo "tailscale UCI fallback defaults script does not recreate the LAN bypass host template"
   exit 1
 }
 
@@ -143,6 +158,11 @@ grep -q 'services/dnsmasq' "$TAILSCALE_NIKKI_GUARD" || {
 
 grep -q 'services/tailscale' "$TAILSCALE_NIKKI_GUARD" || {
   echo "Nikki tailscale compatibility guard does not preserve the tailscale router access bypass"
+  exit 1
+}
+
+grep -q '/etc/init.d/tailscale-nikki-guard start' "$TAILSCALE_NIKKI_GUARD" || {
+  echo "Nikki tailscale compatibility guard does not start the boot guard during first boot"
   exit 1
 }
 
