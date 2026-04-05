@@ -86,6 +86,11 @@ tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option enabled '0'$" || {
   exit 1
 }
 
+if tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	list ip '192.168.11.2'$"; then
+  echo "default tailscale UCI config overlay still hardcodes a LAN bypass sample IP"
+  exit 1
+fi
+
 grep -q '\[ -f "/etc/config/tailscale" \] && exit 0' "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not preserve existing config"
   exit 1
@@ -105,6 +110,11 @@ grep -q "config lan_bypass_host" "$TAILSCALE_UCI_DEFAULTS" || {
   echo "tailscale UCI fallback defaults script does not recreate the LAN bypass host template"
   exit 1
 }
+
+if grep -q "list ip '192.168.11.2'" "$TAILSCALE_UCI_DEFAULTS"; then
+  echo "tailscale UCI fallback defaults script still hardcodes a LAN bypass sample IP"
+  exit 1
+fi
 
 grep -q '/etc/init.d/tailscale-settings enable' "$TAILSCALE_SETTINGS_ENABLE" || {
   echo "tailscale settings defaults script does not enable tailscale-settings"
