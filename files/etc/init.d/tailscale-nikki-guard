@@ -7,6 +7,9 @@ STOP=10
 
 TAILSCALE_IPV4_RANGE="100.64.0.0/10"
 TAILSCALE_IPV6_RANGE="fd7a:115c:a1e0::/48"
+NIKKI_HIJACK_TEMPLATE="/etc/nikki/ucode/hijack.ut"
+QUAD100_RAW_ENDPOINT="udp://100.100.100.100:53"
+QUAD100_TAILSCALE_ENDPOINT="udp://100.100.100.100:53#tailscale0"
 
 ensure_list_entry() {
 	local option="$1"
@@ -83,12 +86,91 @@ runtime_has_tailscale_ranges() {
 	return 0
 }
 
+template_has_dns_bypass() {
+	[ -f "$NIKKI_HIJACK_TEMPLATE" ] || return 1
+	grep -F "ip daddr $TAILSCALE_IPV4_RANGE return" "$NIKKI_HIJACK_TEMPLATE" >/dev/null 2>&1 || return 1
+	grep -F "ip6 daddr $TAILSCALE_IPV6_RANGE return" "$NIKKI_HIJACK_TEMPLATE" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+runtime_has_dns_bypass() {
+	command -v nft >/dev/null 2>&1 || return 1
+	nft list chain inet nikki router_dns_hijack 2>/dev/null | grep -F "ip daddr $TAILSCALE_IPV4_RANGE return" >/dev/null 2>&1 || return 1
+	nft list chain inet nikki router_dns_hijack 2>/dev/null | grep -F "ip6 daddr $TAILSCALE_IPV6_RANGE return" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+patch_hijack_template() {
+	local tmp
+
+	[ -f "$NIKKI_HIJACK_TEMPLATE" ] || return 0
+	template_has_dns_bypass && return 0
+
+	tmp="$(mktemp)"
+	awk -v ipv4="$TAILSCALE_IPV4_RANGE" -v ipv6="$TAILSCALE_IPV6_RANGE" '
+		{
+			print
+			if ($0 ~ /^\tchain router_dns_hijack \{$/) {
+				print "\t\tip daddr " ipv4 " return"
+				print "\t\tip6 daddr " ipv6 " return"
+			}
+		}
+	' "$NIKKI_HIJACK_TEMPLATE" >"$tmp"
+
+	if ! cmp -s "$NIKKI_HIJACK_TEMPLATE" "$tmp"; then
+		cat "$tmp" >"$NIKKI_HIJACK_TEMPLATE"
+		changed=1
+	fi
+
+	rm -f "$tmp"
+}
+
 reapply_nikki_runtime() {
 	[ -x /etc/init.d/nikki ] || return 0
 
 	/etc/init.d/nikki reload >/dev/null 2>&1 ||
 		/etc/init.d/nikki restart >/dev/null 2>&1 ||
 		true
+}
+
+current_profile_path() {
+	local profile
+
+	profile="$(uci -q get nikki.config.profile 2>/dev/null || true)"
+	case "$profile" in
+		file:*)
+			printf '/etc/nikki/profiles/%s\n' "${profile#file:}"
+			;;
+		/*)
+			printf '%s\n' "$profile"
+			;;
+	esac
+}
+
+patch_magicdns_profile_file() {
+	local file="$1"
+	local tmp
+
+	[ -n "$file" ] || return 0
+	[ -f "$file" ] || return 0
+
+	grep -F "$QUAD100_TAILSCALE_ENDPOINT" "$file" >/dev/null 2>&1 && return 0
+	grep -F "$QUAD100_RAW_ENDPOINT" "$file" >/dev/null 2>&1 || return 0
+
+	tmp="$(mktemp)"
+	sed "s|$QUAD100_RAW_ENDPOINT|$QUAD100_TAILSCALE_ENDPOINT|g" "$file" >"$tmp"
+
+	if ! cmp -s "$file" "$tmp"; then
+		cat "$tmp" >"$file"
+		changed=1
+	fi
+
+	rm -f "$tmp"
+}
+
+patch_magicdns_policy_interface() {
+	patch_magicdns_profile_file "$(current_profile_path)"
+	patch_magicdns_profile_file "/etc/nikki/run/config.yaml"
 }
 
 apply_guard() {
@@ -107,6 +189,8 @@ apply_guard() {
 	ensure_list_entry "nikki.@router_access_control[0].group" "dnsmasq"
 	ensure_list_entry "nikki.@router_access_control[0].group" "mosdns"
 	sync_lan_bypass_hosts
+	patch_hijack_template
+	patch_magicdns_policy_interface
 
 	if [ "$changed" -eq 1 ]; then
 		uci commit nikki
@@ -114,6 +198,10 @@ apply_guard() {
 	fi
 
 	if ! runtime_has_tailscale_ranges; then
+		reapply_nikki_runtime
+	fi
+
+	if ! runtime_has_dns_bypass; then
 		reapply_nikki_runtime
 	fi
 }

@@ -18,7 +18,7 @@ ensure_list_entry() {
 
 ensure_list_entry "dhcp.@dnsmasq[0].server" "/headscale.jmsu.top/223.5.5.5"
 ensure_list_entry "dhcp.@dnsmasq[0].server" "/derper.jmsu.top/223.5.5.5"
-ensure_list_entry "dhcp.@dnsmasq[0].server" "/hs.jmsu.top/100.100.100.100"
+ensure_list_entry "dhcp.@dnsmasq[0].server" "/hs.jmsu.top/100.100.100.100@tailscale0"
 
 [ "$changed" -eq 1 ] || exit 0
 

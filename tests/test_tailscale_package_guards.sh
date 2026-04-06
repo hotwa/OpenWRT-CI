@@ -164,6 +164,31 @@ grep -q 'services/tailscale' "$TAILSCALE_NIKKI_GUARD" || {
   exit 1
 }
 
+grep -q '/etc/nikki/ucode/hijack.ut' "$TAILSCALE_NIKKI_BOOT_GUARD" || {
+  echo "Nikki tailscale boot guard does not patch the Nikki DNS hijack template"
+  exit 1
+}
+
+grep -q 'chain router_dns_hijack' "$TAILSCALE_NIKKI_BOOT_GUARD" || {
+  echo "Nikki tailscale boot guard does not target router_dns_hijack"
+  exit 1
+}
+
+grep -q 'ip daddr \$TAILSCALE_IPV4_RANGE return' "$TAILSCALE_NIKKI_BOOT_GUARD" || {
+  echo "Nikki tailscale boot guard does not add an IPv4 Tailscale DNS bypass"
+  exit 1
+}
+
+grep -q 'ip6 daddr \$TAILSCALE_IPV6_RANGE return' "$TAILSCALE_NIKKI_BOOT_GUARD" || {
+  echo "Nikki tailscale boot guard does not add an IPv6 Tailscale DNS bypass"
+  exit 1
+}
+
+grep -q 'udp://100.100.100.100:53#tailscale0' "$TAILSCALE_NIKKI_BOOT_GUARD" || {
+  echo "Nikki tailscale boot guard does not bind Quad100 DNS lookups to tailscale0"
+  exit 1
+}
+
 grep -q '/etc/init.d/tailscale-nikki-guard start' "$TAILSCALE_NIKKI_GUARD" || {
   echo "Nikki tailscale compatibility guard does not start the boot guard during first boot"
   exit 1
@@ -179,7 +204,7 @@ grep -q '/derper.jmsu.top/223.5.5.5' "$TAILSCALE_MAGICDNS_FORWARD" || {
   exit 1
 }
 
-grep -q '/hs.jmsu.top/100.100.100.100' "$TAILSCALE_MAGICDNS_FORWARD" || {
+grep -q '/hs.jmsu.top/100.100.100.100@tailscale0' "$TAILSCALE_MAGICDNS_FORWARD" || {
   echo "MagicDNS forwarding defaults script does not forward hs.jmsu.top to 100.100.100.100"
   exit 1
 }

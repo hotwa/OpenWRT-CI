@@ -44,6 +44,36 @@ grep -q 'services/tailscale' "$BOOT_GUARD" || {
 	exit 1
 }
 
+grep -q '/etc/nikki/ucode/hijack.ut' "$BOOT_GUARD" || {
+	echo "boot guard does not patch the Nikki DNS hijack template"
+	exit 1
+}
+
+grep -q 'chain router_dns_hijack' "$BOOT_GUARD" || {
+	echo "boot guard does not target the router DNS hijack chain"
+	exit 1
+}
+
+grep -q 'ip daddr \$TAILSCALE_IPV4_RANGE return' "$BOOT_GUARD" || {
+	echo "boot guard does not add an IPv4 Tailscale DNS bypass rule"
+	exit 1
+}
+
+grep -q 'ip6 daddr \$TAILSCALE_IPV6_RANGE return' "$BOOT_GUARD" || {
+	echo "boot guard does not add an IPv6 Tailscale DNS bypass rule"
+	exit 1
+}
+
+grep -q 'udp://100.100.100.100:53#tailscale0' "$BOOT_GUARD" || {
+	echo "boot guard does not bind Quad100 DNS lookups to tailscale0"
+	exit 1
+}
+
+grep -q 'current_profile_path()' "$BOOT_GUARD" || {
+	echo "boot guard does not locate the active Nikki profile before patching DNS policy"
+	exit 1
+}
+
 grep -q 'nft list table inet nikki' "$BOOT_GUARD" || {
 	echo "boot guard does not verify the live Nikki nft table"
 	exit 1
@@ -81,6 +111,11 @@ grep -q 'local option="\$2"' "$BOOT_GUARD" || {
 
 grep -Eq 'fd7a:115c:a1e0::/48\|fc00::/7|fc00::/7\|fd7a:115c:a1e0::/48' "$BOOT_GUARD" || {
 	echo "boot guard does not accept a covering fc00::/7 runtime set for the Tailscale ULA range"
+	exit 1
+}
+
+grep -q 'nft list chain inet nikki router_dns_hijack' "$BOOT_GUARD" || {
+	echo "boot guard does not verify the live router DNS hijack chain"
 	exit 1
 }
 
