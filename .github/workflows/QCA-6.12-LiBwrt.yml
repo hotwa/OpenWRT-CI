@@ -69,4 +69,4 @@ jobs:
       WRT_TEST: ${{inputs.TEST}}
 
       CI_NAME: ${{github.workflow}}
-      RUNNER_LABELS: '["self-hosted","linux","x64","runner-fleet"]'
+      RUNNER_LABELS: '["ubuntu-latest"]'
