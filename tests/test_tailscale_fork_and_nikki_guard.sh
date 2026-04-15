@@ -10,13 +10,8 @@ TAILSCALE_GUARD_TEST="$ROOT_DIR/tests/test_tailscale_package_guards.sh"
 [ -f "$NIKKI_GUARD" ] || { echo "missing Nikki tailscale guard script"; exit 1; }
 [ -f "$TAILSCALE_GUARD_TEST" ] || { echo "missing tailscale package guard test"; exit 1; }
 
-grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community"' "$PACKAGES_SH" || {
-	echo "Packages.sh does not pull luci-app-tailscale-community from the hotwa fork"
-	exit 1
-}
-
-grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "master"' "$PACKAGES_SH" || {
-	echo "Packages.sh does not track the pinned hotwa master branch"
+grep -q 'UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"' "$PACKAGES_SH" || {
+	echo "Packages.sh does not pull luci-app-tailscale from the upstream asvow source"
 	exit 1
 }
 
@@ -55,4 +50,4 @@ grep -q 'services/tailscale' "$NIKKI_GUARD" || {
 	exit 1
 }
 
-echo "tailscale fork and Nikki guard test passed"
+echo "tailscale upstream source and Nikki guard test passed"

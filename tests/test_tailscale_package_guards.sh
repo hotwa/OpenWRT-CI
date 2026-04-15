@@ -39,8 +39,8 @@ TAILSCALE_QUAD100_HEALTH_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale
   exit 1
 }
 
-grep -q 'test -d "./luci-app-tailscale-community"' "$PACKAGES_SH" || {
-  echo "Packages.sh does not verify luci-app-tailscale-community extraction"
+grep -q 'UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"' "$PACKAGES_SH" || {
+  echo "Packages.sh does not pull luci-app-tailscale from the upstream asvow source"
   exit 1
 }
 
@@ -49,8 +49,8 @@ grep -q 'CONFIG_PACKAGE_tailscale=y' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'CONFIG_PACKAGE_luci-app-tailscale-community=y' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not verify tailscale community package remains enabled after defconfig"
+grep -q 'CONFIG_PACKAGE_luci-app-tailscale=y' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not verify luci-app-tailscale remains enabled after defconfig"
   exit 1
 }
 

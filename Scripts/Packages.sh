@@ -50,9 +50,9 @@ UPDATE_PACKAGE() {
 		mkdir -p "$EXTRACT_DIR"
 
 		find ./$REPO_NAME/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} "$EXTRACT_DIR"/ \;
-		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
+		if [[ "$PKG_NAME" == "luci-app-tailscale" ]]; then
 			test -d "$EXTRACT_DIR/$PKG_NAME" || {
-				echo "ERROR: luci-app-tailscale-community was not extracted into the staging directory."
+				echo "ERROR: luci-app-tailscale was not extracted into the staging directory."
 				exit 1
 			}
 		fi
@@ -63,9 +63,9 @@ UPDATE_PACKAGE() {
 			mv -f "$EXTRACTED_PATH" ./
 		done
 		rm -rf "$EXTRACT_DIR"
-		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
-			test -d "./luci-app-tailscale-community" || {
-				echo "ERROR: luci-app-tailscale-community was removed after repository cleanup."
+		if [[ "$PKG_NAME" == "luci-app-tailscale" ]]; then
+			test -d "./luci-app-tailscale" || {
+				echo "ERROR: luci-app-tailscale was removed after repository cleanup."
 				exit 1
 			}
 		fi
@@ -92,7 +92,7 @@ UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
 UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
-UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "master" "pkg" "luci-app-tailscale" "21d4e3c2702d7ab9f87a12f2196775e7c8a2970b"
+UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
 
@@ -100,7 +100,7 @@ UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "lisaac/luci-app-diskman" "master"
 UPDATE_PACKAGE "easytier" "EasyTier/luci-app-easytier" "main"
 UPDATE_PACKAGE "fancontrol" "rockjake/luci-app-fancontrol" "main"
-UPDATE_PACKAGE "gecoosac" "openwrt-fork/openwrt-gecoosac" "main"
+UPDATE_PACKAGE "gecoosac" "laipeng668/luci-app-gecoosac" "main"
 UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
 #UPDATE_PACKAGE "netspeedtest" "sirpdboy/luci-app-netspeedtest" "master" "" "homebox speedtest"
 UPDATE_PACKAGE "openclaw" "hotwa/luci-app-openclaw" "codex/custom-install-root"
