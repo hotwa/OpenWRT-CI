@@ -140,7 +140,7 @@ function generate_config() {
   local target=$(echo $WRT_ARCH | cut -d'_' -f2)
 
   #删除wifi依赖
-  if [[ "$WRT_CONFIG" == *"NOWIFI"* ]]; then
+  if [[ "$WRT_CONFIG" == *"NOWIFI"* || "$WRT_CONFIG" == *"WIFI-NO"* ]]; then
     remove_wifi $target
   fi
 
