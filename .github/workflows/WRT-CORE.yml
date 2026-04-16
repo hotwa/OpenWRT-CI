@@ -218,6 +218,8 @@ jobs:
           . $GITHUB_WORKSPACE/Scripts/retry.sh
           retry_cmd 5 15 git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
+          $GITHUB_WORKSPACE/Scripts/patch_libiwrt_k612_cacheline_assert.sh "./wrt" "$WRT_SOURCE" "$WRT_BRANCH"
+
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
           # Remove mainland mirrors so build source resolution stays consistent across runners.
