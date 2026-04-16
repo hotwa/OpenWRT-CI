@@ -18,6 +18,13 @@ preload_nikki_geodata() {
 
 preload_nikki_geodata
 
+# 修复 sbwml/luci-app-mosdns 的 ES6+ 语法与 LuCI jsmin 的兼容问题。
+MOSDNS_ROOT="./luci-app-mosdns"
+if [ -d "$MOSDNS_ROOT" ]; then
+	"$GITHUB_WORKSPACE/Scripts/patch_mosdns_jsmin_compat.sh" "$MOSDNS_ROOT"
+	cd "$PKG_PATH" && echo "mosdns jsmin compatibility has been fixed!"
+fi
+
 #预置HomeProxy数据
 if [ -d *"homeproxy"* ]; then
 	echo " "
