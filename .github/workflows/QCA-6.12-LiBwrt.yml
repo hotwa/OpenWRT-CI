@@ -36,8 +36,8 @@ jobs:
       #max-parallel: 3
       matrix:
         CONFIG: [IPQ807X-WIFI-NO, IPQ807X-WIFI-YES,IPQ60XX-WIFI-NO, IPQ60XX-WIFI-YES]
-        SOURCE: [LiBwrt/openwrt-6.x]
-#        SOURCE: [davidtall/LiBwrt-openwrt-6.x]
+        SOURCE: [davidtall/LiBwrt-openwrt-6.x]
+#        SOURCE: [LiBwrt/openwrt-6.x]
         BRANCH: [k6.12-nss]
 
     #调用公用编译核心WRT-CORE.yml

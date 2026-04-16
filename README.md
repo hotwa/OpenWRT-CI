@@ -8,7 +8,7 @@ https://github.com/immortalwrt/immortalwrt.git
 https://github.com/VIKINGYFY/immortalwrt.git
 
 LiBWrt：
-https://github.com/LiBwrt/openwrt-6.x
+https://github.com/davidtall/LiBwrt-openwrt-6.x
 
 # U-BOOT
 
