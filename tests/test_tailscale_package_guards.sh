@@ -44,6 +44,16 @@ grep -q 'UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"' 
   exit 1
 }
 
+grep -q 'rm -f luci-app-tailscale/root/etc/config/tailscale' "$PACKAGES_SH" || {
+  echo "Packages.sh does not remove the luci-app-tailscale packaged /etc/config/tailscale that conflicts with tailscale"
+  exit 1
+}
+
+grep -q 'rm -f luci-app-tailscale/root/etc/init.d/tailscale' "$PACKAGES_SH" || {
+  echo "Packages.sh does not remove the luci-app-tailscale packaged /etc/init.d/tailscale that conflicts with tailscale"
+  exit 1
+}
+
 grep -q 'CONFIG_PACKAGE_tailscale=y' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not verify tailscale remains enabled after defconfig"
   exit 1

@@ -112,8 +112,8 @@ UPDATE_PACKAGE "quickfile" "sbwml/luci-app-quickfile" "main"
 UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "luci-app-timewol luci-app-wolplus"
 UPDATE_PACKAGE "vnt" "lmq8267/luci-app-vnt" "main"
 
-# 临时禁用 daed，避免在 CI 中继续拉取并参与构建。
-# UPDATE_PACKAGE "luci-app-daed" "QiuSimons/luci-app-daed" "master"
+# 与上游对齐 daed 包源，但继续通过 Config/GENERAL.txt 保持默认禁用。
+UPDATE_PACKAGE "luci-app-daed" "QiuSimons/luci-app-daed" "master"
 UPDATE_PACKAGE "luci-app-pushbot" "zzsj0928/luci-app-pushbot" "master"
 UPDATE_PACKAGE "luci-app-lucky" "sirpdboy/luci-app-lucky" "main"
 
@@ -178,6 +178,10 @@ UPDATE_VERSION() {
 rm -rf ../feeds/luci/applications/luci-app-{passwall*,mosdns,dockerman,dae*,bypass*}
 rm -rf ../feeds/packages/net/{v2ray-geodata,dae*}
 cp -r $GITHUB_WORKSPACE/package/* ./
+# 上游 luci-app-tailscale 会重复打包 tailscale 已提供的 UCI 配置和 init 脚本。
+# 这些文件由基础 tailscale 包和仓库 overlay 统一提供，避免 ipk 文件冲突。
+rm -f luci-app-tailscale/root/etc/config/tailscale
+rm -f luci-app-tailscale/root/etc/init.d/tailscale
 #修复daed/Makefile
 # 临时禁用 daed 时一并跳过自定义 Makefile 覆盖。
 # rm -rf luci-app-daed/daed/Makefile && cp -r $GITHUB_WORKSPACE/patches/daed/Makefile luci-app-daed/daed/

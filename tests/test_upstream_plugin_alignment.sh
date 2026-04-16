@@ -30,6 +30,11 @@ grep -q '^CONFIG_PACKAGE_luci-app-daed=n$' "$GENERAL" || {
   exit 1
 }
 
+grep -q '^UPDATE_PACKAGE "luci-app-daed" "QiuSimons/luci-app-daed" "master"$' "$PACKAGES" || {
+  echo "Packages.sh does not align luci-app-daed to the upstream source while keeping it disabled in config"
+  exit 1
+}
+
 grep -q 'UPDATE_PACKAGE "gecoosac" "laipeng668/luci-app-gecoosac" "main"' "$PACKAGES" || {
   echo "Packages.sh does not align gecoosac to the upstream source"
   exit 1
