@@ -1,6 +1,6 @@
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -11982,7 +11982,10 @@ static void netdev_struct_check(void)
+@@ -11982,7 +11982,11 @@ static void netdev_struct_check(void)
  #ifdef CONFIG_NET_XGRESS
  	CACHELINE_ASSERT_GROUP_MEMBER(struct net_device, net_device_read_tx, tcx_egress);
  #endif

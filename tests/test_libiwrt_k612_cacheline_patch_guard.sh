@@ -19,6 +19,19 @@ trap cleanup EXIT
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 
 mkdir -p "$TREE_DIR/target/linux/qualcommax/patches-6.12"
+mkdir -p "$TREE_DIR/net/core"
+cat > "$TREE_DIR/net/core/dev.c" <<'EOF'
+static void netdev_struct_check(void)
+{
+#ifdef CONFIG_NET_XGRESS
+	CACHELINE_ASSERT_GROUP_MEMBER(struct net_device, net_device_read_tx, tcx_egress);
+#endif
+	CACHELINE_ASSERT_GROUP_SIZE(struct net_device, net_device_read_tx, 160);
+
+	/* TXRX read-mostly hotpath */
+	CACHELINE_ASSERT_GROUP_MEMBER(struct net_device, net_device_read_txrx, lstats);
+}
+EOF
 
 "$PATCHER" "$TREE_DIR" "davidtall/LiBwrt-openwrt-6.x" "k6.12-nss"
 
@@ -29,6 +42,11 @@ mkdir -p "$TREE_DIR/target/linux/qualcommax/patches-6.12"
 
 cmp -s "$PATCH_SOURCE" "$PATCH_TARGET" || {
 	echo "LiBwrt cacheline compatibility patch content drifted during injection"
+	exit 1
+}
+
+patch --dry-run -p1 -d "$TREE_DIR" < "$PATCH_TARGET" >/dev/null || {
+	echo "LiBwrt cacheline compatibility patch no longer parses and applies cleanly"
 	exit 1
 }
 
