@@ -10,13 +10,13 @@ SETTINGS="$ROOT_DIR/Scripts/Settings.sh"
 [ -f "$PACKAGES" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$SETTINGS" ] || { echo "missing Settings.sh"; exit 1; }
 
-grep -q '^CONFIG_PACKAGE_luci-app-tailscale=y$' "$GENERAL" || {
-  echo "GENERAL config does not enable luci-app-tailscale"
+grep -q '^CONFIG_PACKAGE_luci-app-tailscale-community=y$' "$GENERAL" || {
+  echo "GENERAL config does not enable luci-app-tailscale-community"
   exit 1
 }
 
-if grep -q '^CONFIG_PACKAGE_luci-app-tailscale-community=y$' "$GENERAL"; then
-  echo "GENERAL config still enables luci-app-tailscale-community"
+if grep -q '^CONFIG_PACKAGE_luci-app-tailscale=y$' "$GENERAL"; then
+  echo "GENERAL config still enables luci-app-tailscale"
   exit 1
 fi
 

@@ -50,9 +50,9 @@ UPDATE_PACKAGE() {
 		mkdir -p "$EXTRACT_DIR"
 
 		find ./$REPO_NAME/*/ -maxdepth 3 -type d -iname "*$PKG_NAME*" -prune -exec cp -rf {} "$EXTRACT_DIR"/ \;
-		if [[ "$PKG_NAME" == "luci-app-tailscale" ]]; then
+		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
 			test -d "$EXTRACT_DIR/$PKG_NAME" || {
-				echo "ERROR: luci-app-tailscale was not extracted into the staging directory."
+				echo "ERROR: luci-app-tailscale-community was not extracted into the staging directory."
 				exit 1
 			}
 		fi
@@ -63,9 +63,9 @@ UPDATE_PACKAGE() {
 			mv -f "$EXTRACTED_PATH" ./
 		done
 		rm -rf "$EXTRACT_DIR"
-		if [[ "$PKG_NAME" == "luci-app-tailscale" ]]; then
-			test -d "./luci-app-tailscale" || {
-				echo "ERROR: luci-app-tailscale was removed after repository cleanup."
+		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
+			test -d "./luci-app-tailscale-community" || {
+				echo "ERROR: luci-app-tailscale-community was removed after repository cleanup."
 				exit 1
 			}
 		fi
@@ -92,7 +92,7 @@ UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
 UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
-UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
+UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
 
@@ -178,10 +178,10 @@ UPDATE_VERSION() {
 rm -rf ../feeds/luci/applications/luci-app-{passwall*,mosdns,dockerman,dae*,bypass*}
 rm -rf ../feeds/packages/net/{v2ray-geodata,dae*}
 cp -r $GITHUB_WORKSPACE/package/* ./
-# 上游 luci-app-tailscale 会重复打包 tailscale 已提供的 UCI 配置和 init 脚本。
+# hotwa/luci-app-tailscale-community 会重复打包 tailscale 已提供的 UCI 配置和 init 脚本。
 # 这些文件由基础 tailscale 包和仓库 overlay 统一提供，避免 ipk 文件冲突。
-rm -f luci-app-tailscale/root/etc/config/tailscale
-rm -f luci-app-tailscale/root/etc/init.d/tailscale
+rm -f luci-app-tailscale-community/root/etc/config/tailscale
+rm -f luci-app-tailscale-community/root/etc/init.d/tailscale
 #修复daed/Makefile
 # 临时禁用 daed 时一并跳过自定义 Makefile 覆盖。
 # rm -rf luci-app-daed/daed/Makefile && cp -r $GITHUB_WORKSPACE/patches/daed/Makefile luci-app-daed/daed/

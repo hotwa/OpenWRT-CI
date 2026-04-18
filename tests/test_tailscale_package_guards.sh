@@ -39,18 +39,18 @@ TAILSCALE_QUAD100_HEALTH_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale
   exit 1
 }
 
-grep -q 'UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"' "$PACKAGES_SH" || {
-  echo "Packages.sh does not pull luci-app-tailscale from the upstream asvow source"
+grep -q 'UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"' "$PACKAGES_SH" || {
+  echo "Packages.sh does not pull luci-app-tailscale-community from the hotwa fork main branch"
   exit 1
 }
 
-grep -q 'rm -f luci-app-tailscale/root/etc/config/tailscale' "$PACKAGES_SH" || {
-  echo "Packages.sh does not remove the luci-app-tailscale packaged /etc/config/tailscale that conflicts with tailscale"
+grep -q 'rm -f luci-app-tailscale-community/root/etc/config/tailscale' "$PACKAGES_SH" || {
+  echo "Packages.sh does not remove the luci-app-tailscale-community packaged /etc/config/tailscale that conflicts with tailscale"
   exit 1
 }
 
-grep -q 'rm -f luci-app-tailscale/root/etc/init.d/tailscale' "$PACKAGES_SH" || {
-  echo "Packages.sh does not remove the luci-app-tailscale packaged /etc/init.d/tailscale that conflicts with tailscale"
+grep -q 'rm -f luci-app-tailscale-community/root/etc/init.d/tailscale' "$PACKAGES_SH" || {
+  echo "Packages.sh does not remove the luci-app-tailscale-community packaged /etc/init.d/tailscale that conflicts with tailscale"
   exit 1
 }
 
@@ -59,8 +59,8 @@ grep -q 'CONFIG_PACKAGE_tailscale=y' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'CONFIG_PACKAGE_luci-app-tailscale=y' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not verify luci-app-tailscale remains enabled after defconfig"
+grep -q 'CONFIG_PACKAGE_luci-app-tailscale-community=y' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not verify luci-app-tailscale-community remains enabled after defconfig"
   exit 1
 }
 

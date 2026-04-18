@@ -18,8 +18,8 @@ grep -q "CONFIG_PACKAGE_tailscale=y" "$WORKFLOW" || {
   exit 1
 }
 
-grep -q "CONFIG_PACKAGE_luci-app-tailscale=y" "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not verify luci-app-tailscale remains enabled after defconfig"
+grep -q "CONFIG_PACKAGE_luci-app-tailscale-community=y" "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not verify luci-app-tailscale-community remains enabled after defconfig"
   exit 1
 }
 

@@ -294,8 +294,8 @@ jobs:
             echo "ERROR: tailscale was dropped from .config after defconfig"
             exit 1
           }
-          grep -q '^CONFIG_PACKAGE_luci-app-tailscale=y$' .config || {
-            echo "ERROR: luci-app-tailscale was dropped from .config after defconfig"
+          grep -q '^CONFIG_PACKAGE_luci-app-tailscale-community=y$' .config || {
+            echo "ERROR: luci-app-tailscale-community was dropped from .config after defconfig"
             exit 1
           }
           grep -q '^CONFIG_PACKAGE_python3=y$' .config || {
