@@ -9,6 +9,11 @@ DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/94-headscale-auto-enroll"
 HOTPLUG="$ROOT_DIR/files/etc/hotplug.d/iface/95-headscale-auto-enroll"
 CI_INJECTOR="$ROOT_DIR/Scripts/HeadscaleAutoEnroll.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
+CALLER_WORKFLOWS=(
+  "$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
+  "$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
+  "$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
+)
 DOC="$ROOT_DIR/docs/headscale-auto-enroll.md"
 AGENTS="$ROOT_DIR/AGENTS.md"
 
@@ -100,6 +105,13 @@ grep -q 'Scripts/HeadscaleAutoEnroll.sh' "$WORKFLOW" || {
   echo "workflow does not call the Headscale auto-enroll injector"
   exit 1
 }
+
+for caller_workflow in "${CALLER_WORKFLOWS[@]}"; do
+  grep -q 'secrets: inherit' "$caller_workflow" || {
+    echo "$(basename "$caller_workflow") does not pass repository secrets to WRT-CORE"
+    exit 1
+  }
+done
 
 grep -q 'auth key redacted' "$CI_INJECTOR" || {
   echo "CI injector does not redact the auth key in logs"
