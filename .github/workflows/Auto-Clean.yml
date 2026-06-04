@@ -15,23 +15,6 @@ jobs:
   auto_clean:
     runs-on: ubuntu-22.04
     steps:
-      # 只清理自动编译线的 release，手动 release 保留
-      - name: Delete auto-build releases only
-        env:
-          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        run: |
-          TARGET_PREFIX='QCA-6.18-VIKINGYFY-AUTO-'
-
-          while IFS= read -r old_tag; do
-            [ -n "$old_tag" ] || continue
-            case "$old_tag" in
-              "${TARGET_PREFIX}"*)
-                echo "Deleting auto-build release: $old_tag"
-                gh release delete -R "$GITHUB_REPOSITORY" "$old_tag" --yes --cleanup-tag
-                ;;
-            esac
-          done < <(gh release list -R "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName')
-
       - name: Delete old workflow runs
         uses: ophub/delete-releases-workflows@main
         with:

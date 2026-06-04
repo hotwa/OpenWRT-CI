@@ -26,12 +26,12 @@ for file in "${required_files[@]}"; do
   }
 done
 
-grep -q '^PKG_NAME:=wg-endpoint-watchdog$' "$MAKEFILE" || {
+tr -d '\r' <"$MAKEFILE" | grep '^PKG_NAME:=wg-endpoint-watchdog$' >/dev/null || {
   echo "Makefile does not define the expected package name"
   exit 1
 }
 
-grep -q '^  PKGARCH:=all$' "$MAKEFILE" || {
+tr -d '\r' <"$MAKEFILE" | grep '^  PKGARCH:=all$' >/dev/null || {
   echo "Makefile should mark this POSIX shell package as PKGARCH:=all"
   exit 1
 }
@@ -46,7 +46,7 @@ grep -q '+wireguard-tools' "$MAKEFILE" || {
   exit 1
 }
 
-grep -q "^CONFIG_PACKAGE_wg-endpoint-watchdog=y$" "$GENERAL_CONFIG" || {
+tr -d '\r' <"$GENERAL_CONFIG" | grep "^CONFIG_PACKAGE_wg-endpoint-watchdog=y$" >/dev/null || {
   echo "wg-endpoint-watchdog is not selected in the default build config"
   exit 1
 }

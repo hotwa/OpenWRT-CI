@@ -22,15 +22,15 @@ if grep -q "cron: '0 1 \\* \\* \\*'" "$QCA_612"; then
   exit 1
 fi
 
-grep -q "cron: '0 1 \\* \\* \\*'" "$QCA_618" || {
-  echo "QCA-6.18 workflow does not have the daily scheduled build"
+if grep -q "cron: '0 1 \\* \\* \\*'" "$QCA_618"; then
+  echo "QCA-6.18 workflow still has the daily scheduled build"
   exit 1
-}
+fi
 
-grep -q "workflow_run:" "$QCA_618" || {
-  echo "QCA-6.18 workflow lost the Auto-Clean workflow_run trigger"
+if grep -q "workflow_run:" "$QCA_618"; then
+  echo "QCA-6.18 workflow still has the Auto-Clean workflow_run trigger"
   exit 1
-}
+fi
 
 grep -q "secrets: inherit" "$QCA_618" || {
   echo "QCA-6.18 workflow does not pass secrets into WRT-CORE"
@@ -42,14 +42,14 @@ grep -q "Scripts/HeadscaleAutoEnroll.sh" "$WRT_CORE" || {
   exit 1
 }
 
-grep -q "TARGET_PREFIX='QCA-6.18-VIKINGYFY-AUTO-'" "$AUTO_CLEAN" || {
-  echo "Auto-Clean does not target QCA-6.18 auto-build releases"
+if grep -q "TARGET_PREFIX='QCA-6.18-VIKINGYFY-AUTO-'" "$AUTO_CLEAN"; then
+  echo "Auto-Clean still targets QCA-6.18 auto-build releases"
   exit 1
-}
+fi
 
 if grep -q "TARGET_PREFIX='QCA-6.12-VIKINGYFY-AUTO-'" "$AUTO_CLEAN"; then
   echo "Auto-Clean still targets QCA-6.12 auto-build releases"
   exit 1
 fi
 
-echo "QCA-6.18 scheduled build migration test passed"
+echo "QCA-6.18 manual-only build trigger test passed"

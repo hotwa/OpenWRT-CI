@@ -5,7 +5,8 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 ## Runtime model
 
 - Keep Dropbear with key-based LAN SSH as the rescue path.
-- Use Tailscale SSH for normal tailnet management after the router joins Headscale.
+- Use ordinary SSH to the router over its Tailscale IP for normal management after the router joins Headscale, for example `ssh root@100.64.x.x`.
+- `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
 - Keep `accept_routes` disabled by default. Enable it only after checking it will not conflict with WireGuard, WAN policy routing, DAE, or Nikki.
 
@@ -17,6 +18,8 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
 - `/etc/tailscale/headscale.authkey` is the optional one-line auth key file.
 - `/etc/tailscale/auto-enroll.done` marks a successful enrollment.
+- `/etc/uci-defaults/90-tailscale-dropbear-access` keeps Dropbear reachable through `tailscale0` and creates a fw4 `tailscale` zone with router input allowed and forwarding rejected.
+- `/etc/dropbear/authorized_keys` can be injected into private firmware builds through GitHub Actions.
 
 The default config is disabled:
 
@@ -65,6 +68,12 @@ HEADSCALE_OPENWRT_ENABLE_SSH=1
 HEADSCALE_OPENWRT_ACCEPT_ROUTES=0
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES=
 ```
+
+For Dropbear-backed ordinary SSH over the Tailscale IP, store one or more public keys in the GitHub Actions secret `OPENWRT_DROPBEAR_AUTHORIZED_KEYS`. The workflow writes those keys to `/etc/dropbear/authorized_keys` in the private build overlay. Do not put private keys in this secret and do not commit private keys to the repository. If Tailscale SSH is enabled and allowed by policy, tailnet port `22` connections use Tailscale SSH authorization instead of Dropbear keys.
+
+The Tailscale firewall overlay intentionally uses `firewall.tailscale.device='tailscale0'` instead of creating `network.tailscale`. Tailscaled owns the TUN address and routes; letting netifd manage `tailscale0` can remove the assigned `100.64.0.0/10` address and make `ssh root@100.64.x.x` time out.
+
+When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll script applies `tailscale set --ssh=true` even if the node is already enrolled. This keeps recovered or LuCI-enrolled routers from staying in `RunSSH=false`.
 
 Prefer a tagged, router-scoped key with the narrow tags needed by the router:
 

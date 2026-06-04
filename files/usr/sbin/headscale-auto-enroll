@@ -139,6 +139,26 @@ run_tailscale_up() {
 	fi
 }
 
+apply_runtime_preferences() {
+	local ssh_enabled="$1"
+	local accept_dns="$2"
+	local accept_routes="$3"
+	local advertise_routes="$4"
+
+	if [ -n "$advertise_routes" ]; then
+		tailscale set \
+			--ssh="$(bool_arg "$ssh_enabled")" \
+			--accept-dns="$(bool_arg "$accept_dns")" \
+			--accept-routes="$(bool_arg "$accept_routes")" \
+			--advertise-routes="$advertise_routes"
+	else
+		tailscale set \
+			--ssh="$(bool_arg "$ssh_enabled")" \
+			--accept-dns="$(bool_arg "$accept_dns")" \
+			--accept-routes="$(bool_arg "$accept_routes")"
+	fi
+}
+
 main() {
 	local enabled login_server auth_key_file provision_url provision_token_file
 	local hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
@@ -153,12 +173,6 @@ main() {
 
 	command -v tailscale >/dev/null 2>&1 || { log "tailscale command not found"; exit 0; }
 
-	if is_enrolled; then
-		touch "$DONE_FILE" 2>/dev/null || true
-		log "tailscale already enrolled"
-		exit 0
-	fi
-
 	login_server="$(cfg login_server https://headscale.jmsu.top)"
 	auth_key_file="$(cfg auth_key_file /etc/tailscale/headscale.authkey)"
 	provision_url="$(cfg provision_url '')"
@@ -171,6 +185,16 @@ main() {
 	max_attempts="$(cfg max_attempts 60)"
 	retry_interval="$(cfg retry_interval 10)"
 	delete_auth_key_file="$(cfg delete_auth_key_file 1)"
+
+	if is_enrolled; then
+		if apply_runtime_preferences "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
+			log "tailscale already enrolled; runtime preferences applied"
+		else
+			log "tailscale already enrolled; failed to apply runtime preferences"
+		fi
+		touch "$DONE_FILE" 2>/dev/null || true
+		exit 0
+	fi
 
 	/etc/init.d/tailscale enable >/dev/null 2>&1 || true
 	/etc/init.d/tailscale start >/dev/null 2>&1 || true

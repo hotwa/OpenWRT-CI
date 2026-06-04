@@ -30,7 +30,7 @@ grep -q "^#WRT_BRANCH='k6.12-nss'" "$DIY_SH" || {
   exit 1
 }
 
-grep -q '^https://github.com/davidtall/LiBwrt-openwrt-6.x$' "$README" || {
+tr -d '\r' <"$README" | grep -q '^https://github.com/davidtall/LiBwrt-openwrt-6.x$' || {
   echo "README does not document the working LiBwrt repository source"
   exit 1
 }

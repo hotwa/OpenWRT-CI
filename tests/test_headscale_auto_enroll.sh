@@ -76,6 +76,21 @@ grep -q -- '--ssh=' "$SCRIPT" || {
   exit 1
 }
 
+grep -q 'apply_runtime_preferences' "$SCRIPT" || {
+  echo "script does not re-apply runtime preferences to already-enrolled nodes"
+  exit 1
+}
+
+grep -q 'tailscale set' "$SCRIPT" || {
+  echo "script does not use tailscale set for already-enrolled nodes"
+  exit 1
+}
+
+grep -q 'tailscale already enrolled; runtime preferences applied' "$SCRIPT" || {
+  echo "script does not log runtime preference application on already-enrolled nodes"
+  exit 1
+}
+
 grep -q 'rm -f "$auth_key_file"' "$SCRIPT" || {
   echo "script does not remove the auth key file after successful enrollment"
   exit 1

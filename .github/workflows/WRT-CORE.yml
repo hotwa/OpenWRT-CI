@@ -60,9 +60,12 @@ on:
     secrets:
       HEADSCALE_OPENWRT_AUTHKEY:
         required: false
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS:
+        required: false
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
+  OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
@@ -116,6 +119,13 @@ jobs:
 
       - name: Checkout Projects
         uses: actions/checkout@main
+
+      - name: Validate LAN IP
+        run: |
+          LAN_IP="${WRT_IP:-192.168.10.1}"
+          "$GITHUB_WORKSPACE/Scripts/ValidateLanIp.sh" "$LAN_IP"
+          echo "WRT_IP=$LAN_IP" >> "$GITHUB_ENV"
+
       - name: Initialization Environment
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -299,6 +309,7 @@ jobs:
           mkdir -p ./wrt/files
           cp -rf ./files/. ./wrt/files/
           $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
 
       - name: Custom Settings
         run: |
