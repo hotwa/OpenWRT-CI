@@ -20,7 +20,7 @@ jobs:
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
-          TARGET_PREFIX='QCA-6.12-VIKINGYFY-AUTO-'
+          TARGET_PREFIX='QCA-6.18-VIKINGYFY-AUTO-'
 
           while IFS= read -r old_tag; do
             [ -n "$old_tag" ] || continue

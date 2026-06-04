@@ -6,9 +6,7 @@ name: QCA-6.12-VIKINGYFY
 
 #CI计划
 on:
-  #定时编译：每天凌晨1点
-  schedule:
-    - cron: '0 1 * * *'
+  #定时编译已迁移到 QCA-6.18-VIKINGYFY
   #自动编译：当Auto-Clean运行完成后
 #  workflow_run:
 #    workflows: ["Auto-Clean"]
