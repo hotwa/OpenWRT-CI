@@ -28,6 +28,11 @@ on:
         default: '192.168.10.1'
         required: false
         type: string
+      LAN_TAILNET:
+        description: '允许 LAN 设备访问 Tailscale 内网。默认关闭；仅在确认该路由器应作为 LAN->tailnet 网关时开启。'
+        default: false
+        required: false
+        type: boolean
 
 #CI权限
 permissions: write-all
@@ -61,6 +66,8 @@ jobs:
       WRT_WORD: 12345678
       #默认地址
       WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
+      #允许 LAN 设备访问 Tailscale 内网
+      WRT_LAN_TAILNET: ${{ inputs.LAN_TAILNET || false }}
       #默认密码，仅作提示，修改无用
       WRT_PW: 无
       #源码链接

@@ -43,6 +43,10 @@ on:
       WRT_TEST:
         required: false
         type: string
+      WRT_LAN_TAILNET:
+        required: false
+        type: boolean
+        default: false
       CI_NAME:
         required: false
         type: string
@@ -79,6 +83,7 @@ env:
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
+  WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_DIR: 'wrt'
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}
@@ -308,6 +313,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files
           cp -rf ./files/. ./wrt/files/
+          $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
           $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
 
