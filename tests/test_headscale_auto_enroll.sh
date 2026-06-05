@@ -56,6 +56,11 @@ grep -q "option auth_key_file '/etc/tailscale/headscale.authkey'" "$CONFIG" || {
   exit 1
 }
 
+grep -q "option hostname_override ''" "$CONFIG" || {
+  echo "headscale hostname override default is missing"
+  exit 1
+}
+
 grep -q "option accept_dns '0'" "$CONFIG" || {
   echo "headscale auto-enroll must not accept Tailscale DNS by default"
   exit 1
@@ -78,6 +83,16 @@ grep -q -- '--ssh=' "$SCRIPT" || {
 
 grep -q 'apply_runtime_preferences' "$SCRIPT" || {
   echo "script does not re-apply runtime preferences to already-enrolled nodes"
+  exit 1
+}
+
+grep -q 'hostname_override="$(cfg hostname_override' "$SCRIPT" || {
+  echo "script does not read the hostname override"
+  exit 1
+}
+
+grep -q 'build_hostname "$hostname_override" "$hostname_prefix"' "$SCRIPT" || {
+  echo "script does not prefer hostname_override before hostname_prefix"
   exit 1
 }
 
@@ -138,6 +153,16 @@ grep -q 'set_config_option accept_dns 0' "$CI_INJECTOR" || {
   exit 1
 }
 
+grep -q 'derive_headscale_hostname' "$CI_INJECTOR" || {
+  echo "CI injector does not derive a stable Headscale hostname"
+  exit 1
+}
+
+grep -q 'set_config_option hostname_override' "$CI_INJECTOR" || {
+  echo "CI injector does not write hostname_override"
+  exit 1
+}
+
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 mkdir -p "$WORK_DIR/etc/config"
@@ -147,6 +172,8 @@ INJECT_LOG="$WORK_DIR/inject.log"
 HEADSCALE_OPENWRT_AUTHKEY="$TEST_AUTH_KEY" \
 HEADSCALE_OPENWRT_ACCEPT_ROUTES=1 \
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES=192.168.12.0/24 \
+WRT_NAME=DAE-WRT \
+WRT_IP=192.168.12.1 \
 bash "$CI_INJECTOR" "$WORK_DIR" >"$INJECT_LOG"
 
 grep -q "option enabled '1'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
@@ -169,6 +196,11 @@ grep -q "option advertise_routes '192.168.12.0/24'" "$WORK_DIR/etc/config/headsc
   exit 1
 }
 
+grep -q "option hostname_override 'openwrt-dae-wrt-12'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+  echo "CI injector does not derive hostname_override from WRT_NAME and WRT_IP"
+  exit 1
+}
+
 [ "$(cat "$WORK_DIR/etc/tailscale/headscale.authkey")" = "$TEST_AUTH_KEY" ] || {
   echo "CI injector does not write the auth key file"
   exit 1
@@ -178,6 +210,18 @@ if grep -q "$TEST_AUTH_KEY" "$INJECT_LOG"; then
   echo "CI injector leaked the auth key to logs"
   exit 1
 fi
+
+SECOND_WORK_DIR="$(mktemp -d)"
+mkdir -p "$SECOND_WORK_DIR/etc/config"
+cp "$CONFIG" "$SECOND_WORK_DIR/etc/config/headscale_auto_enroll"
+HEADSCALE_OPENWRT_AUTHKEY="$TEST_AUTH_KEY" \
+HEADSCALE_OPENWRT_HOSTNAME="Lab Router 12" \
+bash "$CI_INJECTOR" "$SECOND_WORK_DIR" >/dev/null
+
+grep -q "option hostname_override 'lab-router-12'" "$SECOND_WORK_DIR/etc/config/headscale_auto_enroll" || {
+  echo "CI injector does not honor and sanitize explicit HEADSCALE_OPENWRT_HOSTNAME"
+  exit 1
+}
 
 grep -q 'Do not commit an auth key' "$DOC" || {
   echo "docs do not warn against committed auth keys"

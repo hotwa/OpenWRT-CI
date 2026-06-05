@@ -89,9 +89,15 @@ read_auth_key() {
 }
 
 build_hostname() {
-	local prefix="$1"
+	local override="$1"
+	local prefix="$2"
 	local board=""
 	local hostname=""
+
+	if [ -n "$override" ]; then
+		printf '%s' "$override" | tr -cs 'A-Za-z0-9_.-' '-'
+		return 0
+	fi
 
 	hostname="$(uci -q get system.@system[0].hostname 2>/dev/null || true)"
 	[ -n "$hostname" ] || hostname="$(cat /proc/sys/kernel/hostname 2>/dev/null || true)"
@@ -161,7 +167,7 @@ apply_runtime_preferences() {
 
 main() {
 	local enabled login_server auth_key_file provision_url provision_token_file
-	local hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
+	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
 	local max_attempts retry_interval delete_auth_key_file auth_key hostname
 	local attempt=0
 
@@ -177,6 +183,7 @@ main() {
 	auth_key_file="$(cfg auth_key_file /etc/tailscale/headscale.authkey)"
 	provision_url="$(cfg provision_url '')"
 	provision_token_file="$(cfg provision_token_file '')"
+	hostname_override="$(cfg hostname_override '')"
 	hostname_prefix="$(cfg hostname_prefix openwrt)"
 	ssh_enabled="$(cfg ssh 1)"
 	accept_dns="$(cfg accept_dns 0)"
@@ -210,7 +217,7 @@ main() {
 		exit 1
 	fi
 
-	hostname="$(build_hostname "$hostname_prefix")"
+	hostname="$(build_hostname "$hostname_override" "$hostname_prefix")"
 
 	while [ "$attempt" -lt "$max_attempts" ]; do
 		if run_tailscale_up "$login_server" "$auth_key" "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
