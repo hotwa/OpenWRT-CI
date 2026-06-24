@@ -388,6 +388,26 @@ jobs:
 
           make download -j$(nproc)
 
+      - name: Reserve Disk Space Before Compile
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+
+          echo "========disk before reserve========"
+          df -h .
+          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+
+          if command -v ccache >/dev/null 2>&1; then
+            CCACHE_DIR="$PWD/.ccache" ccache -s || true
+            CCACHE_DIR="$PWD/.ccache" ccache -C || true
+          fi
+
+          rm -rf tmp/go-build tmp/ccache 2>/dev/null || true
+
+          echo "========disk after reserve========"
+          df -h .
+          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
         run: |
