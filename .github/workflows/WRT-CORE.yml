@@ -335,6 +335,10 @@ jobs:
             echo "ERROR: luci-app-tailscale-community was dropped from .config after defconfig"
             exit 1
           }
+          grep -q '^CONFIG_PACKAGE_luci-app-wrtbak=y$' .config || {
+            echo "ERROR: luci-app-wrtbak was dropped from .config after defconfig"
+            exit 1
+          }
           grep -q '^CONFIG_PACKAGE_python3=y$' .config || {
             echo "ERROR: python3 was dropped from .config after defconfig"
             exit 1
