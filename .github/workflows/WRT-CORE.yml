@@ -47,6 +47,14 @@ on:
         required: false
         type: boolean
         default: false
+      WRTBAK_DEVICE_ALIAS:
+        required: false
+        type: string
+        default: ''
+      WRTBAK_PROXY_PROFILE:
+        required: false
+        type: string
+        default: 'auto'
       CI_NAME:
         required: false
         type: string
@@ -66,10 +74,37 @@ on:
         required: false
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS:
         required: false
+      WRTBAK_R2_ENDPOINT:
+        required: false
+      WRTBAK_R2_REGION:
+        required: false
+      WRTBAK_R2_BUCKET:
+        required: false
+      WRTBAK_R2_PREFIX:
+        required: false
+      WRTBAK_R2_ACCESS_KEY_ID:
+        required: false
+      WRTBAK_R2_SECRET_ACCESS_KEY:
+        required: false
+      WRTBAK_HOME_PROXY_URL:
+        required: false
+      WRTBAK_OFFICE_PROXY_URL:
+        required: false
+      WRTBAK_DORM_PROXY_URL:
+        required: false
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
   OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
+  WRTBAK_R2_ENDPOINT: ${{secrets.WRTBAK_R2_ENDPOINT}}
+  WRTBAK_R2_REGION: ${{secrets.WRTBAK_R2_REGION}}
+  WRTBAK_R2_BUCKET: ${{secrets.WRTBAK_R2_BUCKET}}
+  WRTBAK_R2_PREFIX: ${{secrets.WRTBAK_R2_PREFIX}}
+  WRTBAK_R2_ACCESS_KEY_ID: ${{secrets.WRTBAK_R2_ACCESS_KEY_ID}}
+  WRTBAK_R2_SECRET_ACCESS_KEY: ${{secrets.WRTBAK_R2_SECRET_ACCESS_KEY}}
+  WRTBAK_HOME_PROXY_URL: ${{secrets.WRTBAK_HOME_PROXY_URL}}
+  WRTBAK_OFFICE_PROXY_URL: ${{secrets.WRTBAK_OFFICE_PROXY_URL}}
+  WRTBAK_DORM_PROXY_URL: ${{secrets.WRTBAK_DORM_PROXY_URL}}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
@@ -84,9 +119,14 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
+  WRTBAK_DEVICE_ALIAS: ${{inputs.WRTBAK_DEVICE_ALIAS}}
+  WRTBAK_PROXY_PROFILE: ${{inputs.WRTBAK_PROXY_PROFILE}}
   WRT_DIR: 'wrt'
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}
+  WRT_PRIVATE_BUILD: 'false'
+  WRT_PRIVATE_BUILD_REASON: ''
+  WRT_ARTIFACT_PRIVACY_SUFFIX: public
 
 jobs:
   core:
@@ -316,6 +356,8 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
           $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
 
       - name: Custom Settings
         run: |
@@ -474,12 +516,13 @@ jobs:
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
           path: ./wrt/upload/
           if-no-files-found: error
           retention-days: 14
 
       - name: Release Firmware
+        if: env.WRT_PRIVATE_BUILD != 'true'
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
