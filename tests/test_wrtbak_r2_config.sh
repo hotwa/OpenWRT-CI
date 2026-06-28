@@ -24,8 +24,26 @@ grep -q 'Scripts/WrtbakR2Config.sh' "$WORKFLOW" || {
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+clean_wrtbak_env() {
+	env \
+		-u WRTBAK_R2_ENDPOINT \
+		-u WRTBAK_R2_REGION \
+		-u WRTBAK_R2_BUCKET \
+		-u WRTBAK_R2_PREFIX \
+		-u WRTBAK_R2_ACCESS_KEY_ID \
+		-u WRTBAK_R2_SECRET_ACCESS_KEY \
+		-u WRTBAK_R2_FORCE_PATH_STYLE \
+		-u WRTBAK_DEVICE_ALIAS \
+		-u WRTBAK_PROXY_PROFILE \
+		-u WRTBAK_PROXY_URL \
+		-u WRTBAK_HOME_PROXY_URL \
+		-u WRTBAK_OFFICE_PROXY_URL \
+		-u WRTBAK_DORM_PROXY_URL \
+		"$@"
+}
+
 EMPTY_LOG="$WORK_DIR/empty.log"
-bash "$SCRIPT" "$WORK_DIR/empty" >"$EMPTY_LOG"
+clean_wrtbak_env bash "$SCRIPT" "$WORK_DIR/empty" >"$EMPTY_LOG"
 [ ! -e "$WORK_DIR/empty/etc/config/wrtbak" ] || {
 	echo "injector should not create wrtbak config when credentials are empty"
 	exit 1
@@ -36,16 +54,17 @@ SECRET_KEY="test-secret-key"
 PROXY_URL="http://user:pass@127.0.0.1:7890"
 INJECT_LOG="$WORK_DIR/inject.log"
 
-WRTBAK_R2_ENDPOINT="https://example.r2.cloudflarestorage.com" \
-WRTBAK_R2_REGION="auto" \
-WRTBAK_R2_BUCKET="knowledge" \
-WRTBAK_R2_PREFIX="openwrt-config-backup/wrtbak/" \
-WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" \
-WRTBAK_R2_SECRET_ACCESS_KEY="$SECRET_KEY" \
-WRTBAK_DEVICE_ALIAS="office-re-ss-01" \
-WRTBAK_PROXY_PROFILE="office" \
-WRTBAK_OFFICE_PROXY_URL="$PROXY_URL" \
-bash "$SCRIPT" "$WORK_DIR/private" >"$INJECT_LOG"
+clean_wrtbak_env env \
+	WRTBAK_R2_ENDPOINT="https://example.r2.cloudflarestorage.com" \
+	WRTBAK_R2_REGION="auto" \
+	WRTBAK_R2_BUCKET="knowledge" \
+	WRTBAK_R2_PREFIX="openwrt-config-backup/wrtbak/" \
+	WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" \
+	WRTBAK_R2_SECRET_ACCESS_KEY="$SECRET_KEY" \
+	WRTBAK_DEVICE_ALIAS="office-re-ss-01" \
+	WRTBAK_PROXY_PROFILE="office" \
+	WRTBAK_OFFICE_PROXY_URL="$PROXY_URL" \
+	bash "$SCRIPT" "$WORK_DIR/private" >"$INJECT_LOG"
 
 CONFIG="$WORK_DIR/private/etc/config/wrtbak"
 [ -f "$CONFIG" ] || { echo "injector did not create /etc/config/wrtbak"; exit 1; }
@@ -67,18 +86,19 @@ if grep -q "$ACCESS_KEY" "$INJECT_LOG" || grep -q "$SECRET_KEY" "$INJECT_LOG" ||
 fi
 
 PARTIAL_LOG="$WORK_DIR/partial.log"
-if WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" bash "$SCRIPT" "$WORK_DIR/partial" >"$PARTIAL_LOG" 2>&1; then
+if clean_wrtbak_env env WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" bash "$SCRIPT" "$WORK_DIR/partial" >"$PARTIAL_LOG" 2>&1; then
 	echo "injector should reject partial credentials"
 	exit 1
 fi
 
 AUTO_PROFILE_DIR="$WORK_DIR/auto-profile"
-WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" \
-WRTBAK_R2_SECRET_ACCESS_KEY="$SECRET_KEY" \
-WRTBAK_PROXY_PROFILE="auto" \
-WRT_IP="192.168.12.1" \
-WRTBAK_DORM_PROXY_URL="http://dorm-proxy.invalid:7890" \
-bash "$SCRIPT" "$AUTO_PROFILE_DIR" >/dev/null
+clean_wrtbak_env env \
+	WRTBAK_R2_ACCESS_KEY_ID="$ACCESS_KEY" \
+	WRTBAK_R2_SECRET_ACCESS_KEY="$SECRET_KEY" \
+	WRTBAK_PROXY_PROFILE="auto" \
+	WRT_IP="192.168.12.1" \
+	WRTBAK_DORM_PROXY_URL="http://dorm-proxy.invalid:7890" \
+	bash "$SCRIPT" "$AUTO_PROFILE_DIR" >/dev/null
 
 grep -q "option proxy_url 'http://dorm-proxy.invalid:7890'" "$AUTO_PROFILE_DIR/etc/config/wrtbak" || {
 	echo "auto proxy profile did not derive dorm proxy from WRT_IP"
