@@ -93,6 +93,7 @@ UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
 #UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
 UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
+# Development package for profile-based OpenWrt backups. Pin to a release tag after v0.1.0.
 UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "main"
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
