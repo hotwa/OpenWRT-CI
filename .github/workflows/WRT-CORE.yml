@@ -58,6 +58,14 @@ on:
       WRT_WAN_SSH_SOURCE:
         required: false
         type: string
+      WRTBAK_DEVICE_ALIAS:
+        required: false
+        type: string
+        default: ''
+      WRTBAK_PROXY_PROFILE:
+        required: false
+        type: string
+        default: 'auto'
       CI_NAME:
         required: false
         type: string
@@ -77,10 +85,37 @@ on:
         required: false
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS:
         required: false
+      WRTBAK_R2_ENDPOINT:
+        required: false
+      WRTBAK_R2_REGION:
+        required: false
+      WRTBAK_R2_BUCKET:
+        required: false
+      WRTBAK_R2_PREFIX:
+        required: false
+      WRTBAK_R2_ACCESS_KEY_ID:
+        required: false
+      WRTBAK_R2_SECRET_ACCESS_KEY:
+        required: false
+      WRTBAK_HOME_PROXY_URL:
+        required: false
+      WRTBAK_OFFICE_PROXY_URL:
+        required: false
+      WRTBAK_DORM_PROXY_URL:
+        required: false
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
   OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
+  WRTBAK_R2_ENDPOINT: ${{secrets.WRTBAK_R2_ENDPOINT}}
+  WRTBAK_R2_REGION: ${{secrets.WRTBAK_R2_REGION}}
+  WRTBAK_R2_BUCKET: ${{secrets.WRTBAK_R2_BUCKET}}
+  WRTBAK_R2_PREFIX: ${{secrets.WRTBAK_R2_PREFIX}}
+  WRTBAK_R2_ACCESS_KEY_ID: ${{secrets.WRTBAK_R2_ACCESS_KEY_ID}}
+  WRTBAK_R2_SECRET_ACCESS_KEY: ${{secrets.WRTBAK_R2_SECRET_ACCESS_KEY}}
+  WRTBAK_HOME_PROXY_URL: ${{secrets.WRTBAK_HOME_PROXY_URL}}
+  WRTBAK_OFFICE_PROXY_URL: ${{secrets.WRTBAK_OFFICE_PROXY_URL}}
+  WRTBAK_DORM_PROXY_URL: ${{secrets.WRTBAK_DORM_PROXY_URL}}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
@@ -98,9 +133,14 @@ env:
   WRT_WAN_SSH: ${{inputs.WRT_WAN_SSH}}
   WRT_WAN_SSH_PORT: ${{inputs.WRT_WAN_SSH_PORT}}
   WRT_WAN_SSH_SOURCE: ${{inputs.WRT_WAN_SSH_SOURCE}}
+  WRTBAK_DEVICE_ALIAS: ${{inputs.WRTBAK_DEVICE_ALIAS}}
+  WRTBAK_PROXY_PROFILE: ${{inputs.WRTBAK_PROXY_PROFILE}}
   WRT_DIR: 'wrt'
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}
+  WRT_PRIVATE_BUILD: 'false'
+  WRT_PRIVATE_BUILD_REASON: ''
+  WRT_ARTIFACT_PRIVACY_SUFFIX: public
 
 jobs:
   core:
@@ -331,6 +371,8 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
           $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
 
       - name: Custom Settings
         run: |
@@ -403,6 +445,26 @@ jobs:
 
           make download -j$(nproc)
 
+      - name: Reserve Disk Space Before Compile
+        if: env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+
+          echo "========disk before reserve========"
+          df -h .
+          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+
+          if command -v ccache >/dev/null 2>&1; then
+            CCACHE_DIR="$PWD/.ccache" ccache -s || true
+            CCACHE_DIR="$PWD/.ccache" ccache -C || true
+          fi
+
+          rm -rf tmp/go-build tmp/ccache 2>/dev/null || true
+
+          echo "========disk after reserve========"
+          df -h .
+          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+
       - name: Compile Firmware
         if: env.WRT_TEST != 'true'
         run: |
@@ -469,12 +531,13 @@ jobs:
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
           path: ./wrt/upload/
           if-no-files-found: error
           retention-days: 14
 
       - name: Release Firmware
+        if: env.WRT_PRIVATE_BUILD != 'true'
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
