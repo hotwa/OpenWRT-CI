@@ -47,6 +47,17 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_WAN_SSH:
+        required: false
+        type: boolean
+        default: false
+      WRT_WAN_SSH_PORT:
+        required: false
+        type: string
+        default: '22'
+      WRT_WAN_SSH_SOURCE:
+        required: false
+        type: string
       WRTBAK_DEVICE_ALIAS:
         required: false
         type: string
@@ -119,6 +130,9 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
+  WRT_WAN_SSH: ${{inputs.WRT_WAN_SSH}}
+  WRT_WAN_SSH_PORT: ${{inputs.WRT_WAN_SSH_PORT}}
+  WRT_WAN_SSH_SOURCE: ${{inputs.WRT_WAN_SSH_SOURCE}}
   WRTBAK_DEVICE_ALIAS: ${{inputs.WRTBAK_DEVICE_ALIAS}}
   WRTBAK_PROXY_PROFILE: ${{inputs.WRTBAK_PROXY_PROFILE}}
   WRT_DIR: 'wrt'
@@ -354,6 +368,7 @@ jobs:
           mkdir -p ./wrt/files
           cp -rf ./files/. ./wrt/files/
           $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
+          $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
           $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
