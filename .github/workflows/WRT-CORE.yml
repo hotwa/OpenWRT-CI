@@ -518,6 +518,8 @@ jobs:
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
             echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
 
+            $GITHUB_WORKSPACE/Scripts/PrivateDeviceArtifacts.sh ./bin/targets ./upload-private-devices
+
             find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
 
             for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
@@ -538,6 +540,42 @@ jobs:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
           path: ./wrt/upload/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Private jdcloud_re-cs-02 Firmware Artifact
+        if: env.WRT_PRIVATE_BUILD == 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-jdcloud_re-cs-02-private
+          path: ./wrt/upload-private-devices/jdcloud_re-cs-02/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Private jdcloud_re-cs-07 Firmware Artifact
+        if: env.WRT_PRIVATE_BUILD == 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-jdcloud_re-cs-07-private
+          path: ./wrt/upload-private-devices/jdcloud_re-cs-07/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Private jdcloud_re-ss-01 Firmware Artifact
+        if: env.WRT_PRIVATE_BUILD == 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-jdcloud_re-ss-01-private
+          path: ./wrt/upload-private-devices/jdcloud_re-ss-01/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Private jdcloud_re-ss-02 Firmware Artifact
+        if: env.WRT_PRIVATE_BUILD == 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-jdcloud_re-ss-02-private
+          path: ./wrt/upload-private-devices/jdcloud_re-ss-02/
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Release Firmware
