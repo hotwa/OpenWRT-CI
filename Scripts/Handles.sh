@@ -18,6 +18,59 @@ preload_nikki_geodata() {
 
 preload_nikki_geodata
 
+patch_wrtbak_proxy_url() {
+	WRTBAK_S3="./luci-app-wrtbak/root/usr/lib/wrtbak/remote_s3.sh"
+	[ -f "$WRTBAK_S3" ] || return 0
+
+	if grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3"; then
+		cd "$PKG_PATH" && echo "wrtbak S3 proxy_url support is already present!"
+		return 0
+	fi
+
+	python3 - "$WRTBAK_S3" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+old = '''wrtbak_s3_rclone() {
+	wrtbak_config=$1
+	shift
+	rclone --config "$wrtbak_config" "$@"
+}'''
+new = '''wrtbak_s3_rclone() {
+	wrtbak_config=$1
+	shift
+	wrtbak_proxy_url=$(wrtbak_main_option proxy_url "")
+	if [ -n "$wrtbak_proxy_url" ]; then
+		HTTP_PROXY="$wrtbak_proxy_url" \\
+		HTTPS_PROXY="$wrtbak_proxy_url" \\
+		ALL_PROXY="$wrtbak_proxy_url" \\
+		http_proxy="$wrtbak_proxy_url" \\
+		https_proxy="$wrtbak_proxy_url" \\
+		all_proxy="$wrtbak_proxy_url" \\
+		NO_PROXY="${NO_PROXY:-localhost,127.0.0.1,::1}" \\
+		no_proxy="${no_proxy:-localhost,127.0.0.1,::1}" \\
+			rclone --config "$wrtbak_config" "$@"
+	else
+		rclone --config "$wrtbak_config" "$@"
+	fi
+}'''
+if old not in text:
+	raise SystemExit("wrtbak S3 rclone function shape changed")
+path.write_text(text.replace(old, new, 1))
+PY
+
+	grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3" || {
+		echo "ERROR: failed to patch wrtbak S3 proxy_url support" >&2
+		exit 1
+	}
+
+	cd "$PKG_PATH" && echo "wrtbak S3 proxy_url support has been patched!"
+}
+
+patch_wrtbak_proxy_url
+
 # 修复 procd 源码镜像 404：优先使用 GitHub 镜像仓库。
 PROCD_MAKEFILE="../package/system/procd/Makefile"
 if [ -f "$PROCD_MAKEFILE" ]; then
