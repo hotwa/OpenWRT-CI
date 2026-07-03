@@ -3,6 +3,7 @@ set -euo pipefail
 
 TARGET_FILES="${1:-${GITHUB_WORKSPACE:-$(pwd)}/wrt/files}"
 CONFIG_FILE="$TARGET_FILES/etc/config/wrtbak"
+DEFAULTS_FILE="$TARGET_FILES/etc/uci-defaults/91-wrtbak-r2-defaults"
 
 R2_ENDPOINT="${WRTBAK_R2_ENDPOINT:-https://a15eff50866373c517f961928c24c54a.r2.cloudflarestorage.com}"
 R2_REGION="${WRTBAK_R2_REGION:-auto}"
@@ -159,6 +160,45 @@ config schedule 'auto'
 EOF
 
 chmod 600 "$CONFIG_FILE" 2>/dev/null || true
+
+mkdir -p "$(dirname "$DEFAULTS_FILE")"
+cat >"$DEFAULTS_FILE" <<EOF
+#!/bin/sh
+set -eu
+
+changed=0
+uci -q get wrtbak.main >/dev/null || {
+	uci set wrtbak.main='wrtbak'
+	changed=1
+}
+
+if ! uci -q get wrtbak.main.site >/dev/null; then
+	uci set wrtbak.main.site='$SITE_NAME'
+	changed=1
+fi
+
+if ! uci -q get wrtbak.main.proxy_artifacts_enabled >/dev/null; then
+	uci set wrtbak.main.proxy_artifacts_enabled='$PROXY_ARTIFACTS_ENABLED'
+	changed=1
+fi
+
+if ! uci -q get wrtbak.main.proxy_update_mode >/dev/null; then
+	uci set wrtbak.main.proxy_update_mode='$PROXY_UPDATE_MODE'
+	changed=1
+fi
+
+if ! uci -q get wrtbak.main.proxy_url >/dev/null; then
+	uci set wrtbak.main.proxy_url='$PROXY_URL'
+	changed=1
+fi
+
+if [ "\$changed" = "1" ]; then
+	uci commit wrtbak
+fi
+
+exit 0
+EOF
+chmod 755 "$DEFAULTS_FILE" 2>/dev/null || true
 
 if [ -n "$PROXY_URL" ]; then
 	proxy_status=present

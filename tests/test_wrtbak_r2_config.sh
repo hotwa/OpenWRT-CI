@@ -68,6 +68,7 @@ clean_wrtbak_env env \
 
 CONFIG="$WORK_DIR/private/etc/config/wrtbak"
 [ -f "$CONFIG" ] || { echo "injector did not create /etc/config/wrtbak"; exit 1; }
+DEFAULTS="$WORK_DIR/private/etc/uci-defaults/91-wrtbak-r2-defaults"
 
 grep -q "option default_target 's3'" "$CONFIG" || { echo "default target is not s3"; exit 1; }
 grep -q "option device_alias 'office-re-ss-01'" "$CONFIG" || { echo "device alias was not written"; exit 1; }
@@ -79,6 +80,14 @@ grep -q "option secret_key '$SECRET_KEY'" "$CONFIG" || { echo "secret key was no
 grep -q "option path '/openwrt-config-backup/wrtbak'" "$CONFIG" || { echo "prefix was not normalized"; exit 1; }
 grep -q "option force_path_style '1'" "$CONFIG" || { echo "force_path_style was not written"; exit 1; }
 grep -q "option enabled '0'" "$CONFIG" || { echo "auto schedule should stay disabled by default"; exit 1; }
+
+[ -f "$DEFAULTS" ] || { echo "injector did not create keep-config uci-defaults migration"; exit 1; }
+grep -q "uci -q get wrtbak.main.site" "$DEFAULTS" || { echo "uci-defaults does not guard existing site"; exit 1; }
+grep -q "uci set wrtbak.main.site='office'" "$DEFAULTS" || { echo "uci-defaults does not seed site"; exit 1; }
+grep -q "uci set wrtbak.main.proxy_artifacts_enabled='1'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy artifact enable"; exit 1; }
+grep -q "uci set wrtbak.main.proxy_update_mode='review-required'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy update mode"; exit 1; }
+grep -q "uci set wrtbak.main.proxy_url='$PROXY_URL'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy url when missing"; exit 1; }
+grep -q "uci commit wrtbak" "$DEFAULTS" || { echo "uci-defaults does not commit wrtbak"; exit 1; }
 
 if grep -q "$ACCESS_KEY" "$INJECT_LOG" || grep -q "$SECRET_KEY" "$INJECT_LOG" || grep -q "$PROXY_URL" "$INJECT_LOG"; then
 	echo "injector leaked credentials to logs"

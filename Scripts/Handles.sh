@@ -22,7 +22,7 @@ patch_wrtbak_proxy_url() {
 	WRTBAK_S3="./luci-app-wrtbak/root/usr/lib/wrtbak/remote_s3.sh"
 	[ -f "$WRTBAK_S3" ] || return 0
 
-	if grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3"; then
+	if grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3" && grep -q 'WRTBAK_S3_FORCE_DIRECT' "$WRTBAK_S3"; then
 		cd "$PKG_PATH" && echo "wrtbak S3 proxy_url support is already present!"
 		return 0
 	fi
@@ -33,15 +33,34 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
-old = '''wrtbak_s3_rclone() {
+old_plain = '''wrtbak_s3_rclone() {
 	wrtbak_config=$1
 	shift
 	rclone --config "$wrtbak_config" "$@"
 }'''
-new = '''wrtbak_s3_rclone() {
+old_proxy = '''wrtbak_s3_rclone() {
 	wrtbak_config=$1
 	shift
 	wrtbak_proxy_url=$(wrtbak_main_option proxy_url "")
+	if [ -n "$wrtbak_proxy_url" ]; then
+		HTTP_PROXY="$wrtbak_proxy_url" HTTPS_PROXY="$wrtbak_proxy_url" ALL_PROXY="$wrtbak_proxy_url" \\
+		http_proxy="$wrtbak_proxy_url" https_proxy="$wrtbak_proxy_url" all_proxy="$wrtbak_proxy_url" \\
+			rclone --config "$wrtbak_config" "$@"
+	else
+		rclone --config "$wrtbak_config" "$@"
+	fi
+}'''
+new = '''wrtbak_s3_rclone() {
+	wrtbak_config=$1
+	shift
+	case "${WRTBAK_S3_FORCE_DIRECT:-0}" in
+		1|true|yes|on|direct)
+			wrtbak_proxy_url=
+			;;
+		*)
+			wrtbak_proxy_url=$(wrtbak_main_option proxy_url "")
+			;;
+	esac
 	if [ -n "$wrtbak_proxy_url" ]; then
 		HTTP_PROXY="$wrtbak_proxy_url" \\
 		HTTPS_PROXY="$wrtbak_proxy_url" \\
@@ -56,13 +75,21 @@ new = '''wrtbak_s3_rclone() {
 		rclone --config "$wrtbak_config" "$@"
 	fi
 }'''
-if old not in text:
+if old_plain in text:
+	text = text.replace(old_plain, new, 1)
+elif old_proxy in text:
+	text = text.replace(old_proxy, new, 1)
+else:
 	raise SystemExit("wrtbak S3 rclone function shape changed")
-path.write_text(text.replace(old, new, 1))
+path.write_text(text)
 PY
 
 	grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3" || {
 		echo "ERROR: failed to patch wrtbak S3 proxy_url support" >&2
+		exit 1
+	}
+	grep -q 'WRTBAK_S3_FORCE_DIRECT' "$WRTBAK_S3" || {
+		echo "ERROR: failed to patch wrtbak firstboot direct-R2 support" >&2
 		exit 1
 	}
 

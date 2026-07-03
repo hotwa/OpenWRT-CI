@@ -22,6 +22,11 @@ grep -Fq 'wrtbak_main_option proxy_url ""' "$HANDLES" || {
 	exit 1
 }
 
+grep -Fq 'WRTBAK_S3_FORCE_DIRECT' "$HANDLES" || {
+	echo "wrtbak proxy patch does not preserve firstboot direct-R2 mode"
+	exit 1
+}
+
 for variable in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
 	grep -Fq "$variable=\"\$wrtbak_proxy_url\"" "$HANDLES" || {
 		echo "wrtbak proxy patch does not export $variable to rclone"
