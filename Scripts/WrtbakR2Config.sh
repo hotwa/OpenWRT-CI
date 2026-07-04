@@ -4,6 +4,7 @@ set -euo pipefail
 TARGET_FILES="${1:-${GITHUB_WORKSPACE:-$(pwd)}/wrt/files}"
 CONFIG_FILE="$TARGET_FILES/etc/config/wrtbak"
 DEFAULTS_FILE="$TARGET_FILES/etc/uci-defaults/91-wrtbak-r2-defaults"
+NIKKI_BYPASS_FILE="$TARGET_FILES/etc/uci-defaults/92-wrtbak-nikki-r2-bypass"
 
 R2_ENDPOINT="${WRTBAK_R2_ENDPOINT:-https://a15eff50866373c517f961928c24c54a.r2.cloudflarestorage.com}"
 R2_REGION="${WRTBAK_R2_REGION:-auto}"
@@ -50,6 +51,17 @@ normalize_path() {
 	else
 		printf '/\n'
 	fi
+}
+
+endpoint_host() {
+	local value="$1"
+
+	case "$value" in
+		*://*) value="${value#*://}" ;;
+	esac
+	value="${value%%/*}"
+	value="${value%%:*}"
+	printf '%s\n' "$value"
 }
 
 site_proxy_profile() {
@@ -99,6 +111,14 @@ case "${R2_ACCESS_KEY_ID:+set}:${R2_SECRET_ACCESS_KEY:+set}" in
 esac
 
 require_uci_safe endpoint "$R2_ENDPOINT"
+R2_ENDPOINT_HOST="$(endpoint_host "$R2_ENDPOINT")"
+[ -n "$R2_ENDPOINT_HOST" ] || { echo "wrtbak R2 config: endpoint host is empty" >&2; exit 1; }
+require_uci_safe endpoint_host "$R2_ENDPOINT_HOST"
+case "$R2_ENDPOINT_HOST" in
+	*.r2.cloudflarestorage.com) R2_ENDPOINT_SUFFIX="+.r2.cloudflarestorage.com" ;;
+	*) R2_ENDPOINT_SUFFIX="" ;;
+esac
+require_uci_safe endpoint_suffix "$R2_ENDPOINT_SUFFIX"
 require_uci_safe region "$R2_REGION"
 require_uci_safe bucket "$R2_BUCKET"
 require_uci_safe prefix "$R2_PREFIX"
@@ -199,6 +219,43 @@ fi
 exit 0
 EOF
 chmod 755 "$DEFAULTS_FILE" 2>/dev/null || true
+
+mkdir -p "$(dirname "$NIKKI_BYPASS_FILE")"
+cat >"$NIKKI_BYPASS_FILE" <<EOF
+#!/bin/sh
+set -eu
+
+uci -q get nikki.mixin >/dev/null || exit 0
+
+changed=0
+
+ensure_list_value() {
+	value=\$1
+	if ! uci -q get nikki.mixin.fake_ip_filters | tr ' ' '\n' | grep -Fx "\$value" >/dev/null 2>&1; then
+		uci add_list nikki.mixin.fake_ip_filters="\$value"
+		changed=1
+	fi
+}
+
+if [ "\$(uci -q get nikki.mixin.fake_ip_filter || true)" != "1" ]; then
+	uci set nikki.mixin.fake_ip_filter='1'
+	changed=1
+fi
+
+ensure_list_value '$R2_ENDPOINT_HOST'
+EOF
+if [ -n "$R2_ENDPOINT_SUFFIX" ]; then
+	printf "ensure_list_value '%s'\n" "$R2_ENDPOINT_SUFFIX" >>"$NIKKI_BYPASS_FILE"
+fi
+cat >>"$NIKKI_BYPASS_FILE" <<'EOF'
+
+if [ "$changed" = "1" ]; then
+	uci commit nikki
+fi
+
+exit 0
+EOF
+chmod 755 "$NIKKI_BYPASS_FILE" 2>/dev/null || true
 
 if [ -n "$PROXY_URL" ]; then
 	proxy_status=present

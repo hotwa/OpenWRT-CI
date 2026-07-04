@@ -69,6 +69,7 @@ clean_wrtbak_env env \
 CONFIG="$WORK_DIR/private/etc/config/wrtbak"
 [ -f "$CONFIG" ] || { echo "injector did not create /etc/config/wrtbak"; exit 1; }
 DEFAULTS="$WORK_DIR/private/etc/uci-defaults/91-wrtbak-r2-defaults"
+BYPASS="$WORK_DIR/private/etc/uci-defaults/92-wrtbak-nikki-r2-bypass"
 
 grep -q "option default_target 's3'" "$CONFIG" || { echo "default target is not s3"; exit 1; }
 grep -q "option device_alias 'office-re-ss-01'" "$CONFIG" || { echo "device alias was not written"; exit 1; }
@@ -82,6 +83,11 @@ grep -q "option force_path_style '1'" "$CONFIG" || { echo "force_path_style was 
 grep -q "option enabled '0'" "$CONFIG" || { echo "auto schedule should stay disabled by default"; exit 1; }
 
 [ -f "$DEFAULTS" ] || { echo "injector did not create keep-config uci-defaults migration"; exit 1; }
+[ -f "$BYPASS" ] || { echo "injector did not create Nikki R2 fake-ip bypass defaults"; exit 1; }
+grep -q "uci set nikki.mixin.fake_ip_filter" "$BYPASS" || { echo "Nikki R2 bypass does not enable fake_ip_filter"; exit 1; }
+grep -q "example.r2.cloudflarestorage.com" "$BYPASS" || { echo "Nikki R2 bypass does not include exact R2 endpoint host"; exit 1; }
+grep -q "+.r2.cloudflarestorage.com" "$BYPASS" || { echo "Nikki R2 bypass does not include Cloudflare R2 suffix"; exit 1; }
+grep -q "uci commit nikki" "$BYPASS" || { echo "Nikki R2 bypass does not commit nikki config"; exit 1; }
 grep -q "uci -q get wrtbak.main.site" "$DEFAULTS" || { echo "uci-defaults does not guard existing site"; exit 1; }
 grep -q "uci set wrtbak.main.site='office'" "$DEFAULTS" || { echo "uci-defaults does not seed site"; exit 1; }
 grep -q "uci set wrtbak.main.proxy_artifacts_enabled='1'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy artifact enable"; exit 1; }
