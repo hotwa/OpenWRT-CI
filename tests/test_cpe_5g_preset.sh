@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERAL="$ROOT_DIR/Config/GENERAL.txt"
 WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
+CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 DOC="$ROOT_DIR/docs/cpe-5g-preset.md"
 
 grep -q '^CONFIG_PACKAGE_luci-app-lucky=y$' "$GENERAL" || {
@@ -33,6 +34,21 @@ grep -q 'WRT_CONFIG: IPQ60XX-WIFI-YES' "$WORKFLOW" || {
 
 grep -q 'WRT_LAN_TAILNET: false' "$WORKFLOW" || {
   echo "CPE-5G workflow must keep LAN-to-tailnet forwarding disabled by default"
+  exit 1
+}
+
+grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
+  echo "CPE-5G workflow must enable the CPE network bootstrap"
+  exit 1
+}
+
+grep -A4 'WRT_CPE_5G:' "$CORE" | grep -q 'default: false' || {
+  echo "reusable workflow must disable the CPE network bootstrap by default"
+  exit 1
+}
+
+grep -q 'ConfigureCpe5G.sh.*WRT_CPE_5G' "$CORE" || {
+  echo "reusable workflow does not invoke the CPE network bootstrap helper"
   exit 1
 }
 

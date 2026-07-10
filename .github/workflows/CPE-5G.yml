@@ -43,6 +43,7 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
+      WRT_CPE_5G: true
       WRT_LAN_TAILNET: false
       WRT_WAN_SSH: false
       WRT_WAN_SSH_PORT: '22'
