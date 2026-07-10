@@ -57,6 +57,17 @@ grep -q 'ConfigureCpe5G.sh.*WRT_CPE_5G' "$CORE" || {
   exit 1
 }
 
+unknown_inputs=''
+for input in $(sed -n '/^[[:space:]]*with:/,$s/^      \([A-Z][A-Z0-9_]*\):.*/\1/p' "$WORKFLOW"); do
+  if ! grep -q "^      $input:\$" "$CORE"; then
+    unknown_inputs="$unknown_inputs $input"
+  fi
+done
+[ -z "$unknown_inputs" ] || {
+  echo "CPE-5G workflow passes unknown WRT-CORE inputs:$unknown_inputs"
+  exit 1
+}
+
 grep -q 'CI_NAME: CPE-5G-6.18-MANUAL' "$WORKFLOW" || {
   echo "CPE-5G workflow must be pinned to the QCA-6.18 build track"
   exit 1
