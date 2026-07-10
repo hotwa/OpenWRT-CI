@@ -38,6 +38,7 @@ jobs:
       WRT_SSID: CPE-5G
       WRT_WORD: 12345678
       WRT_IP: ${{ inputs.LAN_IP || '192.168.13.1' }}
+      WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
       WRT_SOURCE: VIKINGYFY/immortalwrt

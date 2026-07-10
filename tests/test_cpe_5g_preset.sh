@@ -32,6 +32,11 @@ grep -q 'WRT_CONFIG: IPQ60XX-WIFI-YES' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'WRT_PW:' "$WORKFLOW" || {
+  echo "CPE-5G workflow must pass the required WRT_PW reusable input"
+  exit 1
+}
+
 grep -q 'WRT_LAN_TAILNET: false' "$WORKFLOW" || {
   echo "CPE-5G workflow must keep LAN-to-tailnet forwarding disabled by default"
   exit 1
