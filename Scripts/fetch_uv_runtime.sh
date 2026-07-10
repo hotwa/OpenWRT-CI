@@ -15,7 +15,7 @@ UV_PYTHON_INSTALL_MIRROR="file:///opt/uv/python-mirror"
 UV_AARCH64_ASSET="uv-aarch64-unknown-linux-musl"
 UV_X86_64_ASSET="uv-x86_64-unknown-linux-musl"
 UV_RELEASES_API="${UV_RELEASES_API:-https://api.github.com/repos/astral-sh/uv/releases/latest}"
-PYTHON_RELEASES_API="${PYTHON_RELEASES_API:-https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=100}"
+PYTHON_RELEASES_API="${PYTHON_RELEASES_API:-https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=1}"
 UV_FALLBACK_VERSION="${UV_FALLBACK_VERSION:-0.9.20}"
 PYTHON_SERIES=(3.10 3.11 3.12 3.13)
 
