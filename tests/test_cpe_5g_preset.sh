@@ -36,6 +36,11 @@ grep -q 'WRT_LAN_TAILNET: false' "$WORKFLOW" || {
   exit 1
 }
 
+grep -q 'CI_NAME: CPE-5G-6.18-MANUAL' "$WORKFLOW" || {
+  echo "CPE-5G workflow must be pinned to the QCA-6.18 build track"
+  exit 1
+}
+
 [ -f "$DOC" ] || {
   echo "missing CPE-5G preset documentation"
   exit 1

@@ -1,6 +1,6 @@
 # CPE-5G 固件预设
 
-`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。
+`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。它固定跟随 `QCA-6.18-VIKINGYFY` 的 6.18 构建轨道，不使用 QCA 6.12 预设。
 
 ## 网络规划
 

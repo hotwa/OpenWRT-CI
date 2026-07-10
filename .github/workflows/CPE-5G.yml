@@ -3,6 +3,9 @@
 
 name: CPE-5G
 
+# Keep this preset aligned with QCA-6.18-VIKINGYFY. The upstream tuple below
+# intentionally matches that workflow's current 6.18 build track.
+
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +44,9 @@ jobs:
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
       WRT_LAN_TAILNET: false
+      WRT_WAN_SSH: false
+      WRT_WAN_SSH_PORT: '22'
+      WRT_WAN_SSH_SOURCE: ''
       WRTBAK_DEVICE_ALIAS: ${{ inputs.WRTBAK_DEVICE_ALIAS || '' }}
       WRTBAK_PROXY_PROFILE: auto
       WRTBAK_SITE: ''
@@ -52,6 +58,6 @@ jobs:
       WRTBAK_FIRSTBOOT_AUTO_SLEEP: '10'
       WRTBAK_FIRSTBOOT_AUTO_REBOOT: '1'
       WRTBAK_PACKAGE_BRANCH: work2ai/wrtbak-v36-proxy-artifact-cloud-restore-20260703
-      CI_NAME: CPE-5G-MANUAL
+      CI_NAME: CPE-5G-6.18-MANUAL
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
