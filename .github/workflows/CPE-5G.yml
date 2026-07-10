@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 VIKINGYFY
+
+name: CPE-5G
+
+# Keep this preset aligned with QCA-6.18-VIKINGYFY. The upstream tuple below
+# intentionally matches that workflow's current 6.18 build track.
+
+on:
+  workflow_dispatch:
+    inputs:
+      LAN_IP:
+        description: 'CPE-5G LAN IPv4 地址。默认 192.168.13.1。'
+        default: '192.168.13.1'
+        required: false
+        type: string
+      TEST:
+        description: '仅输出配置文件，不编译固件。'
+        default: 'false'
+        required: false
+        type: boolean
+      WRTBAK_DEVICE_ALIAS:
+        description: '可选：写入 luci-app-wrtbak 的设备别名。'
+        default: ''
+        required: false
+        type: string
+
+permissions: write-all
+
+jobs:
+  cpe_5g:
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets: inherit
+    with:
+      WRT_CONFIG: IPQ60XX-WIFI-YES
+      WRT_THEME: argon
+      WRT_NAME: CPE-5G
+      WRT_SSID: CPE-5G
+      WRT_WORD: 12345678
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.13.1' }}
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_PACKAGE: ''
+      WRT_TEST: ${{ inputs.TEST }}
+      WRT_LAN_TAILNET: false
+      WRT_WAN_SSH: false
+      WRT_WAN_SSH_PORT: '22'
+      WRT_WAN_SSH_SOURCE: ''
+      WRTBAK_DEVICE_ALIAS: ${{ inputs.WRTBAK_DEVICE_ALIAS || '' }}
+      WRTBAK_PROXY_PROFILE: auto
+      WRTBAK_SITE: ''
+      WRTBAK_PROXY_ARTIFACTS_ENABLED: '1'
+      WRTBAK_PROXY_UPDATE_MODE: review-required
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
+      WRTBAK_FIRSTBOOT_AUTO_TARGET: s3
+      WRTBAK_FIRSTBOOT_AUTO_ATTEMPTS: '18'
+      WRTBAK_FIRSTBOOT_AUTO_SLEEP: '10'
+      WRTBAK_FIRSTBOOT_AUTO_REBOOT: '1'
+      WRTBAK_PACKAGE_BRANCH: work2ai/wrtbak-v36-proxy-artifact-cloud-restore-20260703
+      CI_NAME: CPE-5G-6.18-MANUAL
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360

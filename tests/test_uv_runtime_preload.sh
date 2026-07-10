@@ -69,6 +69,16 @@ grep -q 'python-build-standalone' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+grep -q 'python-build-standalone/releases?per_page=1}' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not limit release metadata to the latest release"
+  exit 1
+}
+
+if grep -q 'python-build-standalone/releases?per_page=100}' "$FETCH_SCRIPT"; then
+  echo "fetch_uv_runtime.sh still requests 100 oversized release metadata entries"
+  exit 1
+fi
+
 grep -q "3.10 3.11 3.12 3.13" "$FETCH_SCRIPT" || {
   echo "fetch_uv_runtime.sh does not target Python 3.10-3.13"
   exit 1
