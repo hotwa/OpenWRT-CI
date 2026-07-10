@@ -306,6 +306,7 @@ jobs:
           retry_cmd 5 15 git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
           $GITHUB_WORKSPACE/Scripts/patch_libiwrt_k612_cacheline_assert.sh "./wrt" "$WRT_SOURCE" "$WRT_BRANCH"
+          $GITHUB_WORKSPACE/Scripts/fix_qca8k_assisted_learning_patch.sh "./wrt"
 
           cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
 
