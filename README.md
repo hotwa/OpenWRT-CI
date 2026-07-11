@@ -7,6 +7,29 @@ https://github.com/immortalwrt/immortalwrt.git
 高通版：
 https://github.com/VIKINGYFY/immortalwrt.git
 
+## 上游关系与 RE-SS-01 已验证基线
+
+- CI 工作流上游：`davidtall/DaeWRT-CI`。
+- 固件源码候选上游：`davidtall/immortalwrt:stable`。该分支用于跟踪候选更新，不会自动替换生产已验证版本。
+- CPE-5G 当前生产基线：2026-06-25 Release 已在 `jdcloud,re-ss-01` 实机验证的 A 基线。
+
+| 组件 | 当前已验证版本 | 来源提交 |
+| --- | --- | --- |
+| 固件源码 commit | `VIKINGYFY/immortalwrt@42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` | 完整 A 基线；构建必须精确 checkout 此 SHA |
+| Linux kernel | `6.18.35` | `a1a3659c2918f20a45b82875fdf5f7bbf431e34a` |
+| qca-nss 补丁树 | A 基线 `package/qca-nss` | `ad0b63563ff89ac01b09c6977d226d4587de2938` |
+| qca-nss-dp | `d8f802f08fd8ff31057ba58edb20bbe448e7b505` | 包装/补丁 `ad0b63563ff89ac01b09c6977d226d4587de2938` |
+| qca-nss-drv | `6aa14c7`，`PKG_RELEASE=18` | 包装/补丁 `5f520e5c2bc7ee41b0a3e25c0686be22d59af34f` |
+| qca-nss-ecm | `8c7355b`，`PKG_RELEASE=7` | 包装/补丁 `38e28da69292dda73196b31e243985f742a30bdc` |
+| qca-ssdk | `d9a196497ecee2530722d906e0efe1b7408b6ef6` | 包装/补丁 `38e28da69292dda73196b31e243985f742a30bdc` |
+| Qualcommax 6.18 内核补丁 | A 基线 `target/linux/qualcommax/patches-6.18` | `38e28da69292dda73196b31e243985f742a30bdc` |
+| RE-SS-01 DTB | `target/linux/qualcommax/dts/ipq6000-re-ss-01.dts` | `0c453396bfed1b3c18a77bd0fd58396da223e514` |
+| RE-SS-01 factory pipeline | `target/linux/qualcommax/image/ipq60xx.mk` | `ac6d2f17ddcc6ae33c12e246f848ca0d06b5cd84` |
+
+表中单项提交用于追踪来源；复现固件必须使用完整源码 SHA，不能拼接单项提交。CPE-5G 在该底层基线上继续叠加本仓库当前的 `192.168.13.1`、USB/5G、Lucky、Tailscale/Headscale 和 wrtbak 配置。普通 QCA 构建不受这个 CPE 专属固定影响。
+
+更新上游后必须先作为候选构建，并在 RE-SS-01 上验证刷写、LAN/WAN、NSS、两次软重启、一次断电冷启动及 CPE 管理链路。出现无法启动、网口或 NSS 回归时，退回本表记录的上一个实机已验证完整 SHA，不回滚 hotwa 的功能提交。
+
 LiBWrt：
 https://github.com/davidtall/LiBwrt-openwrt-6.x
 
