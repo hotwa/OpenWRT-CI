@@ -20,8 +20,18 @@ grep -q '^CONFIG_PACKAGE_luci-app-wrtbak=y$' "$GENERAL" || {
 	exit 1
 }
 
-grep -q '^UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "main"$' "$PACKAGES_SH" || {
-	echo "Packages.sh does not pull luci-app-wrtbak from hotwa/luci-app-wrtbak main"
+grep -Fq 'WRTBAK_PACKAGE_BRANCH=main' "$PACKAGES_SH" || {
+	echo "Packages.sh does not use the stable wrtbak main branch as its fetch base"
+	exit 1
+}
+
+grep -Fq 'WRTBAK_PACKAGE_COMMIT=0f6d8bdd75265e1f86836f5dc3a7ee469c6d03a8' "$PACKAGES_SH" || {
+	echo "Packages.sh does not pin the reviewed wrtbak commit"
+	exit 1
+}
+
+grep -Fq 'UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"' "$PACKAGES_SH" || {
+	echo "Packages.sh does not checkout the pinned wrtbak commit"
 	exit 1
 }
 

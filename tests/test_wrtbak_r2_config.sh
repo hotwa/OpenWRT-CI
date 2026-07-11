@@ -34,8 +34,16 @@ clean_wrtbak_env() {
 		-u WRTBAK_R2_SECRET_ACCESS_KEY \
 		-u WRTBAK_R2_FORCE_PATH_STYLE \
 		-u WRTBAK_DEVICE_ALIAS \
+		-u WRTBAK_SITE \
 		-u WRTBAK_PROXY_PROFILE \
+		-u WRTBAK_PROXY_ARTIFACTS_ENABLED \
+		-u WRTBAK_PROXY_UPDATE_MODE \
 		-u WRTBAK_PROXY_URL \
+		-u WRTBAK_FIRSTBOOT_AUTO_ENABLED \
+		-u WRTBAK_FIRSTBOOT_AUTO_TARGET \
+		-u WRTBAK_FIRSTBOOT_AUTO_ATTEMPTS \
+		-u WRTBAK_FIRSTBOOT_AUTO_SLEEP \
+		-u WRTBAK_FIRSTBOOT_AUTO_REBOOT \
 		-u WRTBAK_HOME_PROXY_URL \
 		-u WRTBAK_OFFICE_PROXY_URL \
 		-u WRTBAK_DORM_PROXY_URL \
@@ -74,6 +82,10 @@ BYPASS="$WORK_DIR/private/etc/uci-defaults/92-wrtbak-nikki-r2-bypass"
 grep -q "option default_target 's3'" "$CONFIG" || { echo "default target is not s3"; exit 1; }
 grep -q "option device_alias 'office-re-ss-01'" "$CONFIG" || { echo "device alias was not written"; exit 1; }
 grep -q "option proxy_url '$PROXY_URL'" "$CONFIG" || { echo "profile proxy url was not written"; exit 1; }
+grep -q "option site 'office'" "$CONFIG" || { echo "site was not derived from proxy profile"; exit 1; }
+grep -q "option proxy_artifacts_enabled '1'" "$CONFIG" || { echo "proxy artifact updates were not enabled"; exit 1; }
+grep -q "option proxy_update_mode 'review-required'" "$CONFIG" || { echo "proxy update mode was not written"; exit 1; }
+grep -q "option firstboot_auto_enabled '0'" "$CONFIG" || { echo "firstboot auto must stay disabled by default"; exit 1; }
 grep -q "option endpoint 'https://example.r2.cloudflarestorage.com'" "$CONFIG" || { echo "endpoint was not written"; exit 1; }
 grep -q "option bucket 'knowledge'" "$CONFIG" || { echo "bucket was not written"; exit 1; }
 grep -q "option access_key '$ACCESS_KEY'" "$CONFIG" || { echo "access key was not written"; exit 1; }
@@ -92,7 +104,8 @@ grep -q "uci -q get wrtbak.main.site" "$DEFAULTS" || { echo "uci-defaults does n
 grep -q "uci set wrtbak.main.site='office'" "$DEFAULTS" || { echo "uci-defaults does not seed site"; exit 1; }
 grep -q "uci set wrtbak.main.proxy_artifacts_enabled='1'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy artifact enable"; exit 1; }
 grep -q "uci set wrtbak.main.proxy_update_mode='review-required'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy update mode"; exit 1; }
-grep -q "uci set wrtbak.main.proxy_url='$PROXY_URL'" "$DEFAULTS" || { echo "uci-defaults does not seed proxy url when missing"; exit 1; }
+! grep -q 'wrtbak.main.proxy_url' "$DEFAULTS" || { echo "uci-defaults must not overwrite a preserved daily proxy"; exit 1; }
+grep -q "uci set wrtbak.main.firstboot_auto_enabled='0'" "$DEFAULTS" || { echo "uci-defaults does not seed disabled firstboot auto"; exit 1; }
 grep -q "uci commit wrtbak" "$DEFAULTS" || { echo "uci-defaults does not commit wrtbak"; exit 1; }
 
 if grep -q "$ACCESS_KEY" "$INJECT_LOG" || grep -q "$SECRET_KEY" "$INJECT_LOG" || grep -q "$PROXY_URL" "$INJECT_LOG"; then
@@ -117,6 +130,11 @@ clean_wrtbak_env env \
 
 grep -q "option proxy_url 'http://dorm-proxy.invalid:7890'" "$AUTO_PROFILE_DIR/etc/config/wrtbak" || {
 	echo "auto proxy profile did not derive dorm proxy from WRT_IP"
+	exit 1
+}
+
+grep -q "option site 'dorm'" "$AUTO_PROFILE_DIR/etc/config/wrtbak" || {
+	echo "auto proxy profile did not derive dorm site from WRT_IP"
 	exit 1
 }
 

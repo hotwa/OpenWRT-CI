@@ -70,6 +70,38 @@ on:
         required: false
         type: string
         default: 'auto'
+      WRTBAK_SITE:
+        required: false
+        type: string
+        default: ''
+      WRTBAK_PROXY_ARTIFACTS_ENABLED:
+        required: false
+        type: string
+        default: '1'
+      WRTBAK_PROXY_UPDATE_MODE:
+        required: false
+        type: string
+        default: 'review-required'
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED:
+        required: false
+        type: string
+        default: '0'
+      WRTBAK_FIRSTBOOT_AUTO_TARGET:
+        required: false
+        type: string
+        default: 's3'
+      WRTBAK_FIRSTBOOT_AUTO_ATTEMPTS:
+        required: false
+        type: string
+        default: '18'
+      WRTBAK_FIRSTBOOT_AUTO_SLEEP:
+        required: false
+        type: string
+        default: '10'
+      WRTBAK_FIRSTBOOT_AUTO_REBOOT:
+        required: false
+        type: string
+        default: '1'
       CI_NAME:
         required: false
         type: string
@@ -140,6 +172,14 @@ env:
   WRT_WAN_SSH_SOURCE: ${{inputs.WRT_WAN_SSH_SOURCE}}
   WRTBAK_DEVICE_ALIAS: ${{inputs.WRTBAK_DEVICE_ALIAS}}
   WRTBAK_PROXY_PROFILE: ${{inputs.WRTBAK_PROXY_PROFILE}}
+  WRTBAK_SITE: ${{inputs.WRTBAK_SITE}}
+  WRTBAK_PROXY_ARTIFACTS_ENABLED: ${{inputs.WRTBAK_PROXY_ARTIFACTS_ENABLED}}
+  WRTBAK_PROXY_UPDATE_MODE: ${{inputs.WRTBAK_PROXY_UPDATE_MODE}}
+  WRTBAK_FIRSTBOOT_AUTO_ENABLED: ${{inputs.WRTBAK_FIRSTBOOT_AUTO_ENABLED}}
+  WRTBAK_FIRSTBOOT_AUTO_TARGET: ${{inputs.WRTBAK_FIRSTBOOT_AUTO_TARGET}}
+  WRTBAK_FIRSTBOOT_AUTO_ATTEMPTS: ${{inputs.WRTBAK_FIRSTBOOT_AUTO_ATTEMPTS}}
+  WRTBAK_FIRSTBOOT_AUTO_SLEEP: ${{inputs.WRTBAK_FIRSTBOOT_AUTO_SLEEP}}
+  WRTBAK_FIRSTBOOT_AUTO_REBOOT: ${{inputs.WRTBAK_FIRSTBOOT_AUTO_REBOOT}}
   WRT_DIR: 'wrt'
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}

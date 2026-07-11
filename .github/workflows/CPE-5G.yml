@@ -24,6 +24,11 @@ on:
         default: ''
         required: false
         type: string
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED:
+        description: '仅在已验证的 CPE 测试场景启用 wrtbak 首启恢复；默认关闭。'
+        default: '0'
+        required: false
+        type: string
 
 permissions: write-all
 
@@ -51,6 +56,7 @@ jobs:
       WRT_WAN_SSH_SOURCE: ''
       WRTBAK_DEVICE_ALIAS: ${{ inputs.WRTBAK_DEVICE_ALIAS || '' }}
       WRTBAK_PROXY_PROFILE: auto
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED: ${{ inputs.WRTBAK_FIRSTBOOT_AUTO_ENABLED || '0' }}
       CI_NAME: CPE-5G-6.18-MANUAL
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
