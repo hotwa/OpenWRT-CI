@@ -34,6 +34,10 @@ on:
       WRT_BRANCH:
         required: true
         type: string
+      WRT_COMMIT:
+        required: false
+        type: string
+        default: ''
       WRT_SOURCE:
         required: false
         type: string
@@ -162,6 +166,7 @@ env:
   WRT_PW: ${{inputs.WRT_PW}}
   WRT_REPO: ${{inputs.WRT_REPO}}
   WRT_BRANCH: ${{inputs.WRT_BRANCH}}
+  WRT_COMMIT: ${{inputs.WRT_COMMIT}}
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
@@ -350,10 +355,29 @@ jobs:
           . $GITHUB_WORKSPACE/Scripts/retry.sh
           retry_cmd 5 15 git clone --depth=1 --single-branch --branch $WRT_BRANCH $WRT_REPO ./wrt/
 
+          if [ -n "$WRT_COMMIT" ]; then
+            if [ "${#WRT_COMMIT}" -ne 40 ] || printf '%s' "$WRT_COMMIT" | grep -Eq '[^0-9a-fA-F]'; then
+              echo "ERROR: WRT_COMMIT must be a full 40-character hexadecimal commit SHA" >&2
+              exit 1
+            fi
+
+            retry_cmd 5 15 git -C ./wrt fetch --depth=1 origin "$WRT_COMMIT"
+            (
+              cd ./wrt
+              git checkout --detach "$WRT_COMMIT"
+              resolved_commit="$(git rev-parse HEAD)"
+              requested_commit="$(printf '%s' "$WRT_COMMIT" | tr 'A-F' 'a-f')"
+              if [ "$resolved_commit" != "$requested_commit" ]; then
+                echo "ERROR: requested source commit $requested_commit but checked out $resolved_commit" >&2
+                exit 1
+              fi
+            )
+          fi
+
           $GITHUB_WORKSPACE/Scripts/patch_libiwrt_k612_cacheline_assert.sh "./wrt" "$WRT_SOURCE" "$WRT_BRANCH"
           $GITHUB_WORKSPACE/Scripts/fix_qca8k_assisted_learning_patch.sh "./wrt"
 
-          cd ./wrt/ && echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+          echo "WRT_HASH=$(git -C ./wrt rev-parse HEAD)" >> $GITHUB_ENV
 
           # Remove mainland mirrors so build source resolution stays consistent across runners.
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"

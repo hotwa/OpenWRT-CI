@@ -46,6 +46,7 @@ jobs:
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
+      WRT_COMMIT: 42a1f64b5dbd2a99d05daca94ae5a87eebff59b4
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
