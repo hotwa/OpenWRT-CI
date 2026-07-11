@@ -8,7 +8,8 @@ QCA_WORKFLOW="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 README="$ROOT_DIR/README.md"
 AGENT_GUIDE="$ROOT_DIR/AGENTS.md"
 CPE_DOC="$ROOT_DIR/docs/cpe-5g-preset.md"
-VERIFIED_SOURCE_SHA='42a1f64b5dbd2a99d05daca94ae5a87eebff59b4'
+VERIFIED_SOURCE_SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
+ROLLBACK_SOURCE_SHA='42a1f64b5dbd2a99d05daca94ae5a87eebff59b4'
 
 grep -q "WRT_COMMIT: $VERIFIED_SOURCE_SHA" "$CPE_WORKFLOW" || {
   echo "CPE-5G does not pin the verified firmware source commit"
@@ -52,10 +53,21 @@ for document in "$README" "$AGENT_GUIDE" "$CPE_DOC"; do
   }
 done
 
-grep -q 'Linux.*6\.18\.35\|Linux kernel.*6\.18\.35' "$README" || {
-  echo "README does not record the verified Linux 6.18.35 baseline"
+grep -q 'Linux.*6\.18\.37\|Linux kernel.*6\.18\.37' "$README" || {
+  echo "README does not record the preferred Linux 6.18.37 baseline"
   exit 1
 }
+
+for document in "$README" "$AGENT_GUIDE" "$CPE_DOC"; do
+  grep -q "$ROLLBACK_SOURCE_SHA" "$document" || {
+    echo "$(basename "$document") does not retain the historical rollback SHA"
+    exit 1
+  }
+  grep -q '6\.18\.35' "$document" || {
+    echo "$(basename "$document") does not retain the historical rollback kernel"
+    exit 1
+  }
+done
 
 for component in qca-nss qca-nss-dp qca-nss-drv qca-nss-ecm qca-ssdk Qualcommax DTB factory; do
   grep -q "$component" "$README" || {

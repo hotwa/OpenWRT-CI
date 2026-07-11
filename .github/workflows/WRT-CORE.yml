@@ -55,6 +55,14 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_FEATURE_OVERLAY:
+        required: false
+        type: boolean
+        default: true
+      WRT_REQUIRED_DEVICE:
+        required: false
+        type: string
+        default: ''
       WRT_WAN_SSH:
         required: false
         type: boolean
@@ -172,6 +180,8 @@ env:
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
+  WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
+  WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
   WRT_WAN_SSH: ${{inputs.WRT_WAN_SSH}}
   WRT_WAN_SSH_PORT: ${{inputs.WRT_WAN_SSH_PORT}}
   WRT_WAN_SSH_SOURCE: ${{inputs.WRT_WAN_SSH_SOURCE}}
@@ -436,14 +446,18 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files
-          cp -rf ./files/. ./wrt/files/
-          $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
-          $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
-          $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
-          $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
-          $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
-          $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
-          $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
+          if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
+            cp -rf ./files/. ./wrt/files/
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
+            $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
+          else
+            echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
+          fi
 
       - name: Custom Settings
         run: |
@@ -452,9 +466,20 @@ jobs:
 
           generate_config && cat .config
 
+          if [ "${WRT_FEATURE_OVERLAY:-true}" != "true" ]; then
+            sed -i -E '/^CONFIG_PACKAGE_(luci-app-lucky|luci-app-tailscale-community|luci-app-wrtbak|tailscale)=/d' .config
+            cat >> .config <<'EOF'
+          # CONFIG_PACKAGE_luci-app-lucky is not set
+          # CONFIG_PACKAGE_luci-app-tailscale-community is not set
+          # CONFIG_PACKAGE_luci-app-wrtbak is not set
+          # CONFIG_PACKAGE_tailscale is not set
+          EOF
+          fi
+
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
           make defconfig -j$(nproc)
+          if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
           grep -q '^CONFIG_PACKAGE_tailscale=y$' .config || {
             echo "ERROR: tailscale was dropped from .config after defconfig"
             exit 1
@@ -511,6 +536,7 @@ jobs:
             echo "ERROR: uv init script does not write UV_PYTHON_CACHE_DIR"
             exit 1
           }
+          fi
           make clean -j$(nproc)
 
       - name: Download Packages
@@ -599,6 +625,28 @@ jobs:
             done
 
             find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+
+            if [ -n "${WRT_REQUIRED_DEVICE:-}" ]; then
+              find ./upload -maxdepth 1 -type f -name "*${WRT_REQUIRED_DEVICE}*factory*.bin" | grep -q . || {
+                echo "ERROR: missing ${WRT_REQUIRED_DEVICE} factory image" >&2
+                exit 1
+              }
+              find ./upload -maxdepth 1 -type f -name "*${WRT_REQUIRED_DEVICE}*sysupgrade*.bin" | grep -q . || {
+                echo "ERROR: missing ${WRT_REQUIRED_DEVICE} sysupgrade image" >&2
+                exit 1
+              }
+            fi
+
+            jq -n \
+              --arg source_repository "$WRT_REPO" \
+              --arg source_branch "$WRT_BRANCH" \
+              --arg source_commit "$WRT_HASH" \
+              --arg config "$WRT_CONFIG" \
+              --arg required_device "$WRT_REQUIRED_DEVICE" \
+              --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
+              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay}' \
+              > ./upload/metadata.json
+            (cd ./upload && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
 
             make clean -j$(nproc)
           fi
