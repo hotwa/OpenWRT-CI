@@ -1,6 +1,10 @@
 # CPE-5G 固件预设
 
-`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。它固定跟随 `QCA-6.18-VIKINGYFY` 的 6.18 构建轨道，不使用 QCA 6.12 预设。
+`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。它不使用移动的 QCA 6.18 分支 HEAD，而是固定到 2026-06-25 已经实机验证的 A 基线 `VIKINGYFY/immortalwrt@42a1f64b5dbd2a99d05daca94ae5a87eebff59b4`（Linux 6.18.35）。
+
+该固定只覆盖 ImmortalWrt 底层源码；当前仓库的 CPE 网络、Lucky、Tailscale/Headscale、wrtbak 和私有构建功能继续叠加在 A 基线上。普通 QCA 工作流仍按各自分支构建，不受 CPE-5G 固定影响。
+
+`davidtall/immortalwrt:stable` 只作为下一版候选上游。候选版本必须记录完整源码 SHA、Action run 和 artifact SHA256，并在 RE-SS-01 上完成刷写、LAN/WAN/NSS、两次软重启、一次冷启动和 `192.168.66.1:6677` 管理链路验证，才能更新这里及 README 的“当前已验证基线”。验证失败时只回退源码 SHA，不撤销 hotwa 已有功能提交。
 
 ## 网络规划
 
