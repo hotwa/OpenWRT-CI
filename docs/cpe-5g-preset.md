@@ -1,8 +1,18 @@
 # CPE-5G 固件预设
 
-`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。它不使用移动的 QCA 6.18 分支 HEAD，而是固定到 2026-06-25 已经实机验证的 A 基线 `VIKINGYFY/immortalwrt@42a1f64b5dbd2a99d05daca94ae5a87eebff59b4`（Linux 6.18.35）。
+`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。当前优先已验证基线为 2026-07-06 的 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`（Linux `6.18.37`，IPQ60XX-NOWIFI）。2026-06-25 的 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4`（Linux `6.18.35`）保留为历史已知可启动回退点。
 
-该固定只覆盖 ImmortalWrt 底层源码；当前仓库的 CPE 网络、Lucky、Tailscale/Headscale、wrtbak 和私有构建功能继续叠加在 A 基线上。普通 QCA 工作流仍按各自分支构建，不受 CPE-5G 固定影响。
+该固定只覆盖 CPE-5G；普通 QCA 工作流仍按各自分支构建。`davidtall/immortalwrt:stable` 是候选上游，不是自动生产基线。DaeWRT-CI Source code tar.gz 只用于核对 CI 脚本/配置/补丁层，不作为内核源码 provenance。
+
+## 7.06 provenance
+
+完整记录见 README；核心身份为：qca-nss tree `16f46086b41275bcc004e534f966f9cd509cd146`、qca-nss-dp `d8f802f0`、qca-nss-drv `6aa14c7` r18、qca-nss-ecm `8c7355b` r8、qca-ssdk `d9a19649` r1、Qualcommax patches tree `d211c3263007c73642721596c4004424b32016a8`、RE-SS-01 DTS blob `a278a87acb783e546cc473878cb8fe5ca3d50a92`，factory pipeline 为 `append-kernel | pad-to 6144k | append-rootfs | append-metadata`（blob `44a7716b4009d8be76c4c54fa399cf89bec4a838`）。
+
+## A/B 隔离顺序
+
+- A：`0bad892...` + 从 7.06 CI tag 保存的 `IPQ60XX-706-NOWIFI`，关闭 CPE 网络及 Lucky/Tailscale/Headscale/wrtbak feature overlay，LAN `192.168.10.1`。
+- B：同一 SHA、同一 NOWIFI 配置，只开启当前 CPE overlay，LAN `192.168.13.1`。
+- 只有 A 可启动而 B 不可启动，才归因并继续排查 overlay；A、B 都可启动后才新增 WiFi-YES 测试。
 
 `davidtall/immortalwrt:stable` 只作为下一版候选上游。候选版本必须记录完整源码 SHA、Action run 和 artifact SHA256，并在 RE-SS-01 上完成刷写、LAN/WAN/NSS、两次软重启、一次冷启动和 `192.168.66.1:6677` 管理链路验证，才能更新这里及 README 的“当前已验证基线”。验证失败时只回退源码 SHA，不撤销 hotwa 已有功能提交。
 
@@ -26,6 +36,6 @@
 
 ## 触发构建
 
-GitHub Actions 选择 **CPE-5G**，正常构建时保留 `LAN_IP=192.168.13.1`。如只校验最终配置，将 `TEST` 设为 `true`。
+GitHub Actions 选择 **CPE-5G**。先以 `TEST=true` 验证 A/B 配置，再以 `TEST=false` 生成两个 artifact；每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
 
 固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问、以及 `tailscale status` 已加入 Headscale。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。

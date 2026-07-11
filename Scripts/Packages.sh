@@ -92,11 +92,13 @@ UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
 #UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 #UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 
-UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
-# Fetch from the stable branch, then detach at the reviewed commit for reproducible builds.
-WRTBAK_PACKAGE_BRANCH=main
-WRTBAK_PACKAGE_COMMIT=0f6d8bdd75265e1f86836f5dc3a7ee469c6d03a8
-UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"
+if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
+	UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
+	# Fetch from the stable branch, then detach at the reviewed commit for reproducible builds.
+	WRTBAK_PACKAGE_BRANCH=main
+	WRTBAK_PACKAGE_COMMIT=0f6d8bdd75265e1f86836f5dc3a7ee469c6d03a8
+	UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"
+fi
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"
 #UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
@@ -122,7 +124,9 @@ UPDATE_PACKAGE "vnt" "lmq8267/luci-app-vnt" "main"
 # 与上游对齐 daed 包源。
 UPDATE_PACKAGE "luci-app-daed" "QiuSimons/luci-app-daed" "kix"
 UPDATE_PACKAGE "luci-app-pushbot" "zzsj0928/luci-app-pushbot" "master"
-UPDATE_PACKAGE "luci-app-lucky" "sirpdboy/luci-app-lucky" "main"
+if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
+	UPDATE_PACKAGE "luci-app-lucky" "sirpdboy/luci-app-lucky" "main"
+fi
 
 #更新软件包版本
 UPDATE_VERSION() {

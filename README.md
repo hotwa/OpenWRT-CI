@@ -10,23 +10,26 @@ https://github.com/VIKINGYFY/immortalwrt.git
 ## 上游关系与 RE-SS-01 已验证基线
 
 - CI 工作流上游：`davidtall/DaeWRT-CI`。
-- 固件源码候选上游：`davidtall/immortalwrt:stable`。该分支用于跟踪候选更新，不会自动替换生产已验证版本。
-- CPE-5G 当前生产基线：2026-06-25 Release 已在 `jdcloud,re-ss-01` 实机验证的 A 基线。
+- 固件源码候选上游：`davidtall/immortalwrt:stable`。该移动分支只用于跟踪候选更新，不是自动生产基线。
+- CPE-5G 当前优先已验证基线：2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37`，对应 DaeWRT-CI 的 IPQ60XX-NOWIFI Release，并已在 `jdcloud,re-ss-01` 成功启动。
+- 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
 
 | 组件 | 当前已验证版本 | 来源提交 |
 | --- | --- | --- |
-| 固件源码 commit | `VIKINGYFY/immortalwrt@42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` | 完整 A 基线；构建必须精确 checkout 此 SHA |
-| Linux kernel | `6.18.35` | `a1a3659c2918f20a45b82875fdf5f7bbf431e34a` |
-| qca-nss 补丁树 | A 基线 `package/qca-nss` | `ad0b63563ff89ac01b09c6977d226d4587de2938` |
-| qca-nss-dp | `d8f802f08fd8ff31057ba58edb20bbe448e7b505` | 包装/补丁 `ad0b63563ff89ac01b09c6977d226d4587de2938` |
-| qca-nss-drv | `6aa14c7`，`PKG_RELEASE=18` | 包装/补丁 `5f520e5c2bc7ee41b0a3e25c0686be22d59af34f` |
-| qca-nss-ecm | `8c7355b`，`PKG_RELEASE=7` | 包装/补丁 `38e28da69292dda73196b31e243985f742a30bdc` |
-| qca-ssdk | `d9a196497ecee2530722d906e0efe1b7408b6ef6` | 包装/补丁 `38e28da69292dda73196b31e243985f742a30bdc` |
-| Qualcommax 6.18 内核补丁 | A 基线 `target/linux/qualcommax/patches-6.18` | `38e28da69292dda73196b31e243985f742a30bdc` |
-| RE-SS-01 DTB | `target/linux/qualcommax/dts/ipq6000-re-ss-01.dts` | `0c453396bfed1b3c18a77bd0fd58396da223e514` |
-| RE-SS-01 factory pipeline | `target/linux/qualcommax/image/ipq60xx.mk` | `ac6d2f17ddcc6ae33c12e246f848ca0d06b5cd84` |
+| 固件源码 commit | `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7` | 7.06 产物 `/etc/openwrt_release` 的 `r0-0bad892` 解析结果；构建必须精确 detached checkout |
+| Linux kernel | `6.18.37` | `target/linux/generic/kernel-6.18` blob `efbfe514334d0ec7ea223dfd217ee03a9842c8e3`；tarball SHA256 `a83cd200e6646db52866b8309e9137b9e9048b613cbda10ced2b811aae125255` |
+| qca-nss 补丁树 | `package/qca-nss` | tree `16f46086b41275bcc004e534f966f9cd509cd146` |
+| qca-nss-dp | `d8f802f0`，APK `6.18.37.2026.01.19~d8f802f0-r1` | tree `1d9f3483fbaecd08630d4982d6194c4bb8b30659` |
+| qca-nss-drv | `6aa14c7`，APK `6.18.37.13.1.2026.01.12~6aa14c7-r18` | tree `ea51b83dab5384601fe66a1614d0cf0adbb99de4` |
+| qca-nss-ecm | `8c7355b`，APK `6.18.37.13.1.2026.04.03~8c7355b-r8` | tree `052044910e24884c1060e87fd003c0cac716cb28` |
+| qca-ssdk | `d9a19649`，APK `6.18.37.2025.11.14~d9a19649-r1` | tree `0ce02e13bdce01e62c1caf5e15d0e1f2ded0d1c1` |
+| Qualcommax 6.18 内核补丁 | `target/linux/qualcommax/patches-6.18` | tree `d211c3263007c73642721596c4004424b32016a8` |
+| RE-SS-01 DTS/DTB | `target/linux/qualcommax/dts/ipq6000-re-ss-01.dts`；FIT 描述 `OpenWrt jdcloud_re-ss-01` | DTS blob `a278a87acb783e546cc473878cb8fe5ca3d50a92` |
+| RE-SS-01 factory pipeline | `append-kernel | pad-to 6144k | append-rootfs | append-metadata` | `ipq60xx.mk` blob `44a7716b4009d8be76c4c54fa399cf89bec4a838` |
 
-表中单项提交用于追踪来源；复现固件必须使用完整源码 SHA，不能拼接单项提交。CPE-5G 在该底层基线上继续叠加本仓库当前的 `192.168.13.1`、USB/5G、Lucky、Tailscale/Headscale 和 wrtbak 配置。普通 QCA 构建不受这个 CPE 专属固定影响。
+Release 的 Source code tar.gz 只代表 `davidtall/DaeWRT-CI` 的 CI 脚本、配置和补丁层，不是 ImmortalWrt 内核源码。上表的内核、NSS、DTS 与 factory provenance 来自实际 sysupgrade 元数据以及完整 ImmortalWrt SHA。复现固件必须使用完整源码 SHA，不能拼接单项对象。普通 QCA 构建不受这个 CPE 专属固定影响。
+
+`CPE-5G` 一次建立两个 NOWIFI 受控构建：A 固定同一 SHA、使用从 7.06 CI tag 派生且仅缩减设备选择到 RE-SS-01 的 `IPQ60XX-706-NOWIFI` 配置、关闭 CPE/Lucky/Tailscale/Headscale/wrtbak feature overlay并使用 `192.168.10.1`；B 使用同一 SHA 和同一配置，只增加 `usb0`/`192.168.66.0/24`、`192.168.13.1` LAN 及上述 feature overlay。只有 A、B 均通过实机启动门禁后，才另行测试 `IPQ60XX-WIFI-YES`。
 
 更新上游后必须先作为候选构建，并在 RE-SS-01 上验证刷写、LAN/WAN、NSS、两次软重启、一次断电冷启动及 CPE 管理链路。出现无法启动、网口或 NSS 回归时，退回本表记录的上一个实机已验证完整 SHA，不回滚 hotwa 的功能提交。
 

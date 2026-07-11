@@ -22,13 +22,13 @@ grep -q "name: CPE-5G" "$WORKFLOW" || {
   exit 1
 }
 
-grep -q "default: '192.168.13.1'" "$WORKFLOW" || {
-  echo "CPE-5G workflow does not default to 192.168.13.1"
+grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_IP: 192.168.13.1' || {
+  echo "CPE-5G B control does not use 192.168.13.1"
   exit 1
 }
 
-grep -q 'WRT_CONFIG: IPQ60XX-WIFI-YES' "$WORKFLOW" || {
-  echo "CPE-5G workflow must build the IPQ60XX Wi-Fi profile"
+grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
+  echo "CPE-5G A/B controls must build the IPQ60XX no-WiFi profile"
   exit 1
 }
 
@@ -78,7 +78,7 @@ done
   exit 1
 }
 
-grep -q 'CI_NAME: CPE-5G-6.18-MANUAL' "$WORKFLOW" || {
+grep -q 'CI_NAME: CPE-706-B-6.18-MANUAL' "$WORKFLOW" || {
   echo "CPE-5G workflow must be pinned to the QCA-6.18 build track"
   exit 1
 }
