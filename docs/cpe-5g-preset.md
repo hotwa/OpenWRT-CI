@@ -1,6 +1,6 @@
 # CPE-5G 固件预设
 
-`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。当前优先已验证基线为 2026-07-06 的 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`（Linux `6.18.37`，IPQ60XX-NOWIFI）。2026-06-25 的 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4`（Linux `6.18.35`）保留为历史已知可启动回退点。
+`CPE-5G` 是为连接 UDX710 CPE 的 `jdcloud,re-ss-01` 路由器准备的手动构建预设。当前生产基线是 B 功能对照：2026-07-06 的 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`（Linux `6.18.37`，`IPQ60XX-706-NOWIFI`，feature overlay 开启）。A 纯底层对照也已正常启动，保留为隔离基线；2026-06-25 的 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4`（Linux `6.18.35`）保留为历史回退点。
 
 该固定只覆盖 CPE-5G；普通 QCA 工作流仍按各自分支构建。`davidtall/immortalwrt:stable` 是候选上游，不是自动生产基线。DaeWRT-CI Source code tar.gz 只用于核对 CI 脚本/配置/补丁层，不作为内核源码 provenance。
 
@@ -13,6 +13,13 @@
 - A：`0bad892...` + 从 7.06 CI tag 保存的 `IPQ60XX-706-NOWIFI`，关闭 CPE 网络及 Lucky/Tailscale/Headscale/wrtbak feature overlay，LAN `192.168.10.1`。
 - B：同一 SHA、同一 NOWIFI 配置，只开启当前 CPE overlay，LAN `192.168.13.1`。
 - 只有 A 可启动而 B 不可启动，才归因并继续排查 overlay；A、B 都可启动后才新增 WiFi-YES 测试。
+
+## 2026-07-12 实机结果
+
+- Action run：[`29160402065`](https://github.com/hotwa/OpenWRT-CI/actions/runs/29160402065)，A/B 均构建成功且均能刷入、进入系统。
+- B artifact：`sha256:bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d`；B sysupgrade：`bb69688f6a4385e897d1cf6f9c355d22d279d94e9b9e3e87d9a15c434682485b`。
+- B 运行态：`JDCloud RE-SS-01`、Linux `6.18.37`、revision `r0-0bad892`；`5G` DHCP 接口已启用，`usb0=192.168.66.2/24`，到 `192.168.66.1` 直连，6677 返回 HTTP 200。
+- 双网卡 Windows 上旧的永久路由 `192.168.66.0/24 via 192.168.11.247` 会让请求从 WAN 进入并被拒绝；客户端应改经 `192.168.13.1` LAN 网关。该客户端路由问题不属于 B overlay 回归。
 
 `davidtall/immortalwrt:stable` 只作为下一版候选上游。候选版本必须记录完整源码 SHA、Action run 和 artifact SHA256，并在 RE-SS-01 上完成刷写、LAN/WAN/NSS、两次软重启、一次冷启动和 `192.168.66.1:6677` 管理链路验证，才能更新这里及 README 的“当前已验证基线”。验证失败时只回退源码 SHA，不撤销 hotwa 已有功能提交。
 
