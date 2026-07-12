@@ -139,3 +139,24 @@ Steps:
   It contains `CONFIG_PACKAGE_mwan3=y`,
   `CONFIG_PACKAGE_luci-app-mwan3=y`, and the existing Lucky package. It must
   not be mistaken for or flashed as a firmware image.
+- PR [#13](https://github.com/hotwa/OpenWRT-CI/pull/13) was normally merged
+  to main as `13c984d70139436205177f0a8640a29d87787e5c`; the implementation
+  branch was deleted after ancestry verification.
+- Final-main TEST=false run
+  [29204310241](https://github.com/hotwa/OpenWRT-CI/actions/runs/29204310241)
+  completed successfully. Artifact `8264724224` is `416,207,857` bytes with
+  ZIP digest `f5b40733961930b145e3c4278f46013018b27e29c0be70cbb22ad856397455b9`.
+- RE-SS-01 factory: `212,885,673` bytes,
+  SHA256 `94a062d54846f5b4bf32114da99377421f8538bd268a42d228136a1a1e899aba`.
+  RE-SS-01 sysupgrade: `208,107,792` bytes,
+  SHA256 `7b8c9b2f66ea67898535129d316837a9293cd35665e7b87fb517b098d8fceb78`.
+  Every `SHA256SUMS` entry passed `sha256sum -c`.
+- Metadata confirms source `0bad892975fe49fd180f99b414a7f168bb694dd7`,
+  profile `IPQ60XX-706-NOWIFI`, required device `jdcloud_re-ss-01`, and
+  `feature_overlay=true`. The manifest contains mwan3 2.12.1, LuCI mwan3,
+  firewall4, iptables-nft/ip6tables-nft, xtables-nft, kmod-nft-compat, Nikki
+  and Lucky.
+- The validated files are stored outside the repository at
+  `C:\Users\pylyz\Downloads\OpenWRT-CI-CPE5G-29204310241`; no automatic
+  flash was performed. Live package/route/Nikki/failover validation remains
+  gated on an independent local rescue path and timed rollback watchdog.
