@@ -10,6 +10,8 @@ AGENT_GUIDE="$ROOT_DIR/AGENTS.md"
 CPE_DOC="$ROOT_DIR/docs/cpe-5g-preset.md"
 VERIFIED_SOURCE_SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
 ROLLBACK_SOURCE_SHA='42a1f64b5dbd2a99d05daca94ae5a87eebff59b4'
+VERIFIED_RUN_ID='29160402065'
+VERIFIED_B_ARTIFACT_SHA='bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d'
 
 grep -q "WRT_COMMIT: $VERIFIED_SOURCE_SHA" "$CPE_WORKFLOW" || {
   echo "CPE-5G does not pin the verified firmware source commit"
@@ -49,6 +51,17 @@ fi
 for document in "$README" "$AGENT_GUIDE" "$CPE_DOC"; do
   grep -q "$VERIFIED_SOURCE_SHA" "$document" || {
     echo "$(basename "$document") does not record the full verified source SHA"
+    exit 1
+  }
+done
+
+for document in "$README" "$CPE_DOC"; do
+  grep -q "$VERIFIED_RUN_ID" "$document" || {
+    echo "$(basename "$document") does not record the A/B real-device validation run"
+    exit 1
+  }
+  grep -q "$VERIFIED_B_ARTIFACT_SHA" "$document" || {
+    echo "$(basename "$document") does not record the verified B artifact digest"
     exit 1
   }
 done

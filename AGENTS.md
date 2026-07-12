@@ -15,11 +15,11 @@
 
 ## CPE-5G verified firmware baseline
 
-- The current preferred real-device boot baseline is 2026-07-06 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7` with Linux `6.18.37` and the recorded NSS/SSDK/Qualcommax/DTS/factory provenance in `README.md`.
+- The current production CPE feature baseline is controlled build B at 2026-07-06 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`, Linux `6.18.37`, `IPQ60XX-706-NOWIFI`. On 2026-07-12 both A and B booted successfully on RE-SS-01; B also exposed `usb0=192.168.66.2/24` and reached `192.168.66.1:6677` from OpenWrt.
 - Retain 2026-06-25 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35` as the historical known-bootable fallback. 回退源码时不得撤销无关 hotwa 功能提交。
 - Keep `.github/workflows/CPE-5G.yml` pinned to the full 40-character preferred SHA and preserve exact fetch, detached checkout and SHA mismatch failure.
 - `davidtall/immortalwrt:stable` is a candidate upstream only, never an automatic production baseline.
-- Promote the CPE overlay only after the controlled NOWIFI A and B images both complete 实机验证; test WiFi only afterward.
+- Controlled NOWIFI A remains the no-feature-overlay isolation baseline; B is promoted for CPE use. WiFi-YES still requires a separate real-device gate.
 - Treat `davidtall/immortalwrt:stable` as a candidate upstream, not an automatically trusted production baseline. A moving branch name is never sufficient evidence of the source used for a firmware artifact.
 - Any change to Linux kernel, qca-nss, qca-nss-dp, qca-nss-drv, qca-nss-ecm, qca-ssdk, Qualcommax kernel patches, RE-SS-01 DTB, factory pipeline, or the firmware source commit must update the baseline table in `README.md`.
 - Before promoting a candidate, record the exact source SHA and Action/artifact SHA256, then complete RE-SS-01 实机验证: successful flash, LAN/WAN and NSS checks, two soft reboots, one cold boot, and the CPE `192.168.66.1:6677` management path.
