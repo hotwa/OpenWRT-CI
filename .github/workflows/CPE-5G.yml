@@ -72,7 +72,9 @@ jobs:
       WRT_BRANCH: main
       WRT_COMMIT: 0bad892975fe49fd180f99b414a7f168bb694dd7
       WRT_SOURCE: VIKINGYFY/immortalwrt
-      WRT_PACKAGE: ''
+      WRT_PACKAGE: |
+        CONFIG_PACKAGE_mwan3=y
+        CONFIG_PACKAGE_luci-app-mwan3=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
       WRT_FEATURE_OVERLAY: true

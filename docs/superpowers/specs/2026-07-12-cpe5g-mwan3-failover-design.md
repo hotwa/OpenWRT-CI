@@ -25,9 +25,12 @@ certificates, wrtbak restore gates, LAN addressing, or firewall zone ownership.
 - Both interfaces stay in the existing wan firewall zone.
 - Peer DNS from 5G is disabled so normal DNS does not consume SIM traffic while
   WAN is healthy. Existing router DNS policy remains authoritative.
-- Directly connected routes for 192.168.66.0/24 and 192.168.13.0/24 are not
-  policy-routed. CPE-originated Lucky traffic therefore returns through usb0
-  even while the default Internet route uses Ethernet WAN.
+- Directly connected routes for 192.168.66.0/24 and 192.168.13.0/24 must bypass
+  the default failover policy. Repository fixtures assert the managed rules and
+  live tests inspect ip rules, nft marks, conntrack, and selected egress.
+  CPE-originated Lucky traffic is accepted only after its response is observed
+  returning through usb0 in both WAN-online and 5G-selected states; connected
+  routes alone are not sufficient evidence.
 
 ## Health Checks and Hysteresis
 
@@ -35,11 +38,16 @@ Both interfaces track multiple independent IPv4 targets suitable for mainland
 China and the public Internet: 223.5.5.5, 119.29.29.29, and 1.1.1.1. At least
 two targets must succeed.
 
-Initial parameters are count 1, timeout 2 seconds, normal interval 5 seconds,
-down threshold 3, and up threshold 5. Failure and recovery intervals remain
-short enough for a practical failover while the unequal thresholds prevent
-rapid flapping. Runtime evidence may justify later tuning without changing the
-architecture.
+Initial WAN parameters are count 1, timeout 2 seconds, normal interval 5
+seconds, down threshold 3, and up threshold 5. The 5G backup uses a materially
+slower 60-second normal interval so it does not continuously consume meaningful
+SIM data while idle; failure/recovery intervals may temporarily become faster
+during a transition. Runtime evidence may justify later tuning.
+
+The requirement is not literal zero SIM traffic: WAN-normal user business
+traffic must not use 5G, while bounded health probes are permitted. Runtime
+acceptance records the SIM counter delta over a representative window and the
+estimated 24-hour probe budget.
 
 ## Policy
 
@@ -76,8 +84,19 @@ mwan3 only after all required UCI sections exist.
 
 The generator must be safe on repeated execution, must not duplicate list
 values, and must fail before committing if wan or 5G cannot be identified. It
-must not overwrite unrelated user-created mwan3 sections; project-owned
-sections use a cpe5g_ prefix.
+must not overwrite unrelated user-created mwan3 sections. The two mwan3
+interface sections must be named `wan` and `5G` because mwan3 resolves section
+names as netifd interface names; reconcile owns their required tracking values
+while retaining unrelated options. Generated members, policies and rules use a
+`cpe5g_` prefix, and policy/rule identifiers remain within mwan3's 15-character
+hard limit. The stock `https` and `default_rule_v4` example rules are removed
+only when every field still matches the package signature: they precede
+appended rules and select the stock `balanced` policy, which would silently
+defeat 5G failover. Modified/user-named rules and IPv6 defaults are preserved.
+Because wrtbak may restore an older network or
+mwan3 file before Headscale enrollment, the same versioned managed-config
+reconcile runs after the restore gate reaches a terminal state. Tests must prove
+that reconcile restores only cpe5g-owned sections and preserves user sections.
 
 ## Existing Device Rollout
 
@@ -107,7 +126,16 @@ Repository tests must prove:
 5. Three tracking targets, reliability 2, down 3, and up 5 are generated.
 6. The policy orders WAN before 5G and the default rule selects that policy.
 7. Re-running the bootstrap is idempotent and preserves unrelated sections.
-8. Shell syntax, all tests/test_*.sh, workflow YAML parsing, and git diff
+8. Restore-terminal reconciliation recreates missing managed sections without
+overwriting user-owned mwan3 sections. The bootstrap enables and starts only
+this gated worker, and a process lock suppresses duplicate init/recovery
+execution. A preserved user IPv4 catch-all is treated as an intentional
+override and logged because it can shadow the managed default. LAN
+bypass CIDR is derived from the runtime UCI address and mask. Changed network
+options trigger a controlled netifd reload; reload failure restores the prior
+network values and leaves an explicit failure for recovery.
+9. Direct LAN/CPE networks have explicit bypass coverage and runtime evidence.
+10. Shell syntax, all tests/test_*.sh, workflow YAML parsing, and git diff
    checks pass.
 
 Live verification must record normal WAN egress, simulated WAN failure,
