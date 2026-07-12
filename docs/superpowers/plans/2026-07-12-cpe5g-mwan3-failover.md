@@ -121,3 +121,21 @@ Steps:
 2. Record final commits, PR, workflow runs, artifact IDs, hashes, and rollback.
 3. Resume final-goal-reviewed.md workstream B without repeating healthy
    certificate deployment.
+
+## Implementation evidence
+
+- Local full gate (2026-07-12): every `tests/test_*.sh` passed, changed shell
+  scripts passed `bash -n`, every workflow YAML parsed, and `git diff --check`
+  passed.
+- Independent review found and drove fixes for mwan3 interface naming, the
+  15-character rule limit, stock rule shadowing, dynamic LAN CIDR, netifd
+  reload rollback, first-boot service start, wrtbak ordering and concurrency.
+- Branch TEST=true run:
+  [29203906558](https://github.com/hotwa/OpenWRT-CI/actions/runs/29203906558),
+  commit `afee29af2b44c9fc2ee7ece63ea8641a2695e408`, B succeeded and A was
+  skipped as designed.
+- TEST=true artifact `8263247401` is intentionally configuration-only:
+  compressed size `49,870` bytes; extracted `.config` size `324,280` bytes.
+  It contains `CONFIG_PACKAGE_mwan3=y`,
+  `CONFIG_PACKAGE_luci-app-mwan3=y`, and the existing Lucky package. It must
+  not be mistaken for or flashed as a firmware image.
