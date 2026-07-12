@@ -7,6 +7,16 @@ CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIG="$ROOT_DIR/Config/IPQ60XX-706-NOWIFI.txt"
 SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
 
+grep -A5 '^      BUILD_BASELINE_A:' "$WORKFLOW" | grep -Eq "default: ('false'|false)" || {
+  echo 'CPE workflow must default BUILD_BASELINE_A to false'
+  exit 1
+}
+
+grep -A3 '^  baseline_a:' "$WORKFLOW" | grep -q 'if:.*inputs.BUILD_BASELINE_A' || {
+  echo 'A must run only when BUILD_BASELINE_A is explicitly enabled'
+  exit 1
+}
+
 [ "$(grep -c 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW")" -eq 2 ] || {
   echo 'CPE A/B controls must both use the 7.06 IPQ60XX-NOWIFI config'
   exit 1

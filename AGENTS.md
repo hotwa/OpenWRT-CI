@@ -20,6 +20,9 @@
 - Keep `.github/workflows/CPE-5G.yml` pinned to the full 40-character preferred SHA and preserve exact fetch, detached checkout and SHA mismatch failure.
 - `davidtall/immortalwrt:stable` is a candidate upstream only, never an automatic production baseline.
 - Controlled NOWIFI A remains the no-feature-overlay isolation baseline; B is promoted for CPE use. WiFi-YES still requires a separate real-device gate.
+- Normal CPE-5G dispatches must leave `BUILD_BASELINE_A=false` and build only B. Enable A only to isolate source/kernel/NSS boot failures from the CPE/Lucky/Tailscale/Headscale/wrtbak overlay; do not promote A as the daily firmware.
+- For public services, prefer CPE IPv6 port relay to a Lucky listener on OpenWrt `192.168.66.2`, then reverse proxy only approved `192.168.13.x` services. Do not expose the whole LAN.
+- Treat DHCPv6-PD/RA/NDP proxy as experimental until the cellular carrier is proven to delegate a prefix. A single CPE `/64` address is not proof of PD support.
 - Treat `davidtall/immortalwrt:stable` as a candidate upstream, not an automatically trusted production baseline. A moving branch name is never sufficient evidence of the source used for a firmware artifact.
 - Any change to Linux kernel, qca-nss, qca-nss-dp, qca-nss-drv, qca-nss-ecm, qca-ssdk, Qualcommax kernel patches, RE-SS-01 DTB, factory pipeline, or the firmware source commit must update the baseline table in `README.md`.
 - Before promoting a candidate, record the exact source SHA and Action/artifact SHA256, then complete RE-SS-01 实机验证: successful flash, LAN/WAN and NSS checks, two soft reboots, one cold boot, and the CPE `192.168.66.1:6677` management path.
