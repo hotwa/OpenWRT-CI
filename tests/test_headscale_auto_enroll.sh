@@ -71,6 +71,16 @@ grep -q "option accept_routes '0'" "$CONFIG" || {
   exit 1
 }
 
+grep -q "option restore_gate_file '/root/wrtbak/firstboot/gate.json'" "$CONFIG" || {
+  echo "headscale auto-enroll does not declare the wrtbak recovery gate"
+  exit 1
+}
+
+grep -q "option restore_gate_attempts '90'" "$CONFIG" || {
+  echo "headscale auto-enroll does not bound the wrtbak gate wait"
+  exit 1
+}
+
 grep -q -- '--accept-dns=' "$SCRIPT" || {
   echo "script does not pass accept-dns explicitly"
   exit 1
@@ -83,6 +93,26 @@ grep -q -- '--ssh=' "$SCRIPT" || {
 
 grep -q 'apply_runtime_preferences' "$SCRIPT" || {
   echo "script does not re-apply runtime preferences to already-enrolled nodes"
+  exit 1
+}
+
+grep -q 'wait_for_wrtbak_gate' "$SCRIPT" || {
+  echo "script does not wait for the wrtbak firstboot decision"
+  exit 1
+}
+
+grep -q 'reload_recovered_state' "$SCRIPT" || {
+  echo "script does not reload a recovered Tailscale state"
+  exit 1
+}
+
+grep -q 'acquire_enroll_lock' "$SCRIPT" || {
+  echo "script does not serialize init and hotplug enrollment attempts"
+  exit 1
+}
+
+grep -q 'reboot_pending' "$SCRIPT" || {
+  echo "script does not keep enrollment closed while restore reboot is pending"
   exit 1
 }
 
@@ -235,6 +265,11 @@ grep -q 'firmware artifact contains the enrollment key' "$DOC" || {
 
 grep -q 'Dropbear' "$AGENTS" || {
   echo "AGENTS.md does not document Dropbear as rescue path"
+  exit 1
+}
+
+grep -q 'wrtbak recovery gate' "$DOC" || {
+  echo "docs do not explain the wrtbak recovery gate"
   exit 1
 }
 

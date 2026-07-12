@@ -18,6 +18,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
 - `/etc/tailscale/headscale.authkey` is the optional one-line auth key file.
 - `/etc/tailscale/auto-enroll.done` marks a successful enrollment.
+- `/root/wrtbak/firstboot/gate.json` is the wrtbak recovery gate used to stop a factory image from registering a temporary node before a saved Tailscale state has been restored.
 - `/etc/uci-defaults/90-tailscale-dropbear-access` keeps Dropbear reachable through `tailscale0` and creates a fw4 `tailscale` zone with router input allowed and forwarding rejected.
 - `/etc/dropbear/authorized_keys` can be injected into private firmware builds through GitHub Actions.
 
@@ -74,6 +75,12 @@ For Dropbear-backed ordinary SSH over the Tailscale IP, store one or more public
 The Tailscale firewall overlay intentionally uses `firewall.tailscale.device='tailscale0'` instead of creating `network.tailscale`. Tailscaled owns the TUN address and routes; letting netifd manage `tailscale0` can remove the assigned `100.64.0.0/10` address and make `ssh root@100.64.x.x` time out.
 
 When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll script applies `tailscale set --ssh=true` even if the node is already enrolled. This keeps recovered or LuCI-enrolled routers from staying in `RunSSH=false`.
+
+## wrtbak recovery gate
+
+When `wrtbak.main.firstboot_auto_enabled=1`, Headscale registration waits for the wrtbak recovery gate. `pending` and `reboot_pending` keep registration closed. `already_done` and `restored` cause tailscaled to reload the recovered state before any auth key is read. `no_backup`, `failed_final`, and `disabled` allow a new registration. The wait is bounded; after the configured timeout, registration proceeds to preserve the Tailnet rescue path.
+
+The init service and WAN hotplug hook can fire close together. A PID-aware runtime lock serializes these attempts, reclaims stale locks after service restart, and prevents two concurrent `tailscale up` calls.
 
 Prefer a tagged, router-scoped key with the narrow tags needed by the router:
 

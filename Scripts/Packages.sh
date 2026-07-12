@@ -96,7 +96,7 @@ if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
 	UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
 	# Fetch from the stable branch, then detach at the reviewed commit for reproducible builds.
 	WRTBAK_PACKAGE_BRANCH=main
-	WRTBAK_PACKAGE_COMMIT=0f6d8bdd75265e1f86836f5dc3a7ee469c6d03a8
+	WRTBAK_PACKAGE_COMMIT=338492873bbc07af5cbfa7aa19d84e3f39215b93
 	UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"
 fi
 # 临时移除 podman，跳过 luci-app-podman 拉取。

@@ -2,8 +2,10 @@
 
 CONFIG="headscale_auto_enroll"
 SECTION="main"
-DONE_FILE="/etc/tailscale/auto-enroll.done"
+DONE_FILE="${HEADSCALE_AUTO_ENROLL_DONE_FILE:-/etc/tailscale/auto-enroll.done}"
 TAG="headscale-auto-enroll"
+LOCK_DIR="${HEADSCALE_AUTO_ENROLL_LOCK_DIR:-/var/run/headscale-auto-enroll.lock}"
+TAILSCALE_INIT="${HEADSCALE_AUTO_ENROLL_TAILSCALE_INIT:-/etc/init.d/tailscale}"
 
 log() {
 	logger -t "$TAG" "$*"
@@ -28,6 +30,103 @@ bool_arg() {
 
 is_enrolled() {
 	tailscale status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'
+}
+
+release_enroll_lock() {
+	local lock_pid
+	[ -d "$LOCK_DIR" ] || return 0
+	lock_pid=$(sed -n '1p' "$LOCK_DIR/pid" 2>/dev/null || true)
+	[ "$lock_pid" = "$$" ] || return 0
+	rm -rf "$LOCK_DIR"
+}
+
+acquire_enroll_lock() {
+	local lock_pid
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		printf '%s\n' "$$" >"$LOCK_DIR/pid"
+		trap release_enroll_lock EXIT HUP INT TERM
+		return 0
+	fi
+	lock_pid=$(sed -n '1p' "$LOCK_DIR/pid" 2>/dev/null || true)
+	case "$lock_pid" in
+		''|*[!0-9]*) ;;
+		*)
+			if kill -0 "$lock_pid" 2>/dev/null; then
+				log "another enrollment attempt is active; skip duplicate trigger"
+				return 1
+			fi
+			;;
+	esac
+	rm -rf "$LOCK_DIR"
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		printf '%s\n' "$$" >"$LOCK_DIR/pid"
+		trap release_enroll_lock EXIT HUP INT TERM
+		return 0
+	fi
+	log "unable to acquire enrollment lock"
+	return 1
+}
+
+wrtbak_restore_enabled() {
+	local value
+	value="$(uci -q get wrtbak.main.firstboot_auto_enabled 2>/dev/null || true)"
+	case "$value" in
+		1|true|yes|on|enabled) return 0 ;;
+	esac
+	return 1
+}
+
+wrtbak_gate_state() {
+	local gate_file="$1" state
+	[ -f "$gate_file" ] || {
+		printf 'missing'
+		return 0
+	}
+	if command -v jsonfilter >/dev/null 2>&1; then
+		state="$(jsonfilter -i "$gate_file" -e '@.state' 2>/dev/null || true)"
+	else
+		state="$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$gate_file" | sed -n '1p')"
+	fi
+	[ -n "$state" ] || state=invalid
+	printf '%s' "$state"
+}
+
+wait_for_wrtbak_gate() {
+	local gate_file="$1" max_attempts="$2" retry_interval="$3"
+	local attempt=0 state
+	if ! wrtbak_restore_enabled; then
+		printf 'disabled'
+		return 0
+	fi
+	while [ "$attempt" -lt "$max_attempts" ]; do
+		state="$(wrtbak_gate_state "$gate_file")"
+		case "$state" in
+			already_done|restored|no_backup|failed_final|disabled)
+				log "wrtbak recovery gate opened with state=$state"
+				printf '%s' "$state"
+				return 0
+				;;
+			reboot_pending)
+				log "wrtbak restore applied; waiting for the requested reboot"
+				;;
+		esac
+		attempt=$((attempt + 1))
+		[ "$attempt" -lt "$max_attempts" ] || break
+		sleep "$retry_interval"
+	done
+	log "wrtbak recovery gate timed out after $max_attempts attempt(s); preserving remote rescue enrollment"
+	printf 'timeout'
+}
+
+reload_recovered_state() {
+	local attempt=0
+	"$TAILSCALE_INIT" restart >/dev/null 2>&1 || return 1
+	while [ "$attempt" -lt 30 ]; do
+		is_enrolled && return 0
+		attempt=$((attempt + 1))
+		sleep 2
+	done
+	return 1
 }
 
 wait_for_wan() {
@@ -169,6 +268,7 @@ main() {
 	local enabled login_server auth_key_file provision_url provision_token_file
 	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
 	local max_attempts retry_interval delete_auth_key_file auth_key hostname
+	local restore_gate_file restore_gate_attempts restore_gate_interval restore_gate_state
 	local attempt=0
 
 	enabled="$(cfg enabled 0)"
@@ -178,6 +278,7 @@ main() {
 	esac
 
 	command -v tailscale >/dev/null 2>&1 || { log "tailscale command not found"; exit 0; }
+	acquire_enroll_lock || exit 0
 
 	login_server="$(cfg login_server https://headscale.jmsu.top)"
 	auth_key_file="$(cfg auth_key_file /etc/tailscale/headscale.authkey)"
@@ -191,6 +292,9 @@ main() {
 	advertise_routes="$(cfg advertise_routes '')"
 	max_attempts="$(cfg max_attempts 60)"
 	retry_interval="$(cfg retry_interval 10)"
+	restore_gate_file="$(cfg restore_gate_file /root/wrtbak/firstboot/gate.json)"
+	restore_gate_attempts="$(cfg restore_gate_attempts 90)"
+	restore_gate_interval="$(cfg restore_gate_interval 10)"
 	delete_auth_key_file="$(cfg delete_auth_key_file 1)"
 
 	if is_enrolled; then
@@ -203,8 +307,24 @@ main() {
 		exit 0
 	fi
 
-	/etc/init.d/tailscale enable >/dev/null 2>&1 || true
-	/etc/init.d/tailscale start >/dev/null 2>&1 || true
+	restore_gate_state="$(wait_for_wrtbak_gate "$restore_gate_file" "$restore_gate_attempts" "$restore_gate_interval")"
+	case "$restore_gate_state" in
+		already_done|restored)
+			if reload_recovered_state; then
+				if apply_runtime_preferences "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
+					log "recovered tailscale state; runtime preferences applied"
+				else
+					log "recovered tailscale state; failed to apply runtime preferences"
+				fi
+				touch "$DONE_FILE" 2>/dev/null || true
+				exit 0
+			fi
+			log "wrtbak gate opened without a usable recovered tailscale state"
+			;;
+	esac
+
+	"$TAILSCALE_INIT" enable >/dev/null 2>&1 || true
+	"$TAILSCALE_INIT" start >/dev/null 2>&1 || true
 
 	wait_for_wan "$max_attempts" "$retry_interval" || {
 		log "WAN did not become ready within retry window"
