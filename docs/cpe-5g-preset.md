@@ -14,6 +14,29 @@
 - B：同一 SHA、同一 NOWIFI 配置，只开启当前 CPE overlay，LAN `192.168.13.1`。
 - 只有 A 可启动而 B 不可启动，才归因并继续排查 overlay；A、B 都可启动后才新增 WiFi-YES 测试。
 
+日常 Action 触发保持 `BUILD_BASELINE_A=false`，只构建 B。仅当需要隔离底层 kernel/NSS/设备树问题与 feature overlay 问题时设为 `true`，让 A 与 B 同时生成；完成诊断后恢复默认关闭。
+
+## Lucky 与公网 IPv6 服务
+
+推荐链路：
+
+```text
+CPE 公网动态 IPv6:外部端口
+  -> CPE IPv6-to-IPv4 relay
+  -> OpenWrt usb0 192.168.66.2:Lucky入口端口
+  -> Lucky 按 Host/端口反代
+  -> 192.168.13.x:目标服务端口
+```
+
+Lucky 监听 `192.168.66.2` 或 `0.0.0.0` 即可接收 CPE relay；不是让每个 LAN 服务主动转发到 `192.168.66.2`。CPE 和 OpenWrt 防火墙只开放列入清单的入口端口，Lucky 只配置明确目标，避免公开整个 LAN。
+
+## RA、PD 与 NDP 实验边界
+
+- 最理想的是运营商向 CPE提供 DHCPv6-PD，CPE再把独立前缀委派给 OpenWrt；目前没有观察到 PD 证据。
+- CPE 自己拥有公网 `/64` 地址，不等于可以把这个 `/64` 直接下发给 OpenWrt LAN。
+- 无 PD 时需要 RA relay + NDP proxy/relay，并维护邻居发现、回程路径、前缀变化和 IPv6 firewall；蜂窝重拨换前缀后必须自动重建状态。
+- 该方案开发难度中高、强依赖 CPE 内核能力和运营商网络行为。生产默认继续使用已验证的 IPv6 端口转发；实验必须放在独立插件/分支，并保留 A/B 与 U-Boot 回滚路径。
+
 ## 2026-07-12 实机结果
 
 - Action run：[`29160402065`](https://github.com/hotwa/OpenWRT-CI/actions/runs/29160402065)，A/B 均构建成功且均能刷入、进入系统。
@@ -43,6 +66,6 @@
 
 ## 触发构建
 
-GitHub Actions 选择 **CPE-5G**。先以 `TEST=true` 验证 A/B 配置，再以 `TEST=false` 生成两个 artifact；每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
+GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
 
 固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问、以及 `tailscale status` 已加入 Headscale。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。

@@ -6,6 +6,11 @@ name: CPE-5G
 on:
   workflow_dispatch:
     inputs:
+      BUILD_BASELINE_A:
+        description: '故障隔离时额外构建无 CPE/Lucky/Tailscale/wrtbak overlay 的 A 基线；日常保持关闭。'
+        default: false
+        required: false
+        type: boolean
       TEST:
         description: '仅输出配置文件，不编译固件。'
         default: 'false'
@@ -26,6 +31,7 @@ permissions: write-all
 
 jobs:
   baseline_a:
+    if: ${{ inputs.BUILD_BASELINE_A }}
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
