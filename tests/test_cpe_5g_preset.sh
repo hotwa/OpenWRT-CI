@@ -32,6 +32,25 @@ grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
   exit 1
 }
 
+baseline_block="$(sed -n '/^  baseline_a:/,/^  cpe_overlay_b:/p' "$WORKFLOW")"
+cpe_block="$(sed -n '/^  cpe_overlay_b:/,$p' "$WORKFLOW")"
+printf '%s\n' "$cpe_block" | grep -q 'CONFIG_PACKAGE_mwan3=y' || {
+  echo "CPE-5G B does not install mwan3"
+  exit 1
+}
+printf '%s\n' "$cpe_block" | grep -q 'CONFIG_PACKAGE_luci-app-mwan3=y' || {
+  echo "CPE-5G B does not install luci-app-mwan3"
+  exit 1
+}
+if printf '%s\n' "$baseline_block" | grep -q 'CONFIG_PACKAGE_.*mwan3=y'; then
+  echo "CPE-5G A must not install mwan3"
+  exit 1
+fi
+if grep -q '^CONFIG_PACKAGE_.*mwan3=y$' "$GENERAL"; then
+  echo "shared firmware packages must not enable mwan3"
+  exit 1
+fi
+
 grep -q 'WRT_PW:' "$WORKFLOW" || {
   echo "CPE-5G workflow must pass the required WRT_PW reusable input"
   exit 1

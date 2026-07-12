@@ -22,6 +22,8 @@
 - `davidtall/immortalwrt:stable` is a candidate upstream only, never an automatic production baseline.
 - Controlled NOWIFI A remains the no-feature-overlay isolation baseline; B is promoted for CPE use. WiFi-YES still requires a separate real-device gate.
 - Normal CPE-5G dispatches must leave `BUILD_BASELINE_A=false` and build only B. Enable A only to isolate source/kernel/NSS boot failures from the CPE/Lucky/Tailscale/Headscale/wrtbak overlay; do not promote A as the daily firmware.
+- mwan3 is a CPE-5G B-only package and overlay. Keep Ethernet `wan` primary and `5G`/usb0 backup, preserve the explicit CPE/LAN bypass rules, and run the post-wrtbak managed reconcile. Do not enable mwan3 in `Config/GENERAL.txt`, CPE A, or ordinary QCA workflows.
+- Never perform a real WAN-loss test remotely without an independent local/serial/UBoot rescue path and a timed rollback. Existing sessions do not migrate across mwan3 failover; validate new connections plus Lucky usb0 return symmetry, Nikki marks, Tailnet, and SIM probe counters.
 - For public services, prefer CPE IPv6 port relay to a Lucky listener on OpenWrt `192.168.66.2`, then reverse proxy only approved `192.168.13.x` services. Do not expose the whole LAN.
 - Treat DHCPv6-PD/RA/NDP proxy as experimental until the cellular carrier is proven to delegate a prefix. A single CPE `/64` address is not proof of PD support.
 - Treat `davidtall/immortalwrt:stable` as a candidate upstream, not an automatically trusted production baseline. A moving branch name is never sufficient evidence of the source used for a firmware artifact.
