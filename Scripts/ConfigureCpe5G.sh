@@ -38,6 +38,9 @@ TAG='cpe5g-mwan3-reconcile'
 MWAN3_INIT="${CPE5G_MWAN3_INIT:-/etc/init.d/mwan3}"
 UBUS="${CPE5G_UBUS:-ubus}"
 LOCK_DIR="${CPE5G_RECONCILE_LOCK_DIR:-/var/run/cpe5g-mwan3-reconcile.lock}"
+IPTABLES_SAVE="${CPE5G_IPTABLES_SAVE:-/usr/sbin/iptables-save}"
+IP6TABLES_SAVE="${CPE5G_IP6TABLES_SAVE:-/usr/sbin/ip6tables-save}"
+NFT="${CPE5G_NFT:-/usr/sbin/nft}"
 
 log() {
 	logger -t "$TAG" "$*" 2>/dev/null || true
@@ -126,6 +129,33 @@ wait_for_network_object() {
 	return 1
 }
 
+cleanup_incompatible_mangle_table() {
+	local family="$1" saver="$2" table chains chain
+	[ -x "$saver" ] || return 0
+	"$saver" -t mangle >/dev/null 2>&1 && return 0
+	[ -x "$NFT" ] || {
+		log "$family mangle is incompatible and nft is unavailable"
+		return 1
+	}
+	table="$($NFT list table "$family" mangle 2>/dev/null || true)"
+	[ -n "$table" ] || {
+		log "$family mangle is incompatible but cannot be inspected"
+		return 1
+	}
+	chains="$(printf '%s\n' "$table" | sed -n 's/^[[:space:]]*chain \([^ {]*\).*/\1/p')"
+	for chain in $chains; do
+		case "$chain" in
+			PREROUTING|OUTPUT|mwan3_*) ;;
+			*)
+				log "refusing to delete $family mangle with foreign chain: $chain"
+				return 1
+				;;
+		esac
+	done
+	$NFT delete table "$family" mangle
+	log "removed incompatible mwan3-owned $family mangle table"
+}
+
 # Validate every required input before making or committing any change. This is
 # important when an old wrtbak archive is restored onto a newer CPE image.
 require_interface wan
@@ -134,15 +164,22 @@ acquire_lock || exit 0
 
 lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
 lan_mask="$(uci -q get network.lan.netmask 2>/dev/null || true)"
-[ -n "$lan_ip" ] && [ -n "$lan_mask" ] || {
-	log 'LAN ipaddr/netmask is unavailable; refusing a partial policy'
+[ -n "$lan_ip" ] || {
+	log 'LAN ipaddr is unavailable; refusing a partial policy'
 	exit 1
 }
 command -v ipcalc.sh >/dev/null 2>&1 || {
 	log 'ipcalc.sh is unavailable; cannot derive the LAN bypass prefix'
 	exit 1
 }
-lan_calc="$(ipcalc.sh "$lan_ip" "$lan_mask")"
+if [ -n "$lan_mask" ]; then
+	lan_calc="$(ipcalc.sh "$lan_ip" "$lan_mask")"
+else
+	case "$lan_ip" in
+		*/*) lan_calc="$(ipcalc.sh "$lan_ip")" ;;
+		*) log 'LAN netmask is unavailable and ipaddr is not CIDR'; exit 1 ;;
+	esac
+fi
 lan_network="$(printf '%s\n' "$lan_calc" | sed -n 's/^NETWORK=//p' | sed -n '1p')"
 lan_prefix="$(printf '%s\n' "$lan_calc" | sed -n 's/^PREFIX=//p' | sed -n '1p')"
 case "$lan_network" in
@@ -274,7 +311,16 @@ fi
 
 if [ -x "$MWAN3_INIT" ]; then
 	"$MWAN3_INIT" enable
-	"$MWAN3_INIT" restart
+	"$MWAN3_INIT" stop >/dev/null 2>&1 || true
+	cleanup_ok=1
+	cleanup_incompatible_mangle_table ip "$IPTABLES_SAVE" || cleanup_ok=0
+	cleanup_incompatible_mangle_table ip6 "$IP6TABLES_SAVE" || cleanup_ok=0
+	if [ "$cleanup_ok" -ne 1 ]; then
+		"$MWAN3_INIT" start >/dev/null 2>&1 || true
+		log 'mwan3 table cleanup was unsafe; service start attempted without deleting foreign state'
+		exit 1
+	fi
+	"$MWAN3_INIT" start
 else
 	log "mwan3 init script is unavailable; configuration was committed"
 fi

@@ -80,8 +80,8 @@ printf '{}\n'
 EOF
 cat >"$BIN_DIR/ipcalc.sh" <<'EOF'
 #!/bin/sh
-case "$1/$2" in
-  192.168.13.1/255.255.255.0)
+case "$1${2:+/$2}" in
+  192.168.13.1/24|192.168.13.1/255.255.255.0)
     printf 'NETWORK=192.168.13.0\nPREFIX=24\n'
     ;;
   10.23.5.1/255.255.254.0)
@@ -94,6 +94,40 @@ cat >"$BIN_DIR/logger" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
+cat >"$BIN_DIR/iptables-save" <<'EOF'
+#!/bin/sh
+[ ! -f "$TEST_ROOT/mangle-ip-incompatible" ] && [ ! -f "$TEST_ROOT/mangle-foreign" ]
+EOF
+cat >"$BIN_DIR/ip6tables-save" <<'EOF'
+#!/bin/sh
+[ ! -f "$TEST_ROOT/mangle-ip6-incompatible" ]
+EOF
+cat >"$BIN_DIR/nft" <<'EOF'
+#!/bin/sh
+case "$*" in
+  'list table ip mangle'|'list table ip6 mangle')
+    if [ -f "$TEST_ROOT/mangle-foreign" ]; then
+      printf '%s\n' 'table ip mangle {' ' chain third_party {' '}'
+    else
+      printf '%s\n' \
+        'table ip mangle {' \
+        ' chain PREROUTING {' \
+        ' chain OUTPUT {' \
+        ' chain mwan3_hook {' \
+        '}'
+    fi
+    ;;
+  'delete table ip mangle')
+    rm -f "$TEST_ROOT/mangle-ip-incompatible"
+    printf 'nft delete ip mangle\n' >>"$TEST_UCI_LOG"
+    ;;
+  'delete table ip6 mangle')
+    rm -f "$TEST_ROOT/mangle-ip6-incompatible"
+    printf 'nft delete ip6 mangle\n' >>"$TEST_UCI_LOG"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
 chmod +x "$BIN_DIR"/*
 
 export PATH="$BIN_DIR:$PATH"
@@ -103,6 +137,9 @@ export TEST_ROOT="$WORK_DIR"
 export CPE5G_MWAN3_INIT="$BIN_DIR/mwan3"
 export CPE5G_UBUS="$BIN_DIR/ubus"
 export CPE5G_RECONCILE_LOCK_DIR="$WORK_DIR/reconcile.lock"
+export CPE5G_IPTABLES_SAVE="$BIN_DIR/iptables-save"
+export CPE5G_IP6TABLES_SAVE="$BIN_DIR/ip6tables-save"
+export CPE5G_NFT="$BIN_DIR/nft"
 printf '%s\n' \
   'network.wan=interface' \
   'network.5G=interface' \
@@ -123,9 +160,15 @@ printf '%s\n' \
   'mwan3.user_rule=rule' \
   'mwan3.user_rule.dest_ip=203.0.113.0/24' >"$STATE"
 : >"$LOG"
+touch "$WORK_DIR/mangle-ip-incompatible" "$WORK_DIR/mangle-ip6-incompatible"
 
 "$RECONCILE"
 "$RECONCILE"
+
+[ ! -e "$WORK_DIR/mangle-ip-incompatible" ]
+[ ! -e "$WORK_DIR/mangle-ip6-incompatible" ]
+grep -q '^nft delete ip mangle$' "$LOG"
+grep -q '^nft delete ip6 mangle$' "$LOG"
 
 grep -q '^mwan3.user_rule=rule$' "$STATE"
 grep -q '^mwan3.user_rule.dest_ip=203.0.113.0/24$' "$STATE"
@@ -151,15 +194,27 @@ grep -q '^ubus call network reload$' "$LOG"
 grep -q '^ubus -S call network.interface.wan status$' "$LOG"
 grep -q '^ubus -S call network.interface.5G status$' "$LOG"
 grep -q '^mwan3 enable$' "$LOG"
-grep -q '^mwan3 restart$' "$LOG"
+grep -q '^mwan3 stop$' "$LOG"
+grep -q '^mwan3 start$' "$LOG"
 rule_order="$(sed -n 's/^mwan3\.\([^.=]*\)=rule$/\1/p' "$STATE")"
 [ "$(printf '%s\n' "$rule_order" | sed -n '1p')" = cpe5g_cpe ]
 [ "$(printf '%s\n' "$rule_order" | sed -n '2p')" = cpe5g_lan ]
 [ "$(printf '%s\n' "$rule_order" | tail -n 1)" = cpe5g_default ]
 
+# Current CPE images write the LAN address in CIDR form and omit a separate
+# netmask option. This must produce the same direct-network bypass as the
+# legacy ipaddr + netmask representation used above.
+sed -i 's|^network.lan.ipaddr=.*|network.lan.ipaddr=192.168.13.1/24|; /^network.lan.netmask=/d' "$STATE"
+if ! "$RECONCILE"; then
+  echo "reconcile rejected CIDR-style LAN ipaddr without netmask" >&2
+  exit 1
+fi
+grep -q '^mwan3.cpe5g_lan.dest_ip=192.168.13.0/24$' "$STATE"
+
 # A dynamic workflow LAN address must change the bypass prefix, including a
 # non-/24 mask, without hard-coded 192.168.13.0 assumptions.
-sed -i 's/^network.lan.ipaddr=.*/network.lan.ipaddr=10.23.5.1/; s/^network.lan.netmask=.*/network.lan.netmask=255.255.254.0/' "$STATE"
+sed -i 's/^network.lan.ipaddr=.*/network.lan.ipaddr=10.23.5.1/; /^network.lan.netmask=/d' "$STATE"
+printf '%s\n' 'network.lan.netmask=255.255.254.0' >>"$STATE"
 "$RECONCILE"
 grep -q '^mwan3.cpe5g_lan.dest_ip=10.23.4.0/23$' "$STATE"
 
@@ -246,6 +301,20 @@ if "$RECONCILE" >/dev/null 2>&1; then
 fi
 rm -f "$WORK_DIR/ubus-fail"
 grep -q '^network.wan.metric=99$' "$STATE"
+
+# An incompatible table with any non-mwan chain is not owned by this preset.
+# Reconcile must fail closed instead of deleting another package's state.
+touch "$WORK_DIR/mangle-foreign"
+: >"$LOG"
+if "$RECONCILE" >/dev/null 2>&1; then
+  echo "reconcile deleted or accepted a foreign mangle table" >&2
+  exit 1
+fi
+if grep -q '^nft delete ip mangle$' "$LOG"; then
+  echo "reconcile deleted a foreign mangle table" >&2
+  exit 1
+fi
+rm -f "$WORK_DIR/mangle-foreign"
 
 # Required interfaces are validated before the first commit.
 sed -i '/^network\.5G=/d' "$STATE"
