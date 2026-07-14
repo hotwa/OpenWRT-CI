@@ -51,6 +51,10 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_SPLIT_DEVICE_ARTIFACTS:
+        required: false
+        type: boolean
+        default: true
       WRT_EXPECTED_DEVICE:
         required: false
         type: string
@@ -187,6 +191,7 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_BUILD_ONLY: ${{inputs.WRT_BUILD_ONLY}}
+  WRT_SPLIT_DEVICE_ARTIFACTS: ${{inputs.WRT_SPLIT_DEVICE_ARTIFACTS}}
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
@@ -672,12 +677,55 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Split Public Firmware Artifacts By Device
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+          "$GITHUB_WORKSPACE/Scripts/SplitFirmwareArtifacts.sh" ./upload ./artifact-groups
+
       - name: Upload Firmware Artifact
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
           path: ./wrt/upload/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload jdcloud_re-ss-01 Firmware Artifact
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-ss-01
+          path: ./wrt/artifact-groups/jdcloud_re-ss-01/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload jdcloud_re-cs-02 Firmware Artifact
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-02
+          path: ./wrt/artifact-groups/jdcloud_re-cs-02/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload jdcloud_re-cs-07 Firmware Artifact
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-07
+          path: ./wrt/artifact-groups/jdcloud_re-cs-07/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload Other Device Firmware Artifact
+        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-other-devices
+          path: ./wrt/artifact-groups/other-devices/
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Release Firmware
