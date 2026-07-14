@@ -13,12 +13,10 @@ grep -qx 'CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y' "$C
 	echo "RE-CS-07 config must enable exactly one device"
 	exit 1
 }
-for package in gre luci-proto-gre ip-full luci-app-wrtbak; do
+for package in gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover; do
 	grep -qx "CONFIG_PACKAGE_${package}=y" "$CONFIG"
 done
 for package in hostapd-common iw iwinfo kmod-ath kmod-ath11k kmod-cfg80211 kmod-mac80211 wifi-scripts wireless-regdb wpad-openssl; do
 	grep -qx "# CONFIG_PACKAGE_${package} is not set" "$CONFIG"
 done
-! grep -Eq '^CONFIG_PACKAGE_vm103-failover=y$' "$CONFIG"
-
 echo "RE-CS-07 config guards passed"

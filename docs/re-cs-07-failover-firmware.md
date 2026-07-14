@@ -29,15 +29,23 @@ objects that will be restored. A mismatch stops recovery for manual review.
 When `WRT_EXPECTED_DEVICE` is set, WRT-CORE verifies the post-defconfig
 selection and then stages a strict four-file artifact. The config must select
 only `jdcloud_re-cs-07`; the manifest must include `gre`,
-`luci-proto-gre`, `ip-full`, and `luci-app-wrtbak`. Factory, initramfs,
-rootfs, and other-device outputs are rejected.
+`luci-proto-gre`, `ip-full`, `luci-app-wrtbak`, and `vm103-failover`.
+Factory, initramfs, rootfs, and other-device outputs are rejected.
 
 ## Phase two
 
-`vm103-failover` is intentionally not selected in phase one because the
-package does not exist yet. Phase two must begin with evidence collected from
-the live router scripts and a known-good backup: interface naming, GRE setup,
-route/rule ordering, health probes, failover/failback timing, persisted state,
-and rollback behavior. Only after that evidence is reviewed should the logic
-be packaged as `vm103-failover`; its package and runtime assertions can then
-be added to the defconfig and manifest guard.
+Phase two packages `vm103-failover` for the home RE-CS-07/VM103 topology.
+The program and init source were hash-verified against both the live router
+and the post-backup copy before being packaged byte for byte. Package tests
+lock those hashes, the established interface and route constants, the 3-check
+failover threshold, the 5-check failback threshold, and stop-time restoration
+of the primary route.
+
+This repository change has not run GitHub Actions, compiled firmware, or
+flashed a device. The package only preserves the existing monitor behavior;
+it does not generate UCI network or firewall configuration, perform a
+first-boot automatic restore, or remotely enable the service. The device's
+`network` and `firewall` configuration must be recovered through wrtbak or a
+normal keep-config sysupgrade path. If the package lifecycle enables the init
+script, service startup waits for `wan` and `gre4-gre_vm103`; stopping the
+service restores the primary route.

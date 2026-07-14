@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak)
+required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
 
 die() {
 	echo "RE-CS-07 artifact guard: $*" >&2

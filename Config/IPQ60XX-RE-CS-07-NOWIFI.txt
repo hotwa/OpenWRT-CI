@@ -22,8 +22,9 @@ CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
 # CONFIG_PACKAGE_wpad-openssl is not set
 # CONFIG_PACKAGE_ipq-wifi-jdcloud_ax1800-pro is not set
 
-# Phase-one failover prerequisites
+# Dedicated failover package and prerequisites
 CONFIG_PACKAGE_gre=y
 CONFIG_PACKAGE_luci-proto-gre=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_luci-app-wrtbak=y
+CONFIG_PACKAGE_vm103-failover=y
