@@ -47,6 +47,14 @@ on:
       WRT_TEST:
         required: false
         type: string
+      WRT_BUILD_ONLY:
+        required: false
+        type: boolean
+        default: false
+      WRT_EXPECTED_DEVICE:
+        required: false
+        type: string
+        default: ''
       WRT_LAN_TAILNET:
         required: false
         type: boolean
@@ -178,6 +186,8 @@ env:
   WRT_SOURCE: ${{inputs.WRT_SOURCE}}
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
+  WRT_BUILD_ONLY: ${{inputs.WRT_BUILD_ONLY}}
+  WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
@@ -539,6 +549,12 @@ jobs:
           fi
           make clean -j$(nproc)
 
+      - name: Guard Expected Device Config
+        if: inputs.WRT_EXPECTED_DEVICE != ''
+        run: |
+          "$GITHUB_WORKSPACE/Scripts/GuardReCs07Artifact.sh" defconfig \
+            "$GITHUB_WORKSPACE/wrt/.config" "$WRT_EXPECTED_DEVICE"
+
       - name: Download Packages
         if: env.WRT_TEST != 'true'
         run: |
@@ -615,16 +631,21 @@ jobs:
             echo "WRT_KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \;)" >> $GITHUB_ENV
             echo "WRT_LIST=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^luci-(app|theme)[^ ]*' {} \; | tr '\n' ' ')" >> $GITHUB_ENV
 
-            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+            if [[ -n "$WRT_EXPECTED_DEVICE" ]]; then
+              "$GITHUB_WORKSPACE/Scripts/GuardReCs07Artifact.sh" stage \
+                ./bin/targets ./upload "$WRT_EXPECTED_DEVICE"
+            else
+              find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
 
-            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
-              EXT=$(basename $FILE | cut -d '.' -f 2-)
-              NAME=$(basename $FILE | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
-              NEW_FILE="$NAME"-"$WRT_DATE"."$EXT"
-              mv -f $FILE ./upload/$NEW_FILE
-            done
+              for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*") ; do
+                EXT=$(basename $FILE | cut -d '.' -f 2-)
+                NAME=$(basename $FILE | cut -d '.' -f 1 | grep -io "\($WRT_TARGET\).*")
+                NEW_FILE="$NAME"-"$WRT_DATE"."$EXT"
+                mv -f $FILE ./upload/$NEW_FILE
+              done
 
-            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+              find ./bin/targets/ -type f -exec mv -f {} ./upload/ \;
+            fi
 
             if [ -n "${WRT_REQUIRED_DEVICE:-}" ]; then
               find ./upload -maxdepth 1 -type f -name "*${WRT_REQUIRED_DEVICE}*factory*.bin" | grep -q . || {
@@ -660,7 +681,7 @@ jobs:
           retention-days: 14
 
       - name: Release Firmware
-        if: env.WRT_PRIVATE_BUILD != 'true'
+        if: env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         env:
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
         run: |
