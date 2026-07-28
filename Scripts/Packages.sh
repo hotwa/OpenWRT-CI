@@ -118,7 +118,30 @@ UPDATE_PACKAGE "partexp" "sirpdboy/luci-app-partexp" "main"
 UPDATE_PACKAGE "qbittorrent" "sbwml/luci-app-qbittorrent" "master" "" "qt6base qt6tools rblibtorrent"
 UPDATE_PACKAGE "qmodem" "FUjr/QModem" "main"
 UPDATE_PACKAGE "quickfile" "sbwml/luci-app-quickfile" "main"
-UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "luci-app-timewol luci-app-wolplus"
+VIKING_PACKAGES_COMMIT=14e6823509029e90d8008bef14d2cc4ff663884f
+UPDATE_PACKAGE "viking" "VIKINGYFY/packages" "main" "" "luci-app-timewol luci-app-wolplus" "$VIKING_PACKAGES_COMMIT"
+
+# VIKINGYFY/homeproxy requires sing-box >= 1.14.0_alpha1, while the default
+# ImmortalWrt packages feed currently provides 1.12.x. Promote the reviewed
+# matching package from the already-pinned VIKINGYFY/packages checkout.
+SING_BOX_PACKAGE_DIR=./packages/sing-box
+SING_BOX_MAKEFILE="$SING_BOX_PACKAGE_DIR/Makefile"
+SING_BOX_EXPECTED_VERSION='PKG_VERSION:=1.14.0_beta2'
+SING_BOX_EXPECTED_HASH='PKG_HASH:=be7ba1c158bc1410b8f1ca2cb185db13adbad1f78302f521802f0d5c2b905ca9'
+test -f "$SING_BOX_MAKEFILE" || {
+	echo "ERROR: reviewed VIKINGYFY sing-box Makefile is missing."
+	exit 1
+}
+grep -Fq "$SING_BOX_EXPECTED_VERSION" "$SING_BOX_MAKEFILE" || {
+	echo "ERROR: reviewed VIKINGYFY sing-box version changed."
+	exit 1
+}
+grep -Fq "$SING_BOX_EXPECTED_HASH" "$SING_BOX_MAKEFILE" || {
+	echo "ERROR: reviewed VIKINGYFY sing-box source hash changed."
+	exit 1
+}
+rm -rf ../feeds/packages/net/sing-box ./sing-box
+mv "$SING_BOX_PACKAGE_DIR" ./sing-box
 UPDATE_PACKAGE "vnt" "lmq8267/luci-app-vnt" "main"
 
 # 与上游对齐 daed 包源。
