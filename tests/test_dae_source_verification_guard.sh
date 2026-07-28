@@ -16,18 +16,18 @@ grep -Fq 'PKG_MIRROR_HASH:=skip' "$DAE_MAKEFILE" || {
 	exit 1
 }
 
-grep -Fq 'OUTBOUND_VERSION:=d7f10a0d190322dfa98bef469c19caa5e72fdbd8' "$DAE_MAKEFILE" || {
-	echo "dae Makefile is not pinned to the fixed outbound revision with go-rc2 restored"
+grep -Fq 'PKG_SOURCE_VERSION:=01cfc23141bd3ba8b805818d52874965178687b1' "$DAE_MAKEFILE" || {
+	echo "dae Makefile is not pinned to the reviewed kdae source revision"
+	exit 1
+}
+
+grep -Fq 'OUTBOUND_VERSION:=286c1c1b72ea7a89c21c9770ab8a053031e87a83' "$DAE_MAKEFILE" || {
+	echo "dae Makefile is not pinned to the matching outbound packet-receiver revision"
 	exit 1
 }
 
 grep -Fq 'git clone -b $(GIT_BRANCH) $(PKG_SOURCE_URL) $(PKG_BUILD_DIR)' "$DAE_MAKEFILE" || {
 	echo "dae Build/Prepare does not clone the configured kdae branch"
-	exit 1
-}
-
-grep -Fq 'cut -f1' "$DAE_MAKEFILE" || {
-	echo "dae Makefile does not resolve the full source revision"
 	exit 1
 }
 

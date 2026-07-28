@@ -12,10 +12,12 @@ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 #PKG_SOURCE_URL:=https://github.com/daeuniverse/dae.git
 PKG_SOURCE_URL:=https://github.com/olicesx/dae.git
 GIT_BRANCH:=kdae
+# Keep the reviewed dae and outbound revisions paired. The dae revision below
+# requires the packet-receiver API introduced by this outbound revision.
+PKG_SOURCE_VERSION:=01cfc23141bd3ba8b805818d52874965178687b1
 OUTBOUND_BRANCH:=perf/complete-optimizations
-OUTBOUND_VERSION:=d7f10a0d190322dfa98bef469c19caa5e72fdbd8
+OUTBOUND_VERSION:=286c1c1b72ea7a89c21c9770ab8a053031e87a83
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=$(shell git ls-remote $(PKG_SOURCE_URL) $(GIT_BRANCH) | cut -f1)
 PKG_MIRROR_HASH:=skip
 
 PKG_LICENSE:=AGPL-3.0-only
@@ -151,4 +153,3 @@ endef
 
 $(eval $(call GoBinPackage,dae))
 $(eval $(call BuildPackage,dae))
-
