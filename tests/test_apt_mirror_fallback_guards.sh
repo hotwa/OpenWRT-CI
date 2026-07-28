@@ -31,9 +31,14 @@ grep -q 'retry_cmd 3 15 run_apt full-upgrade' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'retry_cmd 3 15 run_apt install dos2unix python3-netifaces libfuse-dev' "$WORKFLOW" || {
+grep -q 'retry_cmd 3 15 run_apt install dos2unix libfuse-dev' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not retry apt package installation"
   exit 1
 }
+
+if grep -q 'python3-netifaces' "$WORKFLOW"; then
+  echo "WRT-CORE.yml still installs the unused python3-netifaces host dependency"
+  exit 1
+fi
 
 echo "apt mirror fallback guards test passed"

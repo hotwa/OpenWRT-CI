@@ -5,17 +5,17 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=daed
-PKG_VERSION:=2026.05.03
-DAED_VERSION:=daed-4cab3b7
+PKG_VERSION:=2026.07.08
+DAED_VERSION:=daed-671e65d
 WING_VERSION:=wing-dc50308
-CORE_VERSION:=core-80e4416
+CORE_VERSION:=core-e36cac9
 WING_HASH_SHORT:=$(shell echo $(WING_VERSION) | cut -d- -f2)
 CORE_HASH_SHORT:=$(shell echo $(CORE_VERSION) | cut -d- -f2)
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_VERSION:=4cab3b77373f450c1617eb392a2f59dd3872ea3f
+PKG_SOURCE_VERSION:=671e65d2fdcd62fe6a3ec18ecda209c5addea898
 PKG_SOURCE_URL:=https://github.com/daeuniverse/daed.git
 PKG_MIRROR_HASH:=skip
 
