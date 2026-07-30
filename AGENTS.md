@@ -1,5 +1,10 @@
 # AGENTS.md
 
+## Upstream merge policy
+
+- Read `docs/upstream-merge-policy.md` before comparing, cherry-picking, merging, or manually copying changes from `davidtall/DaeWRT-CI`, `davidtall/immortalwrt`, `VIKINGYFY/immortalwrt`, or other OpenWrt CI upstreams.
+- Prefer small, documented, atomic upstream absorptions. Do not accept upstream deletions of hotwa device targets, Nikki, wrtbak/private build wiring, CPE-5G baselines, Headscale/Tailscale overlays, or repository guard tests unless the user explicitly asks for that exact removal.
+
 ## Headscale auto-enroll
 
 - Read `docs/headscale-auto-enroll.md` before changing the Tailscale or Headscale first-boot path.

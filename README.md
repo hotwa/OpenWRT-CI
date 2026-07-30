@@ -11,6 +11,7 @@ https://github.com/VIKINGYFY/immortalwrt.git
 
 - CI 工作流上游：`davidtall/DaeWRT-CI`。
 - 固件源码候选上游：`davidtall/immortalwrt:stable`。该移动分支只用于跟踪候选更新，不是自动生产基线。
+- 上游合并策略见 `docs/upstream-merge-policy.md`。默认只做小原子吸收，不能用上游覆盖删除 hotwa 的京东云设备、Nikki、wrtbak/private build、CPE-5G 或 Headscale/Tailscale guard。
 - CPE-5G 当前生产基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
 - A 纯底层对照使用同一 SHA/NOWIFI 配置、关闭 feature overlay，也已完成刷写并正常进入系统；保留为后续启动问题隔离基线。
 - 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
