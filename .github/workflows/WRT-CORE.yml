@@ -335,7 +335,7 @@ jobs:
             ${SUDO} systemctl daemon-reload
           fi
           if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            ${SUDO} timedatectl set-timezone "Asia/Shanghai"
+            ${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."
           fi
 #          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 #          sudo mkdir -p /mnt/build_wrt

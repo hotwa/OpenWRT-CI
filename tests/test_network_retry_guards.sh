@@ -35,6 +35,11 @@ grep -q '\${SUDO} bash "\$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"' "
   exit 1
 }
 
+grep -Fq '${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."' "$WORKFLOW" || {
+  echo "workflow does not treat runner timezone setup as best-effort"
+  exit 1
+}
+
 grep -q 'retry_cmd 5 15 git clone --depth=1 --single-branch --branch \$WRT_BRANCH \$WRT_REPO ./wrt/' "$WORKFLOW" || {
   echo "workflow does not retry source git clone"
   exit 1
