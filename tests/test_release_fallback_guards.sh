@@ -11,10 +11,25 @@ grep -q 'name: Upload Firmware Artifact' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the official upload-artifact@v4 action"
+grep -q 'uses: actions/upload-artifact@v6' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not use the official Node24 upload-artifact@v6 action"
   exit 1
 }
+
+if grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW"; then
+  echo "WRT-CORE.yml still uses upload-artifact@v4, which targets Node.js 20"
+  exit 1
+fi
+
+grep -q 'uses: actions/cache@v5' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not use the official Node24 cache@v5 action"
+  exit 1
+}
+
+if grep -q 'uses: actions/cache@v4' "$WORKFLOW"; then
+  echo "WRT-CORE.yml still uses cache@v4, which targets Node.js 20"
+  exit 1
+fi
 
 grep -q 'name: Release Firmware' "$WORKFLOW" || {
   echo "WRT-CORE.yml is missing the Release Firmware step"
