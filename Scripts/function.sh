@@ -115,9 +115,18 @@ function remove_wifi() {
 function normalize_athena_led_device_packages() {
   local config_file=$1
   local missing_pkg_pattern='luci-i18n-athena-led-zh-cn'
+  local has_athena_core=false
+  local has_athena_luci=false
 
-  if ! find ./package ./feeds -type f -path '*/luci-app-athena-led/Makefile' -print -quit 2>/dev/null | grep -q .; then
-    missing_pkg_pattern='luci-app-athena-led|luci-i18n-athena-led-zh-cn'
+  if find ./package ./feeds -type f -path '*/athena-led/Makefile' -print -quit 2>/dev/null | grep -q .; then
+    has_athena_core=true
+  fi
+  if find ./package ./feeds -type f -path '*/luci-app-athena-led/Makefile' -print -quit 2>/dev/null | grep -q .; then
+    has_athena_luci=true
+  fi
+
+  if [ "$has_athena_core" != "true" ] || [ "$has_athena_luci" != "true" ]; then
+    missing_pkg_pattern='athena-led|luci-app-athena-led|luci-i18n-athena-led-zh-cn'
   fi
 
   find ./target/linux/qualcommax -type f \( -name "*.mk" -o -name "target.mk" \) -print0 2>/dev/null |
@@ -128,6 +137,7 @@ function normalize_athena_led_device_packages() {
 
   if [[ "$missing_pkg_pattern" == *"luci-app-athena-led"* ]]; then
     sed -i -E "/^#? ?CONFIG_PACKAGE_luci-app-athena-led(=| is not set)/d" "$config_file"
+    sed -i -E "/^#? ?CONFIG_PACKAGE_athena-led(=| is not set)/d" "$config_file"
   fi
 }
 

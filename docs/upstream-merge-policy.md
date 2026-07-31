@@ -26,6 +26,7 @@
 - 不删除或禁用 `CONFIG_PACKAGE_luci-app-nikki=y`，也不删除 `Scripts/Packages.sh` 中 `nikkinikki-org/OpenWrt-nikki` 的拉取逻辑。
 - 不删除 `luci-app-wrtbak`、`luci-app-tailscale-community`、`tailscale`、`luci-app-lucky`、`wg-endpoint-watchdog` 及其相关 overlay/guard，除非另有实机回滚计划。
 - 不删除京东云设备：`jdcloud_re-cs-07`、`jdcloud_re-ss-01`、以及仓库长期保留的 `re-ss02` 目标。上游删除设备时保留 hotwa 版本；上游新增设备时只追加，不覆盖这些设备。
+- 不接受上游把 AX6600-Athena / `jdcloud_re-cs-02` 的 LED 控制改回 `NONGFAH/luci-app-athena-led`、`haipengno1/luci-app-athena-led` 或改成全局安装。该设备固定使用 `unraveloop/JDC-AX6600-Athena-LED-Controller` `v2.4.0` / `a0eae21dc1119a56aaf8633c610af03a92f7493c` 的 `athena-led` + `luci-app-athena-led` 双包，且只通过 per-device package 进入 `jdcloud_re-cs-02` 镜像。
 - 不删除 `.github/workflows/CPE-5G.yml`、`.github/workflows/RE-CS-07-BUILD.yml`、`Config/IPQ60XX-706-NOWIFI.txt`、`Config/IPQ60XX-RE-CS-07-NOWIFI.txt`。
 - 不移除 `secrets: inherit`、`WRTBAK_DEVICE_ALIAS`、`WRTBAK_PROXY_PROFILE`、`Scripts/WrtbakR2Config.sh`、`Scripts/PrivateFirmwareGuard.sh`，也不让 secret-bearing 固件进入 GitHub Release。
 - 不把 CPE-5G 固件源码从 README 记录的完整 40 字符 SHA 改成移动分支。`davidtall/immortalwrt:stable` 只能作为候选，不能作为生产基线。

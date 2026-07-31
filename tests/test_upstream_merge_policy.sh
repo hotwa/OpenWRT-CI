@@ -20,6 +20,7 @@ for required in \
 	'jdcloud_re-cs-07' \
 	'jdcloud_re-ss-01' \
 	're-ss02' \
+	'unraveloop/JDC-AX6600-Athena-LED-Controller' \
 	'WrtbakR2Config.sh' \
 	'PrivateFirmwareGuard.sh' \
 	'CPE-5G.yml'
