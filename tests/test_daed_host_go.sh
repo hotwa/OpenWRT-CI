@@ -29,15 +29,10 @@ printf '%s\n' "$COMPILE_BLOCK" | grep -Fq '$(DAED_HOST_GO) mod edit -replace git
   exit 1
 }
 
-printf '%s\n' "$COMPILE_BLOCK" | grep -Fq '$(DAED_HOST_GO) get -u=patch' || {
-  echo "daed Build/Compile does not use host go for go get"
+if printf '%s\n' "$COMPILE_BLOCK" | grep -Eq '\$\(DAED_HOST_GO\) (get|mod tidy)'; then
+  echo "daed Build/Compile still mutates pinned Go dependencies"
   exit 1
-}
-
-printf '%s\n' "$COMPILE_BLOCK" | grep -Fq '$(DAED_HOST_GO) mod tidy' || {
-  echo "daed Build/Compile does not use host go for go mod tidy"
-  exit 1
-}
+fi
 
 printf '%s\n' "$COMPILE_BLOCK" | grep -Fq '$(DAED_HOST_GO) generate ./...' || {
   echo "daed Build/Compile does not use host go for go generate"
@@ -49,7 +44,7 @@ printf '%s\n' "$COMPILE_BLOCK" | grep -Fq '$(call GoPackage/Build/Compile)' || {
   exit 1
 }
 
-if printf '%s\n' "$COMPILE_BLOCK" | grep -Eq '(^|[;[:space:]])go (get -u=patch|mod tidy|mod edit|generate )'; then
+if printf '%s\n' "$COMPILE_BLOCK" | grep -Eq '(^|[;[:space:]])go (get|mod tidy|mod edit|generate )'; then
   echo "daed Build/Compile still uses bare go commands"
   exit 1
 fi

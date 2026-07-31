@@ -16,7 +16,7 @@
 - `Scripts/Packages.sh` 中的新增可选插件源，例如主题、磁盘管理、网络辅助、`nginx-manager`、`netwizard`、`timecontrol`、`netspeedtest`。新增源不等于默认启用；只有确认为目标固件需要时才同步加入 `Config/GENERAL.txt`。
 - `Config/GENERAL.txt` 中明确的存储/维护工具，例如 `exfat-*`、`kmod-nvme`、`libnvme`、`nvme-cli`、`smartmontools`。避免顺手启用无关网络策略包。
 - `package/v2ray-geodata/v2ray-geodata-updater` 的热加载改进，但保留本仓库已有的 reload/hot_reload fallback，不退回上游无 fallback 的简单实现。
-- DAE、daed、homeproxy、sing-box 相关更新只在版本组合已审查后吸收，并继续使用 pinned commit、hash 或 guard test，避免动态 `git ls-remote` 破坏可复现性。
+- DAE、daed、homeproxy、sing-box 相关更新只在版本组合已审查后吸收，并继续使用 pinned commit、hash 或 guard test，避免动态 `git ls-remote` 破坏可复现性。`daed` 的 wing/core/outbound/quic-go 必须作为兼容组合固定到精确提交；不得恢复移动 perf 分支 checkout，也不得在构建期执行 `go get -u` 或 `go mod tidy` 改写依赖图。
 - workflow 的小修可以吸收，但必须保留本仓库的 private build、wrtbak、LAN/WAN SSH、device artifact 和 secret 传递输入。
 
 ## Do Not Merge From Upstream

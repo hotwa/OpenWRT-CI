@@ -9,9 +9,11 @@ PKG_VERSION:=2026.07.08
 DAED_VERSION:=daed-671e65d
 WING_VERSION:=wing-dc50308
 CORE_VERSION:=core-e36cac9
+OUTBOUND_VERSION:=52c26f8e759e156d2f5ec97d18590febf74ba8bb
+QUIC_GO_VERSION:=e0d255ff807c0cdfa18e564b4db8967fd033643e
 WING_HASH_SHORT:=$(shell echo $(WING_VERSION) | cut -d- -f2)
 CORE_HASH_SHORT:=$(shell echo $(CORE_VERSION) | cut -d- -f2)
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_PROTO:=git
@@ -112,9 +114,11 @@ define Build/Prepare
 		git clone https://github.com/olicesx/dae $(PKG_BUILD_DIR)/dae-core && \
 			git -C $(PKG_BUILD_DIR)/dae-core checkout $(CORE_HASH_SHORT) ; \
 		rm -rf $(DAED_BUILD_DIR)/outbound ; \
-		git clone --depth=1 -b perf/complete-optimizations https://github.com/olicesx/outbound.git $(DAED_BUILD_DIR)/outbound ; \
+		git clone --filter=blob:none https://github.com/olicesx/outbound.git $(DAED_BUILD_DIR)/outbound && \
+			git -C $(DAED_BUILD_DIR)/outbound checkout --detach $(OUTBOUND_VERSION) ; \
 		rm -rf $(DAED_BUILD_DIR)/quic-go ; \
-		git clone --depth=1 -b perf/node-pooling-v2 https://github.com/olicesx/quic-go.git $(DAED_BUILD_DIR)/quic-go ; \
+		git clone --filter=blob:none https://github.com/olicesx/quic-go.git $(DAED_BUILD_DIR)/quic-go && \
+			git -C $(DAED_BUILD_DIR)/quic-go checkout --detach $(QUIC_GO_VERSION) ; \
 		pushd $(PKG_BUILD_DIR)/dae-core ; \
 			if ! grep -q "currentRuntimeStatsStore" control/runtime_stats.go ; then \
 				wget -qO - https://github.com/QiuSimons/luci-app-daed/raw/refs/heads/kix/patchset/0001-fix-runtime-stats.patch | patch -p2 --forward --batch ; \
@@ -176,14 +180,8 @@ define Build/Compile
 		$(GO_PKG_BUILD_CONFIG_VARS) \
 		$(GO_PKG_BUILD_VARS) ; \
 		pushd $(PKG_BUILD_DIR) ; \
-			pushd $(PKG_BUILD_DIR)/dae-core ; \
-				$(DAED_HOST_GO) get -u=patch ; \
-				$(DAED_HOST_GO) mod tidy ; \
-			popd ; \
 			$(DAED_HOST_GO) mod edit -replace github.com/daeuniverse/outbound=../outbound ; \
 			$(DAED_HOST_GO) mod edit -replace github.com/olicesx/quic-go=../quic-go ; \
-			$(DAED_HOST_GO) get -u=patch ; \
-			$(DAED_HOST_GO) mod tidy ; \
 			$(DAED_HOST_GO) generate ./... ; \
 			cd dae-core ; \
 			export \
