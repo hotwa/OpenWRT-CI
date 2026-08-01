@@ -114,6 +114,7 @@ function remove_wifi() {
 
 function normalize_athena_led_device_packages() {
   local config_file=$1
+  local athena_image_file='./target/linux/qualcommax/image/ipq60xx.mk'
   local missing_pkg_pattern='luci-i18n-athena-led-zh-cn'
   local has_athena_core=false
   local has_athena_luci=false
@@ -127,6 +128,14 @@ function normalize_athena_led_device_packages() {
 
   if [ "$has_athena_core" != "true" ] || [ "$has_athena_luci" != "true" ]; then
     missing_pkg_pattern='athena-led|luci-app-athena-led|luci-i18n-athena-led-zh-cn'
+  elif [ -f "$athena_image_file" ]; then
+    sed -i -E '/^define Device\/jdcloud_re-cs-02$/,/^endef$/ {
+      /DEVICE_PACKAGES :=/ {
+        s/(^|[[:space:]])athena-led([[:space:]]|$)/ /g
+        s/(^|[[:space:]])luci-app-athena-led([[:space:]]|$)/ /g
+        s/[[:space:]]*$/ athena-led luci-app-athena-led/
+      }
+    }' "$athena_image_file"
   fi
 
   find ./target/linux/qualcommax -type f \( -name "*.mk" -o -name "target.mk" \) -print0 2>/dev/null |

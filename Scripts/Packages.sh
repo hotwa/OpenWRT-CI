@@ -56,6 +56,16 @@ UPDATE_PACKAGE() {
 				exit 1
 			}
 		fi
+		if [[ "$PKG_NAME" == "athena-led" ]]; then
+			test -f "$EXTRACT_DIR/athena-led/Makefile" || {
+				echo "ERROR: Athena LED core package was not extracted."
+				exit 1
+			}
+			test -f "$EXTRACT_DIR/luci-app-athena-led/Makefile" || {
+				echo "ERROR: Athena LED LuCI package was not extracted."
+				exit 1
+			}
+		fi
 		rm -rf ./$REPO_NAME/
 		for EXTRACTED_PATH in "$EXTRACT_DIR"/*; do
 			[ -e "$EXTRACTED_PATH" ] || continue
@@ -66,6 +76,12 @@ UPDATE_PACKAGE() {
 		if [[ "$PKG_NAME" == "luci-app-tailscale-community" ]]; then
 			test -d "./luci-app-tailscale-community" || {
 				echo "ERROR: luci-app-tailscale-community was removed after repository cleanup."
+				exit 1
+			}
+		fi
+		if [[ "$PKG_NAME" == "athena-led" ]]; then
+			test -f ./athena-led/Makefile -a -f ./luci-app-athena-led/Makefile || {
+				echo "ERROR: Athena LED split packages are incomplete after repository cleanup."
 				exit 1
 			}
 		fi

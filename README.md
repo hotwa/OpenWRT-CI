@@ -91,6 +91,6 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 `re-ss02` / `jdcloud_re-cs-02` / JDC AX6600-Athena 固件固定使用 `unraveloop/JDC-AX6600-Athena-LED-Controller` 的 `v2.4.0` 双包实现：`athena-led` 核心包 + `luci-app-athena-led` LuCI 界面包。`Scripts/Packages.sh` 以 tag `v2.4.0` 和提交 `a0eae21dc1119a56aaf8633c610af03a92f7493c` 固定该来源，避免后续上游同步或 unraveloop `main` 变化悄悄改变 LED 控制行为。
 
-该插件只允许通过 `Config/TEST.txt` 的 `CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02` 进入 AX6600-Athena 设备镜像；普通 QCA、`jdcloud_re-ss-01`、CPE-5G、RE-CS-07 等固件不要全局启用 `CONFIG_PACKAGE_athena-led` 或 `CONFIG_PACKAGE_luci-app-athena-led`。
+该插件由 `Scripts/function.sh` 在生成正式配置时只写入 `jdcloud_re-cs-02` 的 `DEVICE_PACKAGES`；`Config/TEST.txt` 的 per-device 配置用于快速配置验证。WIFI-YES 和 WIFI-NO 正式构建都会在编译后检查 `jdcloud_re-cs-02` manifest，缺少 `athena-led` 核心或 `luci-app-athena-led` 界面时 CI 直接失败。普通 QCA、`jdcloud_re-ss-01`、CPE-5G、RE-CS-07 等固件不要全局启用这两个包。
 
 `NONGFAH/luci-app-athena-led` 是旧单包实现，包名同样叫 `luci-app-athena-led`，会与 unraveloop 的 LuCI 包冲突。保留它只能作为历史说明或手工回退参考，不要在 AX6600-Athena 固件里默认拉取或启用。后续从上游合并 Athena LED 相关改动时，必须保留本仓库的 unraveloop 固定来源和设备级限定，不能接受上游把 LED 包源改回 NONGFAH/haipengno1 或改成全局安装。

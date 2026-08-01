@@ -594,6 +594,9 @@ jobs:
 
           make -j$(nproc) || make -j1 V=s
 
+          "$GITHUB_WORKSPACE/Scripts/GuardAthenaLedArtifact.sh" \
+            "$PWD/.config" "$PWD/bin/targets"
+
       - name: Delete Old Cache
         run: |
           # 获取缓存列表并删除；缓存清理失败不应阻断已完成的构建
