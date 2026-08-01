@@ -124,6 +124,10 @@ fi
 
 ATHENA_LED_PACKAGE_COMMIT=a0eae21dc1119a56aaf8633c610af03a92f7493c
 UPDATE_PACKAGE "athena-led" "unraveloop/JDC-AX6600-Athena-LED-Controller" "v2.4.0" "pkg" "luci-app-athena-led" "$ATHENA_LED_PACKAGE_COMMIT"
+# ImmortalWrt's emortal tree also carries the legacy single-package UI under
+# the same package name. Leaving it in the build makes APK pair the reviewed
+# unraveloop core with that incompatible UI, which owns the same config/init.
+rm -rf ./emortal/luci-app-athena-led
 # Legacy NONGFAH uses the same luci-app-athena-led package name and must stay
 # disabled when the AX6600-Athena image uses the unraveloop split core/LuCI
 # packages.

@@ -34,6 +34,11 @@ grep -q '^# UPDATE_PACKAGE "luci-app-athena-led" "NONGFAH/luci-app-athena-led" "
 	exit 1
 }
 
+grep -Fq 'rm -rf ./emortal/luci-app-athena-led' "$PACKAGES_SH" || {
+	echo "Packages.sh does not remove the duplicate emortal Athena LED UI"
+	exit 1
+}
+
 grep -q '^CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=".*athena-led .*luci-app-athena-led' "$CONFIG_TEST" || {
 	echo "TEST config does not keep unraveloop Athena LED scoped to jdcloud_re-cs-02"
 	exit 1
