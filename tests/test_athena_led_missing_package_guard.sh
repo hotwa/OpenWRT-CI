@@ -151,4 +151,15 @@ if sh "$ARTIFACT_GUARD" "$tmp_dir/.config" "$tmp_dir/bin/targets" >/dev/null 2>&
 	exit 1
 fi
 
+rm -f "$tmp_dir/bin/targets/immortalwrt-qualcommax-ipq60xx-jdcloud_re-cs-02.manifest"
+touch "$tmp_dir/bin/targets/immortalwrt-qualcommax-ipq60xx-jdcloud_re-cs-02-squashfs-sysupgrade.bin"
+
+sh "$ARTIFACT_GUARD" "$tmp_dir/.config" "$tmp_dir/bin/targets"
+
+sed -i 's/ athena-led//' "$tmp_dir/target/linux/qualcommax/image/ipq60xx.mk"
+if sh "$ARTIFACT_GUARD" "$tmp_dir/.config" "$tmp_dir/bin/targets" >/dev/null 2>&1; then
+	echo "artifact guard accepted a manifest-less jdcloud_re-cs-02 image without the Athena LED core"
+	exit 1
+fi
+
 echo "athena-led device package guard test passed"
