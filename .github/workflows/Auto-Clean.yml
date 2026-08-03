@@ -21,4 +21,5 @@ jobs:
           gh_token: ${{secrets.GITHUB_TOKEN}}
           delete_releases: false
           delete_workflows: true
-          workflows_keep_day: 0
+          # Deleting a workflow run also deletes its private firmware artifacts.
+          workflows_keep_day: 30
