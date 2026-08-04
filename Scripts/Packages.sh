@@ -138,6 +138,15 @@ test -f ./cf-ip-speed-client/Makefile -a -f ./luci-app-cf-ip-speed-client/Makefi
 	echo "ERROR: Cloudflare IP speed client packages were not extracted."
 	exit 1
 }
+CF_IP_SPEED_CLIENT_PATCH="$GITHUB_WORKSPACE/patches/cf-ip-speed-client-manual-schedule.patch"
+test -r "$CF_IP_SPEED_CLIENT_PATCH" || {
+	echo "ERROR: Cloudflare IP speed client defaults patch is missing."
+	exit 1
+}
+patch -d ./cf-ip-speed-client --batch --forward -p1 < "$CF_IP_SPEED_CLIENT_PATCH" || {
+	echo "ERROR: Cloudflare IP speed client defaults patch did not apply."
+	exit 1
+}
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "lisaac/luci-app-diskman" "master"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"

@@ -97,6 +97,6 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 # Cloudflare IP 测速插件
 
-`jdcloud_re-cs-02` 的 WIFI-YES/WIFI-NO 镜像固定包含 `cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client`。`cfst` 使用 `XIU2/CloudflareSpeedTest` `v2.3.5` 的 ARM64 发布包，并在 `package/cfst/Makefile` 固定 SHA256；LuCI 客户端使用 `10000ge10000/cf-ip-speed-panel@09a8020fd7e6603522b47a4af04a0a2e39f2662e`。它们不应全局安装到其它设备，首次刷机后保持插件默认禁用。
+所有固件镜像固定包含 `cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client`。`cfst` 使用 `XIU2/CloudflareSpeedTest` `v2.3.5` 按目标 CPU 架构选择的官方发布包，并在 `package/cfst/Makefile` 固定 SHA256；LuCI 客户端使用 `10000ge10000/cf-ip-speed-panel@09a8020fd7e6603522b47a4af04a0a2e39f2662e`。首次刷机后客户端已启用，但处于手动测速和不上传模式：填写昵称、确认公开众测并设置计划后才会发起周期测速。
 
-上游客户端为了使测速与众测上传使用真实 WAN 出口，会在测速期间临时停止 Nikki、DAE、HomeProxy 等透明代理服务并在结束后恢复。不要仅通过 Nikki fake-IP bypass 或将所有 Cloudflare CIDR 设为全局直连来规避这一行为；前者不能保证直连，后者会影响大量正常网站。若需要测速期间代理不中断，必须另行实现仅针对测速进程的策略路由或网络命名空间。
+上游客户端为了使测速与众测上传使用真实 WAN 出口，会在测速期间临时停止 Nikki、DAE、HomeProxy 等透明代理服务并在结束后恢复。该项目只发布类似 `省份.运营商.6610000.xyz` 的优选 DNS 记录，不会自动将所有 Cloudflare 托管域名改写为直连 IP。不要仅通过 Nikki fake-IP bypass 或将所有 Cloudflare CIDR 设为全局直连来规避这一行为；前者不能保证直连，后者会影响大量正常网站。若要将结果用于访问加速，必须为用户明确指定的域名单独实现 DNS 覆写和 Nikki `DIRECT` 规则；若需要测速期间代理不中断，则必须另行实现仅针对测速进程的策略路由或网络命名空间。
