@@ -132,6 +132,12 @@ rm -rf ./emortal/luci-app-athena-led
 # disabled when the AX6600-Athena image uses the unraveloop split core/LuCI
 # packages.
 # UPDATE_PACKAGE "luci-app-athena-led" "NONGFAH/luci-app-athena-led" "main"
+CF_IP_SPEED_PANEL_COMMIT=09a8020fd7e6603522b47a4af04a0a2e39f2662e
+UPDATE_PACKAGE "cf-ip-speed-client" "10000ge10000/cf-ip-speed-panel" "main" "pkg" "luci-app-cf-ip-speed-client" "$CF_IP_SPEED_PANEL_COMMIT"
+test -f ./cf-ip-speed-client/Makefile -a -f ./luci-app-cf-ip-speed-client/Makefile || {
+	echo "ERROR: Cloudflare IP speed client packages were not extracted."
+	exit 1
+}
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "lisaac/luci-app-diskman" "master"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"

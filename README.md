@@ -94,3 +94,9 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 该插件由 `Scripts/function.sh` 在生成正式配置时只写入 `jdcloud_re-cs-02` 的 `DEVICE_PACKAGES`；`Config/TEST.txt` 的 per-device 配置用于快速配置验证。WIFI-YES 和 WIFI-NO 正式构建都会在编译后检查 `jdcloud_re-cs-02` manifest，缺少 `athena-led` 核心或 `luci-app-athena-led` 界面时 CI 直接失败。普通 QCA、`jdcloud_re-ss-01`、CPE-5G、RE-CS-07 等固件不要全局启用这两个包。
 
 `NONGFAH/luci-app-athena-led` 是旧单包实现，包名同样叫 `luci-app-athena-led`，会与 unraveloop 的 LuCI 包冲突。保留它只能作为历史说明或手工回退参考，不要在 AX6600-Athena 固件里默认拉取或启用。后续从上游合并 Athena LED 相关改动时，必须保留本仓库的 unraveloop 固定来源和设备级限定，不能接受上游把 LED 包源改回 NONGFAH/haipengno1 或改成全局安装。
+
+# Cloudflare IP 测速插件
+
+`jdcloud_re-cs-02` 的 WIFI-YES/WIFI-NO 镜像固定包含 `cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client`。`cfst` 使用 `XIU2/CloudflareSpeedTest` `v2.3.5` 的 ARM64 发布包，并在 `package/cfst/Makefile` 固定 SHA256；LuCI 客户端使用 `10000ge10000/cf-ip-speed-panel@09a8020fd7e6603522b47a4af04a0a2e39f2662e`。它们不应全局安装到其它设备，首次刷机后保持插件默认禁用。
+
+上游客户端为了使测速与众测上传使用真实 WAN 出口，会在测速期间临时停止 Nikki、DAE、HomeProxy 等透明代理服务并在结束后恢复。不要仅通过 Nikki fake-IP bypass 或将所有 Cloudflare CIDR 设为全局直连来规避这一行为；前者不能保证直连，后者会影响大量正常网站。若需要测速期间代理不中断，必须另行实现仅针对测速进程的策略路由或网络命名空间。
