@@ -136,14 +136,13 @@ if [ -d *"homeproxy"* ]; then
 fi
 
 #修改argon主题字体和颜色
-if [ -d *"luci-theme-argon"* ]; then
+if [ -d "$PKG_PATH/luci-theme-argon" ]; then
 	echo " "
 
-	cd ./luci-theme-argon/
+	sed -i "s/primary '.*'/primary '#31a1a1'/; s/'0.2'/'0.5'/; s/'none'/'bing'/; s/'600'/'normal'/" \
+		"$PKG_PATH/luci-theme-argon/luci-app-argon-config/root/etc/config/argon"
 
-	sed -i "s/primary '.*'/primary '#31a1a1'/; s/'0.2'/'0.5'/; s/'none'/'bing'/; s/'600'/'normal'/" ./luci-app-argon-config/root/etc/config/argon
-
-	cd $PKG_PATH && echo "theme-argon has been fixed!"
+	echo "theme-argon has been fixed!"
 fi
 
 #修改aurora菜单式样
@@ -178,13 +177,14 @@ if [ -f "$NSS_PBUF" ]; then
 fi
 
 #修复Rust编译失败
-RUST_FILE=$(find ../feeds/packages/ -maxdepth 3 -type f -wholename "*/rust/Makefile")
+FEEDS_PACKAGES="$PKG_PATH/../feeds/packages"
+RUST_FILE="$(find "$FEEDS_PACKAGES" -maxdepth 3 -type f -wholename '*/rust/Makefile' -print -quit 2>/dev/null)"
 if [ -f "$RUST_FILE" ]; then
 	echo " "
 
-	sed -i 's/ci-llvm=true/ci-llvm=false/g' $RUST_FILE
+	sed -i 's/ci-llvm=true/ci-llvm=false/g' "$RUST_FILE"
 
-	cd $PKG_PATH && echo "rust has been fixed!"
+	echo "rust has been fixed!"
 fi
 
 #修复DiskMan编译失败
