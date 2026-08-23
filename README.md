@@ -95,8 +95,6 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 `NONGFAH/luci-app-athena-led` 是旧单包实现，包名同样叫 `luci-app-athena-led`，会与 unraveloop 的 LuCI 包冲突。保留它只能作为历史说明或手工回退参考，不要在 AX6600-Athena 固件里默认拉取或启用。后续从上游合并 Athena LED 相关改动时，必须保留本仓库的 unraveloop 固定来源和设备级限定，不能接受上游把 LED 包源改回 NONGFAH/haipengno1 或改成全局安装。
 
-# Cloudflare IP 测速插件
+# Cloudflare IP 测速插件（已移除）
 
-所有固件镜像固定包含 `cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client`。`cfst` 使用 `XIU2/CloudflareSpeedTest` `v2.3.5` 按目标 CPU 架构选择的官方发布包，并在 `package/cfst/Makefile` 固定 SHA256；LuCI 客户端使用 `10000ge10000/cf-ip-speed-panel@09a8020fd7e6603522b47a4af04a0a2e39f2662e`。首次刷机后客户端已启用，但处于手动测速和不上传模式：填写昵称、确认公开众测并设置计划后才会发起周期测速。
-
-上游客户端为了使测速与众测上传使用真实 WAN 出口，会在测速期间临时停止 Nikki、DAE、HomeProxy 等透明代理服务并在结束后恢复。该项目只发布类似 `省份.运营商.6610000.xyz` 的优选 DNS 记录，不会自动将所有 Cloudflare 托管域名改写为直连 IP。不要仅通过 Nikki fake-IP bypass 或将所有 Cloudflare CIDR 设为全局直连来规避这一行为；前者不能保证直连，后者会影响大量正常网站。若要将结果用于访问加速，必须为用户明确指定的域名单独实现 DNS 覆写和 Nikki `DIRECT` 规则；若需要测速期间代理不中断，则必须另行实现仅针对测速进程的策略路由或网络命名空间。
+`cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client` 已于 2026-08 从本仓库移除，固件不再编译：上游 `10000ge10000/cf-ip-speed-panel` 与相关客户端已停止维护，且测速期间需要临时停止透明代理服务，影响日常使用。后续从上游合并时不要重新引入这三个包、`package/cfst/` 或对应拉取/补丁逻辑；若将来需要 Cloudflare IP 优选能力，应另选仍在维护的实现并单独评审。
