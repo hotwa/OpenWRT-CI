@@ -94,7 +94,3 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 该插件由 `Scripts/function.sh` 在生成正式配置时只写入 `jdcloud_re-cs-02` 的 `DEVICE_PACKAGES`；`Config/TEST.txt` 的 per-device 配置用于快速配置验证。WIFI-YES 和 WIFI-NO 正式构建都会在编译后检查 `jdcloud_re-cs-02` manifest，缺少 `athena-led` 核心或 `luci-app-athena-led` 界面时 CI 直接失败。普通 QCA、`jdcloud_re-ss-01`、CPE-5G、RE-CS-07 等固件不要全局启用这两个包。
 
 `NONGFAH/luci-app-athena-led` 是旧单包实现，包名同样叫 `luci-app-athena-led`，会与 unraveloop 的 LuCI 包冲突。保留它只能作为历史说明或手工回退参考，不要在 AX6600-Athena 固件里默认拉取或启用。后续从上游合并 Athena LED 相关改动时，必须保留本仓库的 unraveloop 固定来源和设备级限定，不能接受上游把 LED 包源改回 NONGFAH/haipengno1 或改成全局安装。
-
-# Cloudflare IP 测速插件（已移除）
-
-`cfst`、`cf-ip-speed-client` 与 `luci-app-cf-ip-speed-client` 已于 2026-08 从本仓库移除，固件不再编译：上游 `10000ge10000/cf-ip-speed-panel` 与相关客户端已停止维护，且测速期间需要临时停止透明代理服务，影响日常使用。后续从上游合并时不要重新引入这三个包、`package/cfst/` 或对应拉取/补丁逻辑；若将来需要 Cloudflare IP 优选能力，应另选仍在维护的实现并单独评审。
