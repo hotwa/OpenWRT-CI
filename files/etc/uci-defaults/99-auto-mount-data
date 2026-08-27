@@ -1,0 +1,84 @@
+#!/bin/sh
+# Auto-discover the largest unmounted eMMC/storage partition and mount as /data
+# Creates workspace directories for Multica, OpenCode, Pi, and AI agents.
+
+set -e
+
+mkdir -p /data
+
+# 1. Look for largest partition on mmcblk0, nvme0n1, or sda (size > 1GB)
+# If lsblk is available, find candidates
+CANDIDATE=""
+if command -v lsblk >/dev/null 2>&1; then
+	CANDIDATE=$(lsblk -bno NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null | awk '
+		$3 == "part" && $4 == "" && $2 > 1073741824 && ($1 ~ /^mmcblk/ || $1 ~ /^nvme/ || $1 ~ /^sd/) {
+			print $2, $1
+		}
+	' | sort -n | tail -1 | awk '{print $2}')
+fi
+
+# Fallback to block info if lsblk is not present or gave nothing
+if [ -z "$CANDIDATE" ] && command -v block >/dev/null 2>&1; then
+	DATA_DEV=$(block info 2>/dev/null | grep -iE 'LABEL="(data|userdata)"' | cut -d: -f1 | head -1)
+	if [ -n "$DATA_DEV" ]; then
+		CANDIDATE=$(basename "$DATA_DEV")
+	fi
+fi
+
+if [ -n "$CANDIDATE" ] && [ -b "/dev/$CANDIDATE" ]; then
+	DEV_PATH="/dev/$CANDIDATE"
+
+	# Check if already mounted
+	if ! grep -q "$DEV_PATH" /proc/mounts 2>/dev/null && ! grep -q " /data " /proc/mounts 2>/dev/null; then
+		# Check if it has a recognized filesystem
+		FSTYPE=""
+		if command -v blkid >/dev/null 2>&1; then
+			FSTYPE=$(blkid -s TYPE -o value "$DEV_PATH" 2>/dev/null || true)
+		fi
+
+		# If unformatted, format with f2fs (preferred for flash/eMMC) or ext4
+		if [ -z "$FSTYPE" ]; then
+			if command -v mkfs.f2fs >/dev/null 2>&1; then
+				mkfs.f2fs -f -l data "$DEV_PATH" >/dev/null 2>&1 || true
+				FSTYPE="f2fs"
+			elif command -v mkfs.ext4 >/dev/null 2>&1; then
+				mkfs.ext4 -F -L data "$DEV_PATH" >/dev/null 2>&1 || true
+				FSTYPE="ext4"
+			fi
+		fi
+
+		# Configure UCI fstab for permanent persistence across boots
+		if command -v uci >/dev/null 2>&1; then
+			if ! uci show fstab 2>/dev/null | grep -q "'/data'"; then
+				uci add fstab mount >/dev/null 2>&1 || true
+				uci set fstab.@mount[-1].target='/data'
+				uci set fstab.@mount[-1].device="$DEV_PATH"
+				uci set fstab.@mount[-1].enabled='1'
+				uci set fstab.@mount[-1].options='rw,noatime'
+				[ -n "$FSTYPE" ] && uci set fstab.@mount[-1].fstype="$FSTYPE"
+				uci commit fstab >/dev/null 2>&1 || true
+			fi
+		fi
+
+		# Mount immediately
+		mount -o rw,noatime "$DEV_PATH" /data 2>/dev/null || mount "$DEV_PATH" /data 2>/dev/null || true
+	fi
+fi
+
+# 2. Setup standard directory layout and symlinks on /data
+if [ -d /data ]; then
+	mkdir -p /data/multica
+	mkdir -p /data/agent_workspaces
+	mkdir -p /data/pi
+	mkdir -p /data/opencode
+	mkdir -p /data/pnpm
+	mkdir -p /data/uv_cache
+
+	if [ -d /root ]; then
+		[ ! -e /root/.multica ] && ln -sfn /data/multica /root/.multica 2>/dev/null || true
+		[ ! -e /root/.pi ] && ln -sfn /data/pi /root/.pi 2>/dev/null || true
+		[ ! -e /root/.opencode ] && ln -sfn /data/opencode /root/.opencode 2>/dev/null || true
+	fi
+fi
+
+exit 0
