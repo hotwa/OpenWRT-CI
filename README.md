@@ -94,3 +94,42 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 该插件由 `Scripts/function.sh` 在生成正式配置时只写入 `jdcloud_re-cs-02` 的 `DEVICE_PACKAGES`；`Config/TEST.txt` 的 per-device 配置用于快速配置验证。WIFI-YES 和 WIFI-NO 正式构建都会在编译后检查 `jdcloud_re-cs-02` manifest，缺少 `athena-led` 核心或 `luci-app-athena-led` 界面时 CI 直接失败。普通 QCA、`jdcloud_re-ss-01`、CPE-5G、RE-CS-07 等固件不要全局启用这两个包。
 
 `NONGFAH/luci-app-athena-led` 是旧单包实现，包名同样叫 `luci-app-athena-led`，会与 unraveloop 的 LuCI 包冲突。保留它只能作为历史说明或手工回退参考，不要在 AX6600-Athena 固件里默认拉取或启用。后续从上游合并 Athena LED 相关改动时，必须保留本仓库的 unraveloop 固定来源和设备级限定，不能接受上游把 LED 包源改回 NONGFAH/haipengno1 或改成全局安装。
+
+# hotwa AI 智能体与运行时生态（Multica / OpenCode / Pi / Hermes）
+
+本仓库深度内建了专为边缘路由器定制的 **AI 智能体运行时生态**：
+
+- **CI 构建期秒级预装**（见 `Scripts/fetch_node_runtime.sh` 与 `Scripts/fetch_uv_runtime.sh`）：
+  - **Node.js 24 LTS**（针对 `linux-arm64-musl` / `linux-x64-musl` 的静态构建，零编译开销秒级注入）；
+  - **Python 3.12 运行时 + `uv` 极速包管理器**；
+  - **`pnpm` / `npm` / `npx` / `corepack`** 全局包管理；
+  - **OpenCode CLI**（`opencode-ai`）及 `@tarquinen/opencode-dcp`、`@mohak34/opencode-notifier`、`opencode-conductor-plugin` 扩展；
+  - **Pi Coding Agent**（`@earendil-works/pi-coding-agent`）及 `@aaronkyriesenbach/pi-package-manager`、`btw-pi`、`pi-plan-mode`、`pi-web-search`、`pi-wechat-assistant` 扩展；
+  - **Nous Research Hermes Agent**（`hermes-agent`，支持自主进化与多平台消息网关）；
+  - **OpenClaw**（`luci-app-openclaw`，提供 LuCI 界面管理、微信/TG 网关通道与 wrtbak 云备份集成）。
+- **环境直通与 SSH 智能提醒**：
+  - `/etc/profile.d/20-node-agent.sh` 自动将运行时注入全局 `$PATH`；
+  - `/etc/profile.d/30-agent-update-check.sh` 在 SSH 登录时非阻塞展示 Agent 状态看板并提供升级指引。
+
+# Tailscale / Headscale 全局开箱即用策略
+
+- **LAN-to-Tailnet 网关默认开启**（`tailscale.lan_to_tailnet.enabled='1'`）：路由器开机自动下发防火墙 NAT Masquerade 与转发规则，局域网所有客户端无需任何额外客户端即可直连 Tailnet 远端设备与 MagicDNS。
+- **子网路由接收开启**（`tailscale.settings.accept_routes='1'`）：默认接收其他节点通告的局域网网段（如 `192.168.8.x`, `192.168.9.x`）。
+- **Nikki 规则直连联动**：在 `nikki-sub-merge` 规则中置顶 `100.64.0.0/10` 与 MagicDNS 直连，彻底解决 Fake-IP 劫持私有节点的问题。
+
+# 设备支持与推广验证路线
+
+1. **RE-CS-02 (JDC AX6600-Athena)**：首发已验证生产基线（默认 LAN IP `192.168.11.1`，WiFi `asdzxc147369`）；
+2. **RE-CS-01 (JDC AX1800-Pro / 亚瑟)**：后续推广测试同款 Agent 运行时固件；
+3. **RE-SS-01 (JDC AX1800 / 哪吒 & CPE-5G)**：推广测试，保持 mwan3 双网接入与 Agent 监控；
+4. **RE-CS-07 (JDC AX3000 / 百里)**：推广测试。
+
+# 上游合并差异性保护规则
+
+后续与 `davidtall/DaeWRT-CI`、`davidtall/immortalwrt` 或 `VIKINGYFY/immortalwrt` 同步时，**必须绝对保留以下 hotwa 特性，严禁被上游覆盖删除**：
+1. `Scripts/fetch_node_runtime.sh`、`Scripts/fetch_uv_runtime.sh` 及 `files/etc/profile.d/` 运行时注入；
+2. `files/etc/config/tailscale` 默认 `lan_to_tailnet.enabled=1` 与 `accept_routes=1`；
+3. `luci-app-nikki`、`luci-app-openclaw` 与 `luci-app-wrtbak` 插件及护栏测试；
+4. 京东云 `re-cs-02`, `re-cs-01`, `re-ss-01`, `re-cs-07` 设备适配与 Athena LED 双包规则；
+5. `CPE-5G` 双构建及 mwan3 链路规则。
+

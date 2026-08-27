@@ -31,7 +31,7 @@
 - 不移除 `secrets: inherit`、`WRTBAK_DEVICE_ALIAS`、`WRTBAK_PROXY_PROFILE`、`Scripts/WrtbakR2Config.sh`、`Scripts/PrivateFirmwareGuard.sh`，也不让 secret-bearing 固件进入 GitHub Release。
 - 不把 CPE-5G 固件源码从 README 记录的完整 40 字符 SHA 改成移动分支。`davidtall/immortalwrt:stable` 只能作为候选，不能作为生产基线。
 - 不接受上游对 `diy.sh` 的默认源切换为 `davidtall/immortalwrt viking-main`，除非只是本地实验分支并已明确不影响 CI。
-- 不删除 `retry.sh`、包拉取重试、pinned source guard、web dist 校验、runtime fallback 等本仓库为 CI 稳定性增加的保护。
+- 不删除 `Scripts/fetch_node_runtime.sh`、`Scripts/fetch_uv_runtime.sh`、`files/etc/profile.d/20-node-agent.sh`、`files/etc/profile.d/30-agent-update-check.sh` 以及 Node.js 24 LTS / Python 3.12 / OpenCode / Pi / Hermes Agent 智能体运行时注入逻辑。
 - 不用上游大范围删除来清理 docs、tests、overlay、packages。若上游没有这些文件，视为 hotwa 本地长期维护内容。
 
 ## Required Checks
