@@ -3,7 +3,26 @@
 ## Upstream merge policy
 
 - Read `docs/upstream-merge-policy.md` before comparing, cherry-picking, merging, or manually copying changes from `davidtall/DaeWRT-CI`, `davidtall/immortalwrt`, `VIKINGYFY/immortalwrt`, or other OpenWrt CI upstreams.
-- Prefer small, documented, atomic upstream absorptions. Do not accept upstream deletions of hotwa device targets, Nikki, wrtbak/private build wiring, CPE-5G baselines, Headscale/Tailscale overlays, or repository guard tests unless the user explicitly asks for that exact removal.
+- Prefer small, documented, atomic upstream absorptions. Do not accept upstream deletions of hotwa device targets, Nikki, wrtbak/private build wiring, CPE-5G baselines, Headscale/Tailscale overlays, Node.js 24/Python 3.12 AI agent runtimes, or repository guard tests unless the user explicitly asks for that exact removal.
+
+## Edge AI Agent ecosystem and runtime (Multica / OpenCode / Pi / Hermes)
+
+- **Primary Workflow**: Multica orchestration + OpenCode / Pi CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
+- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and `Scripts/fetch_uv_runtime.sh` (Python 3.12 + `uv`) in `WRT-CORE.yml`.
+- Preserve pre-installed CLI tools and extensions:
+  - `opencode-ai` (`opencode` CLI) + `@tarquinen/opencode-dcp`, `@mohak34/opencode-notifier`, `opencode-conductor-plugin`
+  - `@earendil-works/pi-coding-agent` (`pi` CLI) + `@aaronkyriesenbach/pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-wechat-assistant`
+  - Nous Research `hermes-agent` (`hermes` CLI)
+  - `luci-app-openclaw` (WeChat/TG gateway and LuCI manager)
+- Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner).
+- Keep `homeproxy`, `daed`, and `dae` pruned from `Config/GENERAL.txt` in favor of Nikki to prevent multi-proxy conflicts and save rootfs space.
+
+## Tailscale LAN Gateway and Route Acceptance
+
+- Preserve `files/etc/config/tailscale` default options: `tailscale.lan_to_tailnet.enabled='1'` and `tailscale.settings.accept_routes='1'`.
+- This ensures LAN clients can reach remote Tailnet subnets (`192.168.8.x`, `192.168.9.x`) and MagicDNS (`.hs.jmsu.top`, `.ts.net`) out of the box.
+- Maintain top-level DIRECT prepend rules in `nikki-sub-merge` (`100.64.0.0/10`, `192.168.0.0/16`, `hs.jmsu.top`, `ts.net`) so Fake-IP does not hijack Tailnet traffic.
+
 
 ## Headscale auto-enroll
 
