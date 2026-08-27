@@ -7,6 +7,8 @@ AGENTS="$ROOT_DIR/AGENTS.md"
 README="$ROOT_DIR/README.md"
 PACKAGES="$ROOT_DIR/Scripts/Packages.sh"
 GENERAL="$ROOT_DIR/Config/GENERAL.txt"
+AUTO_CLEAN="$ROOT_DIR/.github/workflows/Auto-Clean.yml"
+WORKFLOW_DIR="$ROOT_DIR/.github/workflows"
 
 [ -f "$POLICY" ] || { echo "missing upstream merge policy"; exit 1; }
 
@@ -40,6 +42,59 @@ grep -Fq 'docs/upstream-merge-policy.md' "$README" || {
 	echo "README does not point maintainers to upstream merge policy"
 	exit 1
 }
+
+[ -f "$AUTO_CLEAN" ] || { echo "missing Auto-Clean workflow"; exit 1; }
+
+[ "$(grep -Ec '^[[:space:]]*-[[:space:]]*cron:' "$AUTO_CLEAN")" -eq 1 ] &&
+	grep -Eq '^[[:space:]]*-[[:space:]]*cron:[[:space:]]*["'"'"']?0[[:space:]]+20[[:space:]]+\*[[:space:]]+\*[[:space:]]+0["'"'"']?[[:space:]]*$' "$AUTO_CLEAN" || {
+	echo "Auto-Clean must run on its single weekly schedule"
+	exit 1
+}
+
+grep -Eq '^[[:space:]]*delete_releases:[[:space:]]*false[[:space:]]*$' "$AUTO_CLEAN" || {
+	echo "Auto-Clean must not delete releases"
+	exit 1
+}
+
+grep -Eq '^[[:space:]]*workflows_keep_day:[[:space:]]*30[[:space:]]*$' "$AUTO_CLEAN" || {
+	echo "Auto-Clean must retain workflow runs and private artifacts for 30 days"
+	exit 1
+}
+
+while IFS= read -r workflow; do
+	if awk '
+		function indentation(line) {
+			match(line, /[^ \t]/)
+			return RSTART ? RSTART - 1 : length(line)
+		}
+		/^[ \t]*USE_QIUSIMONS_DAE_MAKEFILE:[ \t]*$/ {
+			in_setting = 1
+			setting_indent = indentation($0)
+			next
+		}
+		in_setting {
+			if ($0 ~ /^[ \t]*(#.*)?$/) next
+			if (indentation($0) <= setting_indent) {
+				in_setting = 0
+				next
+			}
+			normalized = tolower($0)
+			sub(/#.*/, "", normalized)
+			gsub(/[[:space:]"\047]/, "", normalized)
+			if (normalized == "default:true") bad = 1
+		}
+		END { exit bad ? 0 : 1 }
+	' "$workflow"; then
+		echo "production workflow defaults USE_QIUSIMONS_DAE_MAKEFILE to true: $workflow"
+		exit 1
+	fi
+done < <(find "$WORKFLOW_DIR" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print)
+
+if grep -RniE --include='*.sh' --include='*.yml' --include='*.yaml' \
+	'qiusimons/(luci-app-)?dae([/.]|$)' "$PACKAGES" "$ROOT_DIR/diy.sh" "$WORKFLOW_DIR"; then
+	echo "production paths must not dynamically replace dae Makefile from QiuSimons"
+	exit 1
+fi
 
 for package_line in \
 	'UPDATE_PACKAGE "noobwrt" "nooblk-98/luci-theme-noobwrt" "master"' \

@@ -6,7 +6,7 @@ PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 
-grep -Fq 'OPENCLAW_PACKAGE_COMMIT=904e7df084735382d152ae74a32935e6e0a1202d' "$PACKAGES_SH" || {
+grep -Fq 'OPENCLAW_PACKAGE_COMMIT=94d420b581d5aaaa379274fcf60e0e04cdd2c762' "$PACKAGES_SH" || {
   echo "openclaw source commit is not pinned"
   exit 1
 }
