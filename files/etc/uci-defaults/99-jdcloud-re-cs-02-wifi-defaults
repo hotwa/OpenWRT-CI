@@ -31,6 +31,7 @@ uci set wireless.default_radio0.network='lan'
 uci set wireless.default_radio0.mode='ap'
 uci set wireless.default_radio0.ssid='DAE-WRT-5.8G'
 uci set wireless.default_radio0.encryption='psk2+ccmp'
+uci set wireless.default_radio0.key='asdzxc147369'
 uci set wireless.default_radio0.ieee80211w='0'
 
 # 2.4 GHz: IoT compatibility SSID, fixed to the cleanest observed channel.
@@ -46,6 +47,7 @@ uci set wireless.default_radio1.network='lan'
 uci set wireless.default_radio1.mode='ap'
 uci set wireless.default_radio1.ssid='DAE-WRT-IoT'
 uci set wireless.default_radio1.encryption='psk2+ccmp'
+uci set wireless.default_radio1.key='asdzxc147369'
 uci set wireless.default_radio1.ieee80211w='0'
 
 # 5.2 GHz: PCIe QCN9074 radio, HE160 for the main high-throughput SSID.
@@ -60,6 +62,7 @@ uci set wireless.default_radio2.network='lan'
 uci set wireless.default_radio2.mode='ap'
 uci set wireless.default_radio2.ssid='DAE-WRT-5.2G'
 uci set wireless.default_radio2.encryption='psk2+ccmp'
+uci set wireless.default_radio2.key='asdzxc147369'
 uci set wireless.default_radio2.ieee80211w='0'
 
 uci commit wireless

@@ -29,6 +29,9 @@ grep -Fq "uci set wireless.default_radio2.ssid='DAE-WRT-5.2G'" "$DEFAULTS"
 grep -Fq "uci set wireless.radio2.channel='36'" "$DEFAULTS"
 grep -Fq "uci set wireless.radio2.htmode='HE160'" "$DEFAULTS"
 
+grep -Fq "uci set wireless.default_radio1.key='asdzxc147369'" "$DEFAULTS"
+grep -Fq "uci set wireless.default_radio0.key='asdzxc147369'" "$DEFAULTS"
+grep -Fq "uci set wireless.default_radio2.key='asdzxc147369'" "$DEFAULTS"
 grep -Fq "uci commit wireless" "$DEFAULTS"
 grep -Fq "wifi reload" "$DEFAULTS"
 
