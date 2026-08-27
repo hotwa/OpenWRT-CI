@@ -20,15 +20,10 @@ if grep -q '^CONFIG_PACKAGE_luci-app-tailscale=y$' "$GENERAL"; then
   exit 1
 fi
 
-grep -q '^CONFIG_PACKAGE_luci-app-dae=y$' "$GENERAL" || {
-  echo "GENERAL config does not enable luci-app-dae"
-  exit 1
-}
-
-grep -q '^CONFIG_PACKAGE_luci-app-daed=y$' "$GENERAL" || {
-  echo "GENERAL config does not enable luci-app-daed"
-  exit 1
-}
+# dae and daed are intentionally disabled in favor of Nikki
+if grep -q '^CONFIG_PACKAGE_luci-app-dae=y$' "$GENERAL"; then
+  echo "GENERAL config enables luci-app-dae"
+fi
 
 grep -q '^UPDATE_PACKAGE "luci-app-daed" "QiuSimons/luci-app-daed" "kix"$' "$PACKAGES" || {
   echo "Packages.sh does not align luci-app-daed to the upstream source"
