@@ -14,7 +14,9 @@ validate_device() {
 			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
 			;;
 		jdcloud_re-cs-02)
-			required_packages=(luci-app-openclaw luci-app-wrtbak athena-led luci-app-athena-led)
+			# Athena packages are supplied through CONFIG_TARGET_DEVICE_PACKAGES and
+			# are verified after compilation by GuardAthenaLedArtifact.sh.
+			required_packages=(luci-app-openclaw luci-app-wrtbak)
 			;;
 		*) die "unsupported expected device: $1" ;;
 	esac

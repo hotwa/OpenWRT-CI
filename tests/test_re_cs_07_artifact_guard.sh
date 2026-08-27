@@ -27,8 +27,6 @@ CONFIG_TARGET_qualcommax_ipq60xx=y
 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
 CONFIG_PACKAGE_luci-app-openclaw=y
 CONFIG_PACKAGE_luci-app-wrtbak=y
-CONFIG_PACKAGE_athena-led=y
-CONFIG_PACKAGE_luci-app-athena-led=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/re-cs-02.config" jdcloud_re-cs-02
 
