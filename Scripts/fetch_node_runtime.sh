@@ -124,12 +124,16 @@ preinstall_cli_agents_and_extensions() {
 	local packages=(
 		"pnpm@latest"
 		"opencode-ai@latest"
+		"@tarquinen/opencode-dcp@latest"
+		"@mohak34/opencode-notifier@latest"
+		"opencode-conductor-plugin@latest"
 		"@earendil-works/pi-coding-agent@latest"
 		"@aaronkyriesenbach/pi-package-manager@latest"
 		"btw-pi@latest"
 		"pi-plan-mode@latest"
 		"pi-web-search@latest"
 		"pi-wechat-assistant@latest"
+		"hermes-agent@latest"
 	)
 
 	# If host has npm, install packages into the target node_modules prefix
@@ -146,7 +150,7 @@ preinstall_cli_agents_and_extensions() {
 setup_symlinks() {
 	log_info "Configuring binary symlinks..."
 
-	for bin in node npm npx corepack pnpm opencode pi; do
+	for bin in node npm npx corepack pnpm opencode pi hermes; do
 		if [ -f "$NODE_BIN_DIR/$bin" ]; then
 			chmod +x "$NODE_BIN_DIR/$bin" 2>/dev/null || true
 			ln -sf "/opt/node/bin/$bin" "$SYS_BIN_DIR/$bin"

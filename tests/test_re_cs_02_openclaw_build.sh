@@ -20,8 +20,9 @@ grep -q '^CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-
 for setting in CONFIG_ATH11K_MEM_PROFILE_512M=y CONFIG_NSS_FIRMWARE_VERSION_12_2=y CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y CONFIG_PACKAGE_kmod-fs-ext4=y CONFIG_PACKAGE_kmod-usb-storage=y; do
 	grep -qx "$setting" "$CONFIG"
 done
-if grep -q '^CONFIG_PACKAGE_luci-app-openclaw=y$' "$GENERAL"; then
-	echo "OpenClaw must be disabled in GENERAL.txt"
+grep -qx 'CONFIG_PACKAGE_luci-app-openclaw=y' "$GENERAL"
+if grep -q '^CONFIG_PACKAGE_luci-app-openclaw=y$' "$CONFIG"; then
+	echo "OpenClaw must be inherited from GENERAL.txt"
 	exit 1
 fi
 

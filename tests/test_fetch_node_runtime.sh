@@ -51,14 +51,18 @@ for ext in \
   "btw-pi" \
   "pi-plan-mode" \
   "pi-web-search" \
-  "pi-wechat-assistant"; do
+  "pi-wechat-assistant" \
+  "@tarquinen/opencode-dcp" \
+  "@mohak34/opencode-notifier" \
+  "opencode-conductor-plugin" \
+  "hermes-agent"; do
   grep -q "$ext" "$FETCH_SCRIPT" || {
-    echo "fetch_node_runtime.sh missing pi extension: $ext"
+    echo "fetch_node_runtime.sh missing extension or agent: $ext"
     exit 1
   }
 done
 
-for bin in node npm npx pnpm opencode pi; do
+for bin in node npm npx pnpm opencode pi hermes; do
   grep -q "$bin" "$FETCH_SCRIPT" || {
     echo "fetch_node_runtime.sh missing symlink handling for $bin"
     exit 1
