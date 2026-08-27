@@ -31,8 +31,8 @@ tr -d '\r' <"$TAILSCALE_CONFIG" | grep "^config lan_to_tailnet 'lan_to_tailnet'$
 	exit 1
 }
 
-tr -d '\r' <"$TAILSCALE_CONFIG" | grep "^	option enabled '0'$" >/dev/null || {
-	echo "lan_to_tailnet must be disabled by default"
+tr -d '\r' <"$TAILSCALE_CONFIG" | grep "^	option enabled '1'$" >/dev/null || {
+	echo "lan_to_tailnet must be enabled by default"
 	exit 1
 }
 
@@ -72,8 +72,8 @@ grep -q "config_get enabled.*lan_to_tailnet" "$GATEWAY_INIT" || {
 	exit 1
 }
 
-grep -q 'ensure_default_option "tailscale.\$SECTION.enabled" "0"' "$GATEWAY_INIT" || {
-	echo "gateway script must preserve an operator-enabled LAN-to-tailnet switch"
+grep -q 'ensure_default_option "tailscale.\$SECTION.enabled" "1"' "$GATEWAY_INIT" || {
+	echo "gateway script must set default LAN-to-tailnet switch to 1"
 	exit 1
 }
 

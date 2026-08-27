@@ -62,7 +62,7 @@ ensure_tailscale_config() {
 		changed=1
 	fi
 
-	ensure_default_option "tailscale.$SECTION.enabled" "0"
+	ensure_default_option "tailscale.$SECTION.enabled" "1"
 	ensure_default_option "tailscale.$SECTION.cidr4" "$DEFAULT_CIDR4"
 	ensure_default_option "tailscale.$SECTION.cidr6" "$DEFAULT_CIDR6"
 	ensure_default_option "tailscale.$SECTION.dns_domain" "$DEFAULT_DNS_DOMAIN"
