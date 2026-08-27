@@ -38,5 +38,6 @@ grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$WORKFLOW"
 grep -Fq 'WRTBAK_PROXY_PROFILE: auto' "$WORKFLOW"
+grep -Fq 'WRT_IP: 192.168.11.1' "$WORKFLOW"
 
 echo "RE-CS-02 OpenClaw build guards passed"

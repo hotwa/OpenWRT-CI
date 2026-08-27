@@ -17,7 +17,7 @@ jobs:
       WRT_NAME: RE-CS-02-OPENCLAW
       WRT_SSID: RE-CS-02
       WRT_WORD: 12345678
-      WRT_IP: 192.168.10.1
+      WRT_IP: 192.168.11.1
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
