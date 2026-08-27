@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
+required_packages=()
 
 die() {
-	echo "RE-CS-07 artifact guard: $*" >&2
+	echo "JDCloud artifact guard: $*" >&2
 	exit 1
 }
 
 validate_device() {
-	[ "$1" = 'jdcloud_re-cs-07' ] || die "unsupported expected device: $1"
+	case "$1" in
+		jdcloud_re-cs-07)
+			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
+			;;
+		jdcloud_re-cs-02)
+			required_packages=(luci-app-openclaw luci-app-wrtbak athena-led luci-app-athena-led)
+			;;
+		*) die "unsupported expected device: $1" ;;
+	esac
 }
 
 check_manifest() {
