@@ -115,7 +115,7 @@ if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
 	UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
 	# Fetch from the stable branch, then detach at the reviewed commit for reproducible builds.
 	WRTBAK_PACKAGE_BRANCH=main
-	WRTBAK_PACKAGE_COMMIT=338492873bbc07af5cbfa7aa19d84e3f39215b93
+	WRTBAK_PACKAGE_COMMIT=9d0cfb2eb12530d63ba1481e4cf12e04e6ed55a1
 	UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"
 fi
 # 临时移除 podman，跳过 luci-app-podman 拉取。
@@ -141,7 +141,8 @@ UPDATE_PACKAGE "gecoosac" "laipeng668/luci-app-gecoosac" "main"
 UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
 UPDATE_PACKAGE "netspeedtest" "sirpdboy/netspeedtest" "main" "" "homebox ookla-speedtest"
 UPDATE_PACKAGE "netwizard" "sirpdboy/luci-app-netwizard" "main"
-UPDATE_PACKAGE "openclaw" "hotwa/luci-app-openclaw" "main"
+OPENCLAW_PACKAGE_COMMIT=904e7df084735382d152ae74a32935e6e0a1202d
+UPDATE_PACKAGE "openclaw" "hotwa/luci-app-openclaw" "main" "" "" "$OPENCLAW_PACKAGE_COMMIT"
 UPDATE_PACKAGE "openlist2" "sbwml/luci-app-openlist2" "main"
 UPDATE_PACKAGE "partexp" "sirpdboy/luci-app-partexp" "main"
 UPDATE_PACKAGE "qbittorrent" "sbwml/luci-app-qbittorrent" "master" "" "qt6base qt6tools rblibtorrent"
