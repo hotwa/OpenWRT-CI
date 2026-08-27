@@ -25,7 +25,7 @@ grep -Fq 'WRTBAK_PACKAGE_BRANCH=main' "$PACKAGES_SH" || {
 	exit 1
 }
 
-grep -Fq 'WRTBAK_PACKAGE_COMMIT=338492873bbc07af5cbfa7aa19d84e3f39215b93' "$PACKAGES_SH" || {
+grep -Fq 'WRTBAK_PACKAGE_COMMIT=9d0cfb2eb12530d63ba1481e4cf12e04e6ed55a1' "$PACKAGES_SH" || {
 	echo "Packages.sh does not pin the reviewed wrtbak commit"
 	exit 1
 }
