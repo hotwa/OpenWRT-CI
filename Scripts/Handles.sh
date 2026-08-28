@@ -193,6 +193,36 @@ if [ -f "$GNULIB_MAKEFILE" ]; then
 			echo "ERROR: gnulib 120-unmangle-darwin-fts-h.patch checksum mismatch" >&2
 			exit 1
 		}
+		retry_cmd 5 15 curl -fsSL \
+			"https://raw.githubusercontent.com/immortalwrt/immortalwrt/a3830a1589/tools/gnulib/patches/400-c23-qualifier-generic.patch" \
+			-o "$GNULIB_PATCH_DIR/400-c23-qualifier-generic.patch" || {
+			echo "ERROR: failed to download gnulib 400-c23-qualifier-generic.patch" >&2
+			exit 1
+		}
+		retry_cmd 5 15 curl -fsSL \
+			"https://raw.githubusercontent.com/immortalwrt/immortalwrt/a3830a1589/tools/gnulib/patches/410-unmacro-fts-functions.patch" \
+			-o "$GNULIB_PATCH_DIR/410-unmacro-fts-functions.patch" || {
+			echo "ERROR: failed to download gnulib 410-unmacro-fts-functions.patch" >&2
+			exit 1
+		}
+		retry_cmd 5 15 curl -fsSL \
+			"https://raw.githubusercontent.com/immortalwrt/immortalwrt/a3830a1589/tools/gnulib/patches/450-attribute-specifier-order.patch" \
+			-o "$GNULIB_PATCH_DIR/450-attribute-specifier-order.patch" || {
+			echo "ERROR: failed to download gnulib 450-attribute-specifier-order.patch" >&2
+			exit 1
+		}
+		[ "$(sha256sum "$GNULIB_PATCH_DIR/400-c23-qualifier-generic.patch" | cut -d' ' -f1)" = "b12622af14a5b59ddc2328c93bc3333b7a99ac02b0b7363a9cea8018f9e185bb" ] || {
+			echo "ERROR: gnulib 400-c23-qualifier-generic.patch checksum mismatch" >&2
+			exit 1
+		}
+		[ "$(sha256sum "$GNULIB_PATCH_DIR/410-unmacro-fts-functions.patch" | cut -d' ' -f1)" = "85876c5586a101480de469b1ba9eac1fe92e59e1f874ebc04a46b817819e3b3e" ] || {
+			echo "ERROR: gnulib 410-unmacro-fts-functions.patch checksum mismatch" >&2
+			exit 1
+		}
+		[ "$(sha256sum "$GNULIB_PATCH_DIR/450-attribute-specifier-order.patch" | cut -d' ' -f1)" = "30aac3d15d2cd0f68611e8e84207a2b1d45d62574cc4999a615c6e64c7cf6078" ] || {
+			echo "ERROR: gnulib 450-attribute-specifier-order.patch checksum mismatch" >&2
+			exit 1
+		}
 		for p in $GNULIB_OBSOLETE_PATCHES; do
 			[ ! -e "$GNULIB_PATCH_DIR/$p" ] || {
 				echo "ERROR: obsolete gnulib patch survived: $p" >&2
