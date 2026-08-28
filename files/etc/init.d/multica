@@ -1,0 +1,108 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+USE_PROCD=1
+
+CONFIG="multica"
+SECTION="main"
+PROG="/usr/local/bin/multica"
+
+cfg() {
+	local name="$1"
+	local default="$2"
+	local value
+	value="$(uci -q get "$CONFIG.$SECTION.$name" 2>/dev/null || true)"
+	[ -n "$value" ] || value="$default"
+	printf '%s' "$value"
+}
+
+derive_device_name() {
+	local explicit="$1"
+	local hostname="" board="" lan_ip="" site=""
+
+	if [ -n "$explicit" ]; then
+		printf '%s' "$explicit" | tr -cs 'A-Za-z0-9_.-' '-'
+		return 0
+	fi
+
+	hostname="$(uci -q get system.@system[0].hostname 2>/dev/null || true)"
+	[ -n "$hostname" ] || hostname="openwrt"
+
+	lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+	case "$lan_ip" in
+		192.168.*.*)
+			site="${lan_ip#192.168.}"
+			site="${site%%.*}"
+			;;
+	esac
+
+	if [ -n "$site" ]; then
+		printf '%s-%s' "$hostname" "$site" | tr -cs 'A-Za-z0-9_.-' '-'
+	else
+		printf '%s' "$hostname" | tr -cs 'A-Za-z0-9_.-' '-'
+	fi
+}
+
+start_service() {
+	local enabled="$(cfg enabled 0)"
+	case "$enabled" in
+		1|true|yes|on) ;;
+		*) return 0 ;;
+	esac
+
+	[ -x "$PROG" ] || command -v multica >/dev/null 2>&1 || {
+		logger -t multica "multica binary not found at $PROG"
+		return 1
+	}
+
+	local token="$(cfg token '')"
+	[ -n "$token" ] || {
+		logger -t multica "multica token is not configured"
+		return 1
+	}
+
+	local server_url="$(cfg server_url 'https://api.multica.jmsu.top')"
+	local app_url="$(cfg app_url 'https://multica.jmsu.top')"
+	local workspace_id="$(cfg workspace_id '')"
+	local device_name="$(derive_device_name "$(cfg device_name '')")"
+	local runtime_name="$(cfg runtime_name 'OpenWrt-Agent')"
+	local workspaces_root="$(cfg workspaces_root '/data/multica/workspaces')"
+	local max_tasks="$(cfg max_concurrent_tasks '2')"
+	local poll_interval="$(cfg poll_interval '30s')"
+	local heartbeat_interval="$(cfg heartbeat_interval '15s')"
+
+	mkdir -p /data/multica "$workspaces_root" /root/.multica
+	chmod 700 /data/multica /root/.multica
+
+	# Render ~/.multica/config.json with proper permissions
+	local config_json="/root/.multica/config.json"
+	cat <<EOF > "$config_json"
+{
+  "server_url": "$server_url",
+  "app_url": "$app_url",
+  "token": "$token",
+  "workspace_id": "$workspace_id",
+  "device_name": "$device_name",
+  "runtime_name": "$runtime_name",
+  "workspaces_root": "$workspaces_root",
+  "max_concurrent_tasks": $max_tasks,
+  "poll_interval": "$poll_interval",
+  "heartbeat_interval": "$heartbeat_interval"
+}
+EOF
+	chmod 600 "$config_json"
+
+	procd_open_instance
+	procd_set_param command "$PROG" daemon start --foreground
+	procd_set_param env HOME=/root \
+		MULTICA_SERVER_URL="$server_url" \
+		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
+		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \
+		MULTICA_WORKSPACES_ROOT="$workspaces_root" \
+		MULTICA_WORKSPACE_ID="$workspace_id"
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}

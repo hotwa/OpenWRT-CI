@@ -166,6 +166,10 @@ on:
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
+  MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
+  MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
+  MULTICA_APP_URL: ${{secrets.MULTICA_APP_URL}}
+  MULTICA_WORKSPACE_ID: ${{secrets.MULTICA_WORKSPACE_ID}}
   OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
   WRTBAK_R2_ENDPOINT: ${{secrets.WRTBAK_R2_ENDPOINT}}
   WRTBAK_R2_REGION: ${{secrets.WRTBAK_R2_REGION}}
@@ -468,6 +472,7 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
             $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/MulticaAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
