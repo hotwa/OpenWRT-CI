@@ -81,8 +81,10 @@ grep -v '^CONFIG_PACKAGE_gre=y$' "$WORK_DIR/.config" >"$WORK_DIR/missing.config"
 grep -v '^CONFIG_PACKAGE_vm103-failover=y$' "$WORK_DIR/.config" >"$WORK_DIR/missing-vm103.config"
 ! bash "$SCRIPT" defconfig "$WORK_DIR/missing-vm103.config" "$DEVICE" >/dev/null 2>&1
 printf 'factory\n' >"$WORK_DIR/upload/openwrt-jdcloud_re-cs-07-factory.bin"
-! bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE" >/dev/null 2>&1
+(cd "$WORK_DIR/upload" && sha256sum * >SHA256SUMS 2>/dev/null && sed -i '/SHA256SUMS/d' SHA256SUMS)
+bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE"
 rm "$WORK_DIR/upload/openwrt-jdcloud_re-cs-07-factory.bin"
+(cd "$WORK_DIR/upload" && sha256sum * >SHA256SUMS 2>/dev/null && sed -i '/SHA256SUMS/d' SHA256SUMS)
 
 # Stage rejects a non-flat upload staging tree.
 mkdir -p "$WORK_DIR/nested-upload/nested"

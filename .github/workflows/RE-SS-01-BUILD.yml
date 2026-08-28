@@ -1,12 +1,12 @@
-name: RE-CS-02 OpenClaw Build Only
+name: RE-SS-01 Build Only
 
 on:
   workflow_dispatch:
     inputs:
       LAN_IP:
-        description: 'Router LAN IP (e.g. 192.168.11.1)'
+        description: 'Router LAN IP (e.g. 192.168.10.1)'
         required: false
-        default: '192.168.11.1'
+        default: '192.168.10.1'
 
 permissions:
   actions: write
@@ -17,12 +17,12 @@ jobs:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
-      WRT_CONFIG: IPQ60XX-RE-CS-02-OPENCLAW
+      WRT_CONFIG: IPQ60XX-RE-SS-01
       WRT_THEME: argon
-      WRT_NAME: RE-CS-02-OPENCLAW
-      WRT_SSID: RE-CS-02
-      WRT_WORD: asdzxc147369
-      WRT_IP: ${{ inputs.LAN_IP || '192.168.11.1' }}
+      WRT_NAME: RE-SS-01
+      WRT_SSID: RE-SS-01
+      WRT_WORD: 12345678
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
@@ -30,12 +30,12 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
       WRT_SPLIT_DEVICE_ARTIFACTS: false
-      WRT_EXPECTED_DEVICE: jdcloud_re-cs-02
-      WRT_REQUIRED_DEVICE: jdcloud_re-cs-02
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
+      WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
       WRT_FEATURE_OVERLAY: true
       WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
-      WRTBAK_DEVICE_ALIAS: home-re-cs-02
+      WRTBAK_DEVICE_ALIAS: home-re-ss-01
       WRTBAK_PROXY_PROFILE: auto
-      CI_NAME: RE-CS-02-OPENCLAW-BUILD
+      CI_NAME: RE-SS-01-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360

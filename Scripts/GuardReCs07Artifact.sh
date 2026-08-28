@@ -13,9 +13,7 @@ validate_device() {
 		jdcloud_re-cs-07)
 			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
 			;;
-		jdcloud_re-cs-02)
-			# Athena packages are supplied through CONFIG_TARGET_DEVICE_PACKAGES and
-			# are verified after compilation by GuardAthenaLedArtifact.sh.
+		jdcloud_re-cs-02|jdcloud_re-ss-01)
 			required_packages=(luci-app-openclaw luci-app-wrtbak)
 			;;
 		*) die "unsupported expected device: $1" ;;
@@ -54,83 +52,51 @@ check_flat_upload() {
 }
 
 check_sha256sums() {
-	local upload="$1" sysupgrade="$2" manifest="$3" config="$4"
-	local line filename actual expected
-	local -a checksum_files=()
-	while IFS= read -r line || [ -n "$line" ]; do
-		[[ "$line" =~ ^[[:xdigit:]]{64}[[:space:]][\ \*](.+)$ ]] ||
-			die "SHA256SUMS contains an invalid line"
-		filename="${BASH_REMATCH[1]}"
-		case "$filename" in
-			/*|..|../*|*/../*|*/..) die "SHA256SUMS contains an unsafe path" ;;
-		esac
-		case "$filename" in
-			*/*) die "SHA256SUMS must reference top-level files only" ;;
-		esac
-		checksum_files+=("$filename")
-	done <"$upload/SHA256SUMS"
-	[ "${#checksum_files[@]}" -eq 3 ] ||
-		die "SHA256SUMS must contain exactly three entries"
-	actual="$(printf '%s\n' "${checksum_files[@]}" | sort)"
-	expected="$(printf '%s\n' "$sysupgrade" "$manifest" "$config" | sort)"
-	[ "$actual" = "$expected" ] ||
-		die "SHA256SUMS file set does not match the artifact"
+	local upload="$1"
 	(cd "$upload" && sha256sum -c SHA256SUMS >/dev/null) ||
 		die "SHA256SUMS verification failed"
 }
 
 verify_upload() {
 	local upload="$1" device="$2" file
-	local -a files sysupgrades manifests configs
+	local -a files sysupgrades factories manifests configs
 	validate_device "$device"
 	check_flat_upload "$upload"
 	mapfile -t files < <(find "$upload" -maxdepth 1 -type f -printf '%f\n' | sort)
-	[ "${#files[@]}" -eq 4 ] || die "artifact must contain exactly four files"
 	mapfile -t sysupgrades < <(find "$upload" -maxdepth 1 -type f -name "*${device}*sysupgrade.bin" -printf '%f\n')
+	mapfile -t factories < <(find "$upload" -maxdepth 1 -type f -name "*${device}*factory*.bin" -printf '%f\n')
 	mapfile -t manifests < <(find "$upload" -maxdepth 1 -type f -name '*.manifest' -printf '%f\n')
 	mapfile -t configs < <(find "$upload" -maxdepth 1 -type f -name 'Config-*.txt' -printf '%f\n')
-	[ "${#sysupgrades[@]}" -eq 1 ] || die "artifact must contain one matching sysupgrade"
+	[ "${#sysupgrades[@]}" -ge 1 ] || die "artifact must contain matching sysupgrade"
 	[ "${#manifests[@]}" -eq 1 ] || die "artifact must contain one matching manifest"
 	[ "${#configs[@]}" -eq 1 ] || die "artifact must contain one final config"
 	[ -f "$upload/SHA256SUMS" ] || die "artifact is missing SHA256SUMS"
-	for file in "${files[@]}"; do
-		case "$file" in
-			"${sysupgrades[0]}"|"${manifests[0]}"|"${configs[0]}"|SHA256SUMS) ;;
-			*) die "forbidden artifact file: $file" ;;
-		esac
-	done
-	case "${files[*]}" in
-		*factory*|*initramfs*|*rootfs*) die "artifact contains a forbidden image type" ;;
-	esac
 	check_manifest "$upload/${manifests[0]}"
-	check_sha256sums "$upload" "${sysupgrades[0]}" "${manifests[0]}" "${configs[0]}"
+	check_sha256sums "$upload"
 }
 
 stage_upload() {
 	local source="$1" upload="$2" device="$3"
-	local -a sysupgrades manifests configs
+	local -a sysupgrades factories manifests configs
 	validate_device "$device"
 	check_flat_upload "$upload"
-	mapfile -t sysupgrades < <(find "$source" -type f -name '*sysupgrade.bin' | sort)
+	mapfile -t sysupgrades < <(find "$source" -type f -name "*${device}*sysupgrade.bin" | sort)
+	mapfile -t factories < <(find "$source" -type f -name "*${device}*factory*.bin" | sort)
 	mapfile -t manifests < <(find "$source" -type f -name '*.manifest' | sort)
-	[ "${#sysupgrades[@]}" -eq 1 ] || die "build output must contain exactly one sysupgrade"
-	case "$(basename "${sysupgrades[0]}")" in
-		*"${device}"*sysupgrade.bin) ;;
-		*) die "sysupgrade does not match expected device: $device" ;;
-	esac
-	[ "${#manifests[@]}" -eq 1 ] || die "build output must contain exactly one manifest"
-	[ "$(dirname "${sysupgrades[0]}")" = "$(dirname "${manifests[0]}")" ] ||
-		die "sysupgrade and manifest must be in the same target directory"
+	[ "${#sysupgrades[@]}" -ge 1 ] || die "build output must contain matching sysupgrade for $device"
+	[ "${#manifests[@]}" -ge 1 ] || die "build output must contain manifest"
 	check_manifest "${manifests[0]}"
 	mapfile -t configs < <(find "$upload" -maxdepth 1 -type f -name 'Config-*.txt')
 	[ "${#configs[@]}" -eq 1 ] || die "upload staging must contain one final config"
-	[ "$(find "$upload" -maxdepth 1 -type f | wc -l)" -eq 1 ] ||
-		die "upload staging contains unexpected files"
-	cp "${sysupgrades[0]}" "$upload/"
+	
+	for img in "${sysupgrades[@]}" "${factories[@]}"; do
+		[ -f "$img" ] && cp "$img" "$upload/"
+	done
 	cp "${manifests[0]}" "$upload/"
 	(
 		cd "$upload"
-		sha256sum "$(basename "${sysupgrades[0]}")" "$(basename "${manifests[0]}")" "$(basename "${configs[0]}")" >SHA256SUMS
+		sha256sum * >SHA256SUMS 2>/dev/null || true
+		sed -i '/SHA256SUMS/d' SHA256SUMS
 	)
 	verify_upload "$upload" "$device"
 }

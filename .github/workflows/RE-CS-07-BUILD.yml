@@ -2,6 +2,11 @@ name: RE-CS-07 Build Only
 
 on:
   workflow_dispatch:
+    inputs:
+      LAN_IP:
+        description: 'Router LAN IP (e.g. 192.168.10.1)'
+        required: false
+        default: '192.168.10.1'
 
 permissions:
   actions: write
@@ -10,13 +15,14 @@ permissions:
 jobs:
   build:
     uses: ./.github/workflows/WRT-CORE.yml
+    secrets: inherit
     with:
       WRT_CONFIG: IPQ60XX-RE-CS-07-NOWIFI
       WRT_THEME: argon
       WRT_NAME: RE-CS-07
       WRT_SSID: RE-CS-07
       WRT_WORD: 12345678
-      WRT_IP: 192.168.10.1
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
@@ -28,10 +34,3 @@ jobs:
       CI_NAME: RE-CS-07-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
-    secrets:
-      WRTBAK_R2_ENDPOINT: ${{ secrets.WRTBAK_R2_ENDPOINT }}
-      WRTBAK_R2_REGION: ${{ secrets.WRTBAK_R2_REGION }}
-      WRTBAK_R2_BUCKET: ${{ secrets.WRTBAK_R2_BUCKET }}
-      WRTBAK_R2_PREFIX: ${{ secrets.WRTBAK_R2_PREFIX }}
-      WRTBAK_R2_ACCESS_KEY_ID: ${{ secrets.WRTBAK_R2_ACCESS_KEY_ID }}
-      WRTBAK_R2_SECRET_ACCESS_KEY: ${{ secrets.WRTBAK_R2_SECRET_ACCESS_KEY }}

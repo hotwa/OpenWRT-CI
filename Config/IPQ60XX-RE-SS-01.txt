@@ -1,0 +1,17 @@
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq60xx=y
+CONFIG_TARGET_PER_DEVICE_ROOTFS=y
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
+CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01="ipq-wifi-jdcloud_re-ss-01"
+
+# NSS and Memory Profiles
+CONFIG_ATH11K_MEM_PROFILE_512M=y
+CONFIG_NSS_FIRMWARE_VERSION_12_2=y
+CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y
+
+# Storage and Filesystem support
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-f2fs=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_f2fs-tools=y
+CONFIG_PACKAGE_e2fsprogs=y
