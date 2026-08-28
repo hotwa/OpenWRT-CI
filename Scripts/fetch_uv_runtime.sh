@@ -182,7 +182,7 @@ select_python_asset() {
 		[
 			select((.draft // false) == false and (.prerelease // false) == false)
 			| (.assets // [])[]
-			| select(.name | test("^cpython-" + ($series | gsub("\\."; "\\\\.")) + "\\.[0-9]+\\+[0-9]+-" + $target + "-install_only\\.tar\\.gz$"))
+			| select(.name | test("^cpython-" + ($series | gsub("\\."; "\\.")) + "\\.[0-9]+\\+[0-9]+-" + $target + "-install_only\\.tar\\.gz$"))
 			| [.name, .browser_download_url]
 			| @tsv
 		][0] // empty

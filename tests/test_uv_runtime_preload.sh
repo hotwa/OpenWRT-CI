@@ -109,4 +109,59 @@ grep -q "3.10 3.11 3.12 3.13" "$FETCH_SCRIPT" || {
   exit 1
 }
 
+# Functional regression: select_python_asset must match a pinned-style asset
+# name. A double-escaped dot in the jq gsub once made every series unmatchable
+# and surfaced as a misleading "has no asset" error.
+FIXTURE_JSON="$(mktemp)"
+trap 'rm -f "$FIXTURE_JSON"' EXIT
+cat >"$FIXTURE_JSON" <<'EOF'
+{
+  "tag_name": "20260825",
+  "draft": false,
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "cpython-3.10.21+20260825-aarch64-unknown-linux-musl-install_only.tar.gz",
+      "browser_download_url": "https://example.invalid/cpython-3.10.tar.gz"
+    },
+    {
+      "name": "cpython-3.10.21+20260825-aarch64-unknown-linux-musl-install_only_stripped.tar.gz",
+      "browser_download_url": "https://example.invalid/cpython-3.10-stripped.tar.gz"
+    }
+  ]
+}
+EOF
+
+SELECTED_ROW="$(FETCH_UV_RUNTIME_LIBRARY_ONLY=1 bash -c '
+  set -euo pipefail
+  . "$1"
+  select_python_asset "$2" "3.10" "aarch64-unknown-linux-musl"
+' _ "$FETCH_SCRIPT" "$FIXTURE_JSON")" || {
+  echo "select_python_asset failed on the fixture release"
+  exit 1
+}
+
+case "$SELECTED_ROW" in
+  cpython-3.10.21+20260825-aarch64-unknown-linux-musl-install_only.tar.gz*https://example.invalid/cpython-3.10.tar.gz) ;;
+  *)
+    echo "select_python_asset returned an unexpected row: $SELECTED_ROW"
+    exit 1
+    ;;
+esac
+
+EMPTY_ROW="$(FETCH_UV_RUNTIME_LIBRARY_ONLY=1 bash -c '
+  set -euo pipefail
+  . "$1"
+  select_python_asset "$2" "3.11" "aarch64-unknown-linux-musl"
+' _ "$FETCH_SCRIPT" "$FIXTURE_JSON")" || {
+  echo "select_python_asset errored on a missing series"
+  exit 1
+}
+[ -z "$EMPTY_ROW" ] || {
+  echo "select_python_asset should return empty for a missing series"
+  exit 1
+}
+rm -f "$FIXTURE_JSON"
+trap - EXIT
+
 echo "uv runtime preload guard test passed"
