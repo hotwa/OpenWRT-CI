@@ -67,7 +67,7 @@ fi
 
 # 2. Setup standard directory layout and symlinks on /data
 if [ -d /data ]; then
-	mkdir -p /data/multica
+	mkdir -p /data/multica/workspaces
 	mkdir -p /data/agent_workspaces
 	mkdir -p /data/pi
 	mkdir -p /data/opencode
@@ -76,6 +76,7 @@ if [ -d /data ]; then
 
 	if [ -d /root ]; then
 		[ ! -e /root/.multica ] && ln -sfn /data/multica /root/.multica 2>/dev/null || true
+		[ ! -e /root/multica-workspaces ] && ln -sfn /data/multica/workspaces /root/multica-workspaces 2>/dev/null || true
 		[ ! -e /root/.pi ] && ln -sfn /data/pi /root/.pi 2>/dev/null || true
 		[ ! -e /root/.opencode ] && ln -sfn /data/opencode /root/.opencode 2>/dev/null || true
 	fi

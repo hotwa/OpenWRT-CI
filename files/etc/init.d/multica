@@ -62,8 +62,8 @@ start_service() {
 		return 1
 	}
 
-	local server_url="$(cfg server_url 'https://api.multica.jmsu.top')"
-	local app_url="$(cfg app_url 'https://multica.jmsu.top')"
+	local server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
+	local app_url="$(cfg app_url 'https://multica.lucky.jmsu.top')"
 	local workspace_id="$(cfg workspace_id '')"
 	local device_name="$(derive_device_name "$(cfg device_name '')")"
 	local runtime_name="$(cfg runtime_name 'OpenWrt-Agent')"
