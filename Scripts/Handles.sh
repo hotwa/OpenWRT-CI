@@ -126,11 +126,15 @@ if [ -f "$GETTEXT_MAKEFILE" ]; then
 		sed -i "s/^PKG_HASH:=$GETTEXT_OLD_HASH\$/PKG_HASH:=$GETTEXT_NEW_HASH/" "$GETTEXT_MAKEFILE"
 		sed -i 's|^  URL:=https://www.gnu.org/software/gettext/$|  URL:=https://www.gnu.org/software/gettext/\n  DEPENDS:=+libunistring +libxml2|' "$GETTEXT_MAKEFILE"
 		grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE" && \
-			grep -q "^PKG_HASH:=$GETTEXT_NEW_HASH\$" "$GETTEXT_MAKEFILE" || {
+			grep -q "^PKG_HASH:=$GETTEXT_NEW_HASH\$" "$GETTEXT_MAKEFILE" && \
+			grep -q '^  DEPENDS:=+libunistring +libxml2$' "$GETTEXT_MAKEFILE" || {
 			echo "ERROR: failed to bump gettext-full to 0.24.2" >&2
 			exit 1
 		}
 		cd "$PKG_PATH" && echo "gettext-full has been bumped to 0.24.2!"
+	else
+		echo "ERROR: gettext-full Makefile matches neither 0.24.1 (expected) nor 0.24.2 — source pin may have drifted" >&2
+		exit 1
 	fi
 fi
 
@@ -230,6 +234,9 @@ if [ -f "$GNULIB_MAKEFILE" ]; then
 			}
 		done
 		cd "$PKG_PATH" && echo "gnulib has been bumped to stable-202507!"
+	else
+		echo "ERROR: gnulib Makefile matches neither $GNULIB_OLD_VER (expected) nor $GNULIB_NEW_VER — source pin may have drifted" >&2
+		exit 1
 	fi
 fi
 
