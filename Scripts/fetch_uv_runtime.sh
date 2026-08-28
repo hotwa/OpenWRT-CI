@@ -1,10 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-. "$(dirname "$(realpath "$0")")/retry.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/retry.sh"
 
 ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-FILES_DIR="$ROOT_DIR/files"
+FILES_DIR="${1:-$ROOT_DIR/files}"
 UV_BIN_DIR="$FILES_DIR/usr/bin"
 UV_ROOT_DIR="$FILES_DIR/opt/uv"
 UV_PYTHON_DIR="$UV_ROOT_DIR/python"
@@ -21,9 +22,42 @@ PYTHON_RELEASE_TAG="20260825"
 PYTHON_RELEASES_API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$PYTHON_RELEASE_TAG"
 PYTHON_SHA256SUMS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/$PYTHON_RELEASE_TAG/SHA256SUMS"
 PYTHON_SERIES=(3.10 3.11 3.12 3.13)
+RUNTIME_RELEASES_JSON=""
+RUNTIME_CHECKSUMS_FILE=""
 
 warn() {
 	echo "WARN: $*" >&2
+}
+
+cleanup_runtime_metadata() {
+	[ -z "$RUNTIME_RELEASES_JSON" ] || rm -f -- "$RUNTIME_RELEASES_JSON"
+	[ -z "$RUNTIME_CHECKSUMS_FILE" ] || rm -f -- "$RUNTIME_CHECKSUMS_FILE"
+}
+
+github_api_download() {
+	local url="$1" output_file="$2" token attempt=1
+	local -a auth_args=()
+
+	token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+	if [ -n "$token" ]; then
+		auth_args=(-H "Authorization: Bearer $token")
+	fi
+
+	while [ "$attempt" -le 5 ]; do
+		if curl -fsSL \
+			-H "Accept: application/vnd.github+json" \
+			-H "X-GitHub-Api-Version: 2022-11-28" \
+			"${auth_args[@]}" "$url" -o "$output_file"; then
+			return 0
+		fi
+		warn "GitHub API request failed (attempt $attempt/5): $url"
+		[ "$attempt" -eq 5 ] && break
+		sleep 15
+		attempt=$((attempt + 1))
+	done
+
+	echo "ERROR: unable to download pinned release metadata from GitHub API; check network access or API rate limits" >&2
+	return 1
 }
 
 config_file() {
@@ -202,7 +236,7 @@ EOF
 fetch_python_releases_json() {
 	local output_file="$1"
 
-	retry_cmd 5 15 curl -fsSL "$PYTHON_RELEASES_API" -o "$output_file"
+	github_api_download "$PYTHON_RELEASES_API" "$output_file" || return 1
 	[ "$(jq -r '.tag_name // empty' "$output_file")" = "$PYTHON_RELEASE_TAG" ] || {
 		echo "ERROR: python-build-standalone release metadata did not match $PYTHON_RELEASE_TAG" >&2
 		return 1
@@ -210,7 +244,7 @@ fetch_python_releases_json() {
 }
 
 main() {
-	local uv_target releases_json checksums_file
+	local uv_target
 
 	prepare_overlay_dirs
 
@@ -222,14 +256,14 @@ main() {
 	download_uv_binary "$uv_target"
 	prepare_mirror_manifest
 
-	releases_json="$(mktemp)"
-	checksums_file="$(mktemp)"
-	trap 'rm -f "$releases_json" "$checksums_file"' EXIT
-	fetch_python_releases_json "$releases_json"
-	retry_cmd 5 15 curl -fsSL "$PYTHON_SHA256SUMS_URL" -o "$checksums_file"
-	mirror_python_series "$uv_target" "$releases_json" "$checksums_file"
-	rm -f "$releases_json" "$checksums_file"
+	RUNTIME_RELEASES_JSON="$(mktemp)"
+	RUNTIME_CHECKSUMS_FILE="$(mktemp)"
+	trap cleanup_runtime_metadata EXIT
+	fetch_python_releases_json "$RUNTIME_RELEASES_JSON"
+	retry_cmd 5 15 curl -fsSL "$PYTHON_SHA256SUMS_URL" -o "$RUNTIME_CHECKSUMS_FILE"
+	mirror_python_series "$uv_target" "$RUNTIME_RELEASES_JSON" "$RUNTIME_CHECKSUMS_FILE"
+	cleanup_runtime_metadata
 	trap - EXIT
 }
 
-main "$@"
+[ "${FETCH_UV_RUNTIME_LIBRARY_ONLY:-0}" = "1" ] || main "$@"

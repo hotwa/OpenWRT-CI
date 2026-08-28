@@ -69,6 +69,31 @@ grep -q 'python-build-standalone' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+grep -q 'github_api_download' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not use the authenticated GitHub API helper"
+  exit 1
+}
+
+grep -q 'Authorization: Bearer' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not conditionally authenticate GitHub API requests"
+  exit 1
+}
+
+grep -q 'RUNTIME_RELEASES_JSON=""' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not initialize release metadata cleanup state"
+  exit 1
+}
+
+grep -q 'FETCH_UV_RUNTIME_LIBRARY_ONLY' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not expose its API helper for fixture tests"
+  exit 1
+}
+
+if grep -q 'trap .*releases_json' "$FETCH_SCRIPT"; then
+  echo "fetch_uv_runtime.sh still traps a function-local metadata path"
+  exit 1
+fi
+
 grep -q 'python-build-standalone/releases/tags/' "$FETCH_SCRIPT" || {
   echo "fetch_uv_runtime.sh does not pin a specific python-build-standalone release tag"
   exit 1
