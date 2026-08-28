@@ -131,6 +131,52 @@ if [ -f "$GETTEXT_MAKEFILE" ]; then
 	fi
 fi
 
+# 修复 gnulib stable-202501 缺少 rw_string_desc_t：gettext 0.24.2 的 msgl-iconv.h
+# 引用该类型，但仅在 gnulib stable-202507 中定义。对齐 immortalwrt 上游提交
+# 837f5eaae2（"tools: gnulib: update to branch stable-202507"）。
+GNULIB_MAKEFILE="../tools/gnulib/Makefile"
+GNULIB_OLD_VER="a3151d456d6919c9066b54dc6f680452168165cf"
+GNULIB_NEW_VER="b22f5a3037712a3c957a03071ce0b219cef4d65b"
+GNULIB_OLD_HASH="b695d96e915ecd6c4551436f417cb2c0879aef4ef6318721c8d5cc86cb44ba9d"
+GNULIB_NEW_HASH="d1423a784794e3e08bd03b397544821ece257aa748566386bd97219d1edf98d5"
+if [ -f "$GNULIB_MAKEFILE" ]; then
+	if grep -q "^PKG_SOURCE_VERSION:=$GNULIB_NEW_VER" "$GNULIB_MAKEFILE"; then
+		cd "$PKG_PATH" && echo "gnulib is already at stable-202507!"
+	elif grep -q "^PKG_SOURCE_VERSION:=$GNULIB_OLD_VER" "$GNULIB_MAKEFILE" && \
+		grep -q "^PKG_MIRROR_HASH:=$GNULIB_OLD_HASH\$" "$GNULIB_MAKEFILE"; then
+		sed -i 's/^PKG_SOURCE_DATE:=.*/PKG_SOURCE_DATE:=2026-07-04/' "$GNULIB_MAKEFILE"
+		sed -i "s/^PKG_SOURCE_VERSION:=$GNULIB_OLD_VER/PKG_SOURCE_VERSION:=$GNULIB_NEW_VER/" "$GNULIB_MAKEFILE"
+		sed -i "s/^PKG_MIRROR_HASH:=$GNULIB_OLD_HASH\$/PKG_MIRROR_HASH:=$GNULIB_NEW_HASH/" "$GNULIB_MAKEFILE"
+		GNULIB_PATCH_DIR="../tools/gnulib/patches"
+		if [ -d "$GNULIB_PATCH_DIR" ]; then
+			rm -f "$GNULIB_PATCH_DIR"/640-mem-hash-map.patch \
+			      "$GNULIB_PATCH_DIR"/645-next-prime.patch \
+			      "$GNULIB_PATCH_DIR"/646-hashcode-string.patch \
+			      "$GNULIB_PATCH_DIR"/647-hashkey-string.patch \
+			      "$GNULIB_PATCH_DIR"/650-package-version.patch \
+			      "$GNULIB_PATCH_DIR"/651-package-version-simplify.patch \
+			      "$GNULIB_PATCH_DIR"/652-package-version-simplify-further.patch \
+			      "$GNULIB_PATCH_DIR"/653-package-version-warning.patch \
+			      "$GNULIB_PATCH_DIR"/660-version-stamp.patch \
+			      "$GNULIB_PATCH_DIR"/689-vc-mtime.patch \
+			      "$GNULIB_PATCH_DIR"/755-clean-temp-hashkey.patch \
+			      "$GNULIB_PATCH_DIR"/795-string-desc-rename-functions.patch \
+			      "$GNULIB_PATCH_DIR"/796-vc-mtime-less-read.patch \
+			      "$GNULIB_PATCH_DIR"/797-vc-mtime-add-api.patch \
+			      "$GNULIB_PATCH_DIR"/798-vc-mtime-add-api.patch \
+			      "$GNULIB_PATCH_DIR"/799-vc-mtime-old-git.patch \
+			      "$GNULIB_PATCH_DIR"/900-str_startswith-module.patch \
+			      "$GNULIB_PATCH_DIR"/901-str_endswith-module.patch
+		fi
+		grep -q "^PKG_SOURCE_VERSION:=$GNULIB_NEW_VER" "$GNULIB_MAKEFILE" && \
+			grep -q "^PKG_MIRROR_HASH:=$GNULIB_NEW_HASH\$" "$GNULIB_MAKEFILE" || {
+			echo "ERROR: failed to bump gnulib to stable-202507" >&2
+			exit 1
+		}
+		cd "$PKG_PATH" && echo "gnulib has been bumped to stable-202507!"
+	fi
+fi
+
 # 修复 sbwml/luci-app-mosdns 的 ES6+ 语法与 LuCI jsmin 的兼容问题。
 MOSDNS_ROOT="./luci-app-mosdns"
 if [ -d "$MOSDNS_ROOT" ]; then
