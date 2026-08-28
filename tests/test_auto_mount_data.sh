@@ -18,7 +18,7 @@ grep -Fq '/data/multica' "$SCRIPT" || {
 	exit 1
 }
 
-grep -Fq 'ln -sfn /data/multica /root/.multica' "$SCRIPT" || {
+grep -Fq 'link_directory /data/multica /root/.multica' "$SCRIPT" || {
 	echo "99-auto-mount-data missing /root/.multica symlink"
 	exit 1
 }

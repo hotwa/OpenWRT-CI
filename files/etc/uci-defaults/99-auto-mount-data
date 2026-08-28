@@ -6,20 +6,19 @@ set -e
 
 mkdir -p /data
 
-# 1. Look for largest partition on mmcblk0, nvme0n1, or sda (size > 1GB)
-# If lsblk is available, find candidates
+# 1. Look for recognized data partition or largest partition on mmcblk0, nvme0n1, or sda (size > 1GB)
 CANDIDATE=""
 if command -v lsblk >/dev/null 2>&1; then
-	CANDIDATE=$(lsblk -bno NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null | awk '
-		$3 == "part" && $4 == "" && $2 > 1073741824 && ($1 ~ /^mmcblk/ || $1 ~ /^nvme/ || $1 ~ /^sd/) {
+	CANDIDATE=$(lsblk -bno NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE 2>/dev/null | awk '
+		$3 == "part" && $4 == "" && $2 > 1073741824 && ($5 ~ /^(f2fs|ext4|ext3|btrfs|xfs)$/) && ($1 ~ /^mmcblk/ || $1 ~ /^nvme/ || $1 ~ /^sd/) {
 			print $2, $1
 		}
 	' | sort -n | tail -1 | awk '{print $2}')
 fi
 
-# Fallback to block info if lsblk is not present or gave nothing
+# Fallback to block info for labeled partition (data, userdata, openwrt-data)
 if [ -z "$CANDIDATE" ] && command -v block >/dev/null 2>&1; then
-	DATA_DEV=$(block info 2>/dev/null | grep -iE 'LABEL="(data|userdata)"' | cut -d: -f1 | head -1)
+	DATA_DEV=$(block info 2>/dev/null | grep -iE 'LABEL="(data|userdata|openwrt-data)"' | cut -d: -f1 | head -1)
 	if [ -n "$DATA_DEV" ]; then
 		CANDIDATE=$(basename "$DATA_DEV")
 	fi
@@ -30,56 +29,64 @@ if [ -n "$CANDIDATE" ] && [ -b "/dev/$CANDIDATE" ]; then
 
 	# Check if already mounted
 	if ! grep -q "$DEV_PATH" /proc/mounts 2>/dev/null && ! grep -q " /data " /proc/mounts 2>/dev/null; then
-		# Check if it has a recognized filesystem
 		FSTYPE=""
 		if command -v blkid >/dev/null 2>&1; then
 			FSTYPE=$(blkid -s TYPE -o value "$DEV_PATH" 2>/dev/null || true)
 		fi
 
-		# If unformatted, format with f2fs (preferred for flash/eMMC) or ext4
-		if [ -z "$FSTYPE" ]; then
-			if command -v mkfs.f2fs >/dev/null 2>&1; then
-				mkfs.f2fs -f -l data "$DEV_PATH" >/dev/null 2>&1 || true
-				FSTYPE="f2fs"
-			elif command -v mkfs.ext4 >/dev/null 2>&1; then
-				mkfs.ext4 -F -L data "$DEV_PATH" >/dev/null 2>&1 || true
-				FSTYPE="ext4"
+		# Only mount if a valid filesystem exists; never blind-format
+		if [ -n "$FSTYPE" ]; then
+			if command -v uci >/dev/null 2>&1; then
+				if ! uci show fstab 2>/dev/null | grep -q "'/data'"; then
+					uci add fstab mount >/dev/null 2>&1 || true
+					uci set fstab.@mount[-1].target='/data'
+					uci set fstab.@mount[-1].device="$DEV_PATH"
+					uci set fstab.@mount[-1].enabled='1'
+					uci set fstab.@mount[-1].options='rw,noatime'
+					uci set fstab.@mount[-1].fstype="$FSTYPE"
+					uci commit fstab >/dev/null 2>&1 || true
+				fi
 			fi
-		fi
 
-		# Configure UCI fstab for permanent persistence across boots
-		if command -v uci >/dev/null 2>&1; then
-			if ! uci show fstab 2>/dev/null | grep -q "'/data'"; then
-				uci add fstab mount >/dev/null 2>&1 || true
-				uci set fstab.@mount[-1].target='/data'
-				uci set fstab.@mount[-1].device="$DEV_PATH"
-				uci set fstab.@mount[-1].enabled='1'
-				uci set fstab.@mount[-1].options='rw,noatime'
-				[ -n "$FSTYPE" ] && uci set fstab.@mount[-1].fstype="$FSTYPE"
-				uci commit fstab >/dev/null 2>&1 || true
-			fi
+			mount -o rw,noatime "$DEV_PATH" /data 2>/dev/null || mount "$DEV_PATH" /data 2>/dev/null || true
 		fi
-
-		# Mount immediately
-		mount -o rw,noatime "$DEV_PATH" /data 2>/dev/null || mount "$DEV_PATH" /data 2>/dev/null || true
 	fi
 fi
 
-# 2. Setup standard directory layout and symlinks on /data
-if [ -d /data ]; then
-	mkdir -p /data/multica/workspaces
-	mkdir -p /data/agent_workspaces
-	mkdir -p /data/pi
-	mkdir -p /data/opencode
-	mkdir -p /data/pnpm
-	mkdir -p /data/uv_cache
+# 2. Setup standard directory layout and guaranteed symlinks on /data
+mkdir -p /data/multica/workspaces
+mkdir -p /data/agent_workspaces
+mkdir -p /data/pi
+mkdir -p /data/opencode
+mkdir -p /data/pnpm
+mkdir -p /data/uv_cache
 
-	if [ -d /root ]; then
-		[ ! -e /root/.multica ] && ln -sfn /data/multica /root/.multica 2>/dev/null || true
-		[ ! -e /root/multica-workspaces ] && ln -sfn /data/multica/workspaces /root/multica-workspaces 2>/dev/null || true
-		[ ! -e /root/.pi ] && ln -sfn /data/pi /root/.pi 2>/dev/null || true
-		[ ! -e /root/.opencode ] && ln -sfn /data/opencode /root/.opencode 2>/dev/null || true
-	fi
+# Ensure /etc/multica/openwrt-agent.md is copied to /data/multica/
+if [ -f /etc/multica/openwrt-agent.md ] && [ ! -f /data/multica/openwrt-agent.md ]; then
+	cp /etc/multica/openwrt-agent.md /data/multica/openwrt-agent.md 2>/dev/null || true
 fi
+
+link_directory() {
+	local target="$1"
+	local link_path="$2"
+
+	mkdir -p "$target"
+	if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+		cp -an "$link_path"/* "$target"/ 2>/dev/null || true
+		rm -rf "$link_path"
+	fi
+	[ -L "$link_path" ] || ln -sfn "$target" "$link_path" 2>/dev/null || true
+}
+
+if [ -d /root ]; then
+	link_directory /data/multica /root/.multica
+	link_directory /data/multica/workspaces /root/multica-workspaces
+	link_directory /data/pi /root/.pi
+	link_directory /data/opencode /root/.opencode
+fi
+
+# UV Cache global redirection
+mkdir -p /opt
+[ -L /opt/uv ] || ln -sfn /data/uv_cache /opt/uv 2>/dev/null || true
 
 exit 0

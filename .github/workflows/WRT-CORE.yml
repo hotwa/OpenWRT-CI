@@ -463,6 +463,7 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Handles.sh
           $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh
           $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh
+          $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files

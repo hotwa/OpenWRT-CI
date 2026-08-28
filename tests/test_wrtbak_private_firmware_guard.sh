@@ -71,11 +71,19 @@ grep -q 'headscale-authkey' "$WORK_DIR/headscale.env" || {
 	exit 1
 }
 
-mkdir -p "$WORK_DIR/dropbear/etc/dropbear"
-printf '%s\n' 'ssh-ed25519 AAAATEST public@example.invalid' >"$WORK_DIR/dropbear/etc/dropbear/authorized_keys"
-bash "$SCRIPT" "$WORK_DIR/dropbear" >"$WORK_DIR/dropbear.env" 2>/dev/null
-grep -qx 'WRT_PRIVATE_BUILD=false' "$WORK_DIR/dropbear.env" || {
-	echo "public Dropbear authorized_keys alone should not mark firmware private"
+mkdir -p "$WORK_DIR/multica/etc/config"
+cat >"$WORK_DIR/multica/etc/config/multica" <<'EOT'
+config multica 'main'
+	option enabled '1'
+	option token 'mul_test_secret_pat'
+EOT
+bash "$SCRIPT" "$WORK_DIR/multica" >"$WORK_DIR/multica.env" 2>/dev/null
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/multica.env" || {
+	echo "multica token should mark firmware private"
+	exit 1
+}
+grep -q 'multica-pat-token' "$WORK_DIR/multica.env" || {
+	echo "multica private reason is missing"
 	exit 1
 }
 

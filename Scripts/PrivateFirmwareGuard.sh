@@ -63,6 +63,12 @@ if [ -s "$headscale_authkey" ]; then
 	add_reason headscale-authkey
 fi
 
+multica_config="$TARGET_FILES/etc/config/multica"
+if [ -r "$multica_config" ]; then
+	multica_token="$(uci_option_value "$multica_config" multica main token)"
+	[ -z "$multica_token" ] || add_reason multica-pat-token
+fi
+
 if [ -n "$reasons" ]; then
 	printf 'WRT_PRIVATE_BUILD=true\n'
 	printf 'WRT_PRIVATE_BUILD_REASON=%s\n' "$reasons"

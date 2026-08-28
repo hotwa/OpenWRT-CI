@@ -59,6 +59,6 @@ grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$DEDICATED"
 grep -Fq 'WRTBAK_DEVICE_ALIAS: home-re-cs-07' "$DEDICATED"
 
 grep -Fq 'secrets: inherit' "$DEDICATED"
-grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.10.1'\'' }}' "$DEDICATED"
+grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.12.1'\'' }}' "$DEDICATED"
 
 echo "RE-CS-07 workflow guards passed"

@@ -68,7 +68,15 @@ start_service() {
 	local device_name="$(derive_device_name "$(cfg device_name '')")"
 	local runtime_name="$(cfg runtime_name 'Pi on OpenWrt')"
 	local workspaces_root="$(cfg workspaces_root '/data/multica/workspaces')"
-	local max_tasks="$(cfg max_concurrent_tasks '2')"
+	local default_max_tasks=2
+	if [ -f /proc/meminfo ]; then
+		local mem_total
+		mem_total="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+		if [ -n "$mem_total" ] && [ "$mem_total" -lt 700000 ]; then
+			default_max_tasks=1
+		fi
+	fi
+	local max_tasks="$(cfg max_concurrent_tasks "$default_max_tasks")"
 	local poll_interval="$(cfg poll_interval '30s')"
 	local heartbeat_interval="$(cfg heartbeat_interval '15s')"
 
@@ -99,13 +107,19 @@ EOF
 	fi
 
 	procd_open_instance
-	procd_set_param command "$PROG" daemon start --foreground
+	procd_set_param command "$PROG" daemon start --foreground \
+		--max-concurrent-tasks "$max_tasks" \
+		--poll-interval "$poll_interval" \
+		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
 		MULTICA_SERVER_URL="$server_url" \
 		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
 		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \
 		MULTICA_WORKSPACES_ROOT="$workspaces_root" \
-		MULTICA_WORKSPACE_ID="$workspace_id"
+		MULTICA_WORKSPACE_ID="$workspace_id" \
+		MULTICA_DAEMON_MAX_CONCURRENT_TASKS="$max_tasks" \
+		MULTICA_DAEMON_POLL_INTERVAL="$poll_interval" \
+		MULTICA_DAEMON_HEARTBEAT_INTERVAL="$heartbeat_interval"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       LAN_IP:
-        description: 'Router LAN IP (e.g. 192.168.10.1)'
+        description: 'Router LAN IP (e.g. 192.168.12.1)'
         required: false
-        default: '192.168.10.1'
+        default: '192.168.12.1'
 
 permissions:
   actions: write
@@ -22,10 +22,11 @@ jobs:
       WRT_NAME: RE-CS-07
       WRT_SSID: RE-CS-07
       WRT_WORD: 12345678
-      WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.12.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
+      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-07

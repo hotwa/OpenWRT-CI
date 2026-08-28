@@ -6,6 +6,11 @@ STOP=10
 RUNTIME_ENV=/tmp/uv-env.sh
 
 mounted_uv_root() {
+	if mount | grep -q ' on /data ' && [ -d /data ] && [ -w /data ]; then
+		echo "/data/uv_cache"
+		return 0
+	fi
+
 	if mount | grep -q ' on /mnt/mmc ' && [ -d /mnt/mmc ] && [ -w /mnt/mmc ]; then
 		echo "/mnt/mmc/uv"
 		return 0
