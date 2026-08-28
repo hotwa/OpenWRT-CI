@@ -364,7 +364,6 @@ jobs:
             export WRT_ARCH=$(sed -n 's/.*_DEVICE_\(.*\)_DEVICE_.*/\1/p' $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt | head -n 1)
             echo "WRT_ARCH=$WRT_ARCH" >> $GITHUB_ENV
           }
-          echo "$WRT_REPO/$WRT_BRANCH" > "$GITHUB_WORKSPACE/repo_flag"
 
       - name: Configure Go Module Access
         run: |
@@ -399,7 +398,9 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/patch_libiwrt_k612_cacheline_assert.sh "./wrt" "$WRT_SOURCE" "$WRT_BRANCH"
           $GITHUB_WORKSPACE/Scripts/fix_qca8k_assisted_learning_patch.sh "./wrt"
 
-          echo "WRT_HASH=$(git -C ./wrt rev-parse HEAD)" >> $GITHUB_ENV
+          WRT_HASH_VAL="$(git -C ./wrt rev-parse HEAD)"
+          echo "WRT_HASH=$WRT_HASH_VAL" >> $GITHUB_ENV
+          echo "$WRT_REPO/$WRT_BRANCH/$WRT_HASH_VAL" > "$GITHUB_WORKSPACE/repo_flag"
 
           # Remove mainland mirrors so build source resolution stays consistent across runners.
           PROJECT_MIRRORS_FILE="./scripts/projectsmirrors.json"
