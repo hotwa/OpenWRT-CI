@@ -288,8 +288,16 @@ main() {
 	hostname_prefix="$(cfg hostname_prefix openwrt)"
 	ssh_enabled="$(cfg ssh 1)"
 	accept_dns="$(cfg accept_dns 0)"
-	accept_routes="$(cfg accept_routes 0)"
+	accept_routes="$(cfg accept_routes 1)"
 	advertise_routes="$(cfg advertise_routes '')"
+	if [ -z "$advertise_routes" ]; then
+		lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+		case "$lan_ip" in
+			192.168.*.*|10.*.*.*|172.*.*.*)
+				advertise_routes="${lan_ip%.*}.0/24"
+				;;
+		esac
+	fi
 	max_attempts="$(cfg max_attempts 60)"
 	retry_interval="$(cfg retry_interval 10)"
 	restore_gate_file="$(cfg restore_gate_file /root/wrtbak/firstboot/gate.json)"

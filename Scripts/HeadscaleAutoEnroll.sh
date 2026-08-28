@@ -9,8 +9,20 @@ HEADSCALE_LOGIN_SERVER="${HEADSCALE_LOGIN_SERVER:-https://headscale.jmsu.top}"
 HEADSCALE_OPENWRT_HOSTNAME_PREFIX="${HEADSCALE_OPENWRT_HOSTNAME_PREFIX:-openwrt}"
 HEADSCALE_OPENWRT_HOSTNAME="${HEADSCALE_OPENWRT_HOSTNAME:-}"
 HEADSCALE_OPENWRT_ENABLE_SSH="${HEADSCALE_OPENWRT_ENABLE_SSH:-1}"
-HEADSCALE_OPENWRT_ACCEPT_ROUTES="${HEADSCALE_OPENWRT_ACCEPT_ROUTES:-0}"
+HEADSCALE_OPENWRT_ACCEPT_ROUTES="${HEADSCALE_OPENWRT_ACCEPT_ROUTES:-1}"
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES="${HEADSCALE_OPENWRT_ADVERTISE_ROUTES:-}"
+
+derive_lan_subnet() {
+	local ip="${1:-}"
+	case "$ip" in
+		192.168.*.*|10.*.*.*|172.*.*.*)
+			printf '%s.0/24' "${ip%.*}"
+			;;
+		*)
+			printf ''
+			;;
+	esac
+}
 
 set_config_option() {
 	local option="$1"
@@ -102,6 +114,9 @@ set_config_option hostname_override "$(derive_headscale_hostname "$HEADSCALE_OPE
 set_config_option ssh "$HEADSCALE_OPENWRT_ENABLE_SSH"
 set_config_option accept_dns 0
 set_config_option accept_routes "$HEADSCALE_OPENWRT_ACCEPT_ROUTES"
+if [ -z "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" ] && [ -n "${WRT_IP:-}" ]; then
+	HEADSCALE_OPENWRT_ADVERTISE_ROUTES="$(derive_lan_subnet "${WRT_IP:-}")"
+fi
 set_config_option advertise_routes "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES"
 set_config_option auth_key_file /etc/tailscale/headscale.authkey
 set_config_option delete_auth_key_file 1
