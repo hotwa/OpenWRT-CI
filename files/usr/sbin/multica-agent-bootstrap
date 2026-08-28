@@ -1,0 +1,111 @@
+#!/bin/sh
+# Multica bootstrap: Network online gate & initial Agent creation
+
+set -eu
+
+CONFIG="multica"
+SECTION="main"
+LOG_TAG="multica-bootstrap"
+
+log() {
+	logger -t "$LOG_TAG" "$*"
+	echo "[$LOG_TAG] $*"
+}
+
+cfg() {
+	local name="$1"
+	local default="$2"
+	local value
+	value="$(uci -q get "$CONFIG.$SECTION.$name" 2>/dev/null || true)"
+	[ -n "$value" ] || value="$default"
+	printf '%s' "$value"
+}
+
+wait_for_network() {
+	local server_url="$1"
+	local retries=0
+	local max_retries=60
+
+	log "waiting for network connectivity (WAN/PPPoE/DHCP) to reach $server_url..."
+	while [ "$retries" -lt "$max_retries" ]; do
+		# 1. Check default gateway
+		if ip route show default 2>/dev/null | grep -q default; then
+			# 2. Check HTTP/HTTPS reachability to server or DNS
+			if command -v curl >/dev/null 2>&1; then
+				if curl -sk -m 4 "$server_url" >/dev/null 2>&1; then
+					log "network is online and $server_url is reachable!"
+					return 0
+				fi
+			else
+				return 0
+			fi
+		fi
+		retries=$((retries + 1))
+		sleep 3
+	done
+
+	log "WARNING: network wait timeout; continuing in background"
+	return 0
+}
+
+bootstrap_agent() {
+	local agent_init_flag="/data/multica/.agent_initialized"
+	[ ! -f "$agent_init_flag" ] || return 0
+
+	local instructions_file="/root/.multica/openwrt-agent.md"
+	[ -f "$instructions_file" ] || instructions_file="/etc/multica/openwrt-agent.md"
+	[ -f "$instructions_file" ] || {
+		log "instructions file not found, skipping agent auto-creation"
+		return 0
+	}
+
+	command -v multica >/dev/null 2>&1 || return 0
+
+	local retries=0
+	local runtime_id=""
+
+	# Wait for daemon to register and obtain runtime_id
+	while [ "$retries" -lt 30 ]; do
+		sleep 4
+		runtime_id="$(multica runtime list --output json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+		if [ -n "$runtime_id" ]; then
+			break
+		fi
+		retries=$((retries + 1))
+	done
+
+	if [ -z "$runtime_id" ]; then
+		log "could not detect runtime_id from multica daemon; agent creation deferred"
+		return 0
+	fi
+
+	log "registering default OpenWrt 管家 Agent with runtime_id: $runtime_id"
+	local instructions="$(cat "$instructions_file")"
+	local agent_name="$(cfg agent_name 'OpenWrt 管家')"
+
+	if multica agent create \
+		--name "$agent_name" \
+		--runtime-id "$runtime_id" \
+		--description "OpenWrt 系统与网络管理智能体" \
+		--instructions "$instructions" >/dev/null 2>&1; then
+		touch "$agent_init_flag"
+		log "successfully registered $agent_name in Multica workspace!"
+	else
+		log "agent creation returned non-zero (may already exist)"
+		touch "$agent_init_flag"
+	fi
+}
+
+main() {
+	local enabled="$(cfg enabled 0)"
+	case "$enabled" in
+		1|true|yes|on) ;;
+		*) return 0 ;;
+	esac
+
+	local server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
+	wait_for_network "$server_url"
+	bootstrap_agent &
+}
+
+main "$@"

@@ -66,7 +66,7 @@ start_service() {
 	local app_url="$(cfg app_url 'https://multica.lucky.jmsu.top')"
 	local workspace_id="$(cfg workspace_id '')"
 	local device_name="$(derive_device_name "$(cfg device_name '')")"
-	local runtime_name="$(cfg runtime_name 'OpenWrt-Agent')"
+	local runtime_name="$(cfg runtime_name 'Pi on OpenWrt')"
 	local workspaces_root="$(cfg workspaces_root '/data/multica/workspaces')"
 	local max_tasks="$(cfg max_concurrent_tasks '2')"
 	local poll_interval="$(cfg poll_interval '30s')"
@@ -92,6 +92,11 @@ start_service() {
 }
 EOF
 	chmod 600 "$config_json"
+
+	# Launch bootstrap in background to wait for network and create OpenWrt 管家 Agent
+	if [ -x /usr/sbin/multica-agent-bootstrap ]; then
+		/usr/sbin/multica-agent-bootstrap &
+	fi
 
 	procd_open_instance
 	procd_set_param command "$PROG" daemon start --foreground

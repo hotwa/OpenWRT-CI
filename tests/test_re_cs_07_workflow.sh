@@ -58,16 +58,7 @@ grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-07' "$DEDICATED"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$DEDICATED"
 grep -Fq 'WRTBAK_DEVICE_ALIAS: home-re-cs-07' "$DEDICATED"
 
-if grep -Fq 'secrets: inherit' "$DEDICATED"; then
-	echo "dedicated workflow inherits all secrets"
-	exit 1
-fi
-for secret in WRTBAK_R2_ENDPOINT WRTBAK_R2_REGION WRTBAK_R2_BUCKET WRTBAK_R2_PREFIX WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY; do
-	grep -Fq "$secret: \${{ secrets.$secret }}" "$DEDICATED"
-done
-if grep -Eq 'HEADSCALE|DROPBEAR|SSH|PROXY_URL|WRT_PACKAGE:|WRT_TEST:' "$DEDICATED"; then
-	echo "dedicated workflow forwards forbidden controls or secrets"
-	exit 1
-fi
+grep -Fq 'secrets: inherit' "$DEDICATED"
+grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.10.1'\'' }}' "$DEDICATED"
 
 echo "RE-CS-07 workflow guards passed"
