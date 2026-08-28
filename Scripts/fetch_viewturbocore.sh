@@ -9,6 +9,12 @@ INSTALL_DIR="$FILES_DIR/usr/local/bin"
 TARGET_INSTALL_PATH="/usr/local/bin/viewturbocore"
 BINARY_PATH="$FILES_DIR$TARGET_INSTALL_PATH"
 ADDRESS="${VIEWTURBOCORE_ASSET_BASE:-https://assets.vtfly.com}"
+# The vendor endpoint is versionless.  These digests pin the exact snapshot
+# observed on 2026-08-27; a vendor-side replacement must be reviewed and the
+# digest deliberately updated before it can enter a firmware image.
+VIEWTURBOCORE_SNAPSHOT="2026-08-27"
+VIEWTURBOCORE_AARCH64_SHA256="97f570fdb8c8d83a5130d2809bd1e37ec8796d00dfdc41a2fcd8abc4824a4f05"
+VIEWTURBOCORE_X86_64_SHA256="2cba6def9e42070b8eaea3fa3566695ebfb30be2212ad1a9561459eb44516217"
 
 config_file() {
 	if [ -n "${WRT_CONFIG:-}" ] && [ -f "$ROOT_DIR/Config/${WRT_CONFIG}.txt" ]; then
@@ -58,6 +64,33 @@ map_viewturbocore_asset() {
 	return 1
 }
 
+expected_sha256() {
+	case "$1" in
+		ViewTurboCore-aarch64-unknown-linux-gnu)
+			echo "$VIEWTURBOCORE_AARCH64_SHA256"
+			;;
+		ViewTurboCore-x86_64-unknown-linux-gnu)
+			echo "$VIEWTURBOCORE_X86_64_SHA256"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+verify_sha256() {
+	local candidate="$1"
+	local expected="$2"
+	local actual
+
+	actual="$(sha256sum "$candidate" | awk '{print $1}')"
+	if [ "$actual" != "$expected" ]; then
+		echo "ERROR: ViewTurboCore SHA256 mismatch for pinned snapshot $VIEWTURBOCORE_SNAPSHOT" >&2
+		echo "ERROR: expected $expected, got $actual" >&2
+		return 1
+	fi
+}
+
 validate_binary() {
 	local candidate="$1"
 
@@ -82,18 +115,23 @@ validate_binary() {
 }
 
 main() {
-	local asset_name tmp_binary
+	local asset_name expected_hash tmp_binary
 
 	if ! asset_name="$(map_viewturbocore_asset)"; then
 		echo "WARN: skipping viewturbocore preload for unsupported target (WRT_TARGET=${WRT_TARGET:-unset}, WRT_ARCH=${WRT_ARCH:-unset})" >&2
 		exit 0
 	fi
+	expected_hash="$(expected_sha256 "$asset_name")" || {
+		echo "ERROR: no trusted checksum is pinned for $asset_name" >&2
+		exit 1
+	}
 
 	mkdir -p "$INSTALL_DIR"
 	tmp_binary="$(mktemp)"
 	trap 'rm -f "$tmp_binary"' EXIT
 
-	retry_cmd 5 15 curl -fsSL -k "$ADDRESS/others/linux/$asset_name" -o "$tmp_binary"
+	retry_cmd 5 15 curl -fsSL "$ADDRESS/others/linux/$asset_name" -o "$tmp_binary"
+	verify_sha256 "$tmp_binary" "$expected_hash"
 	validate_binary "$tmp_binary"
 
 	install -m 0755 "$tmp_binary" "$BINARY_PATH"

@@ -15,7 +15,7 @@ grep -q '^retry_cmd()' "$RETRY_HELPER" || {
   exit 1
 }
 
-grep -q 'retry_cmd 5 15 git clone --depth=1 --single-branch --branch \$PKG_BRANCH "https://github.com/\$PKG_REPO.git"' "$PACKAGES_SH" || {
+grep -q 'retry_cmd 5 15 git clone --depth=1 --single-branch --branch "\$PKG_BRANCH" "https://github.com/\$PKG_REPO.git"' "$PACKAGES_SH" || {
   echo "Packages.sh does not retry package git clone"
   exit 1
 }

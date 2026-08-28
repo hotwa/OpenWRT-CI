@@ -1,92 +1,387 @@
 #!/bin/sh
-# Auto-discover the largest unmounted eMMC/storage partition and mount as /data
-# Creates workspace directories for Multica, OpenCode, Pi, and AI agents.
+# Mount the explicitly provisioned OpenWrt data partition and migrate mutable
+# agent state. This script deliberately never formats or guesses a partition.
 
-set -e
+set -u
 
-mkdir -p /data
+DATA_ROOT="${AUTO_MOUNT_DATA_ROOT:-/data}"
+ROOT_HOME="${AUTO_MOUNT_ROOT_HOME:-/root}"
+MOUNTS_FILE="${AUTO_MOUNT_PROC_MOUNTS:-/proc/mounts}"
+LOCK_BASE="${AUTO_MOUNT_LOCK_BASE:-/var/lock}"
+LOCK_DIR="$LOCK_BASE/openwrt-data-mount.lock"
+BLOCK_INFO_FIXTURE="${AUTO_MOUNT_BLOCK_INFO:-}"
+FSTAB_RECORD="${AUTO_MOUNT_FSTAB_RECORD:-}"
+TESTING="${AUTO_MOUNT_DATA_TESTING:-0}"
 
-# 1. Look for recognized data partition or largest partition on mmcblk0, nvme0n1, or sda (size > 1GB)
-CANDIDATE=""
-if command -v lsblk >/dev/null 2>&1; then
-	CANDIDATE=$(lsblk -bno NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE 2>/dev/null | awk '
-		$3 == "part" && $4 == "" && $2 > 1073741824 && ($5 ~ /^(f2fs|ext4|ext3|btrfs|xfs)$/) && ($1 ~ /^mmcblk/ || $1 ~ /^nvme/ || $1 ~ /^sd/) {
-			print $2, $1
-		}
-	' | sort -n | tail -1 | awk '{print $2}')
-fi
+log_error() {
+	printf '%s\n' "auto-mount-data: $*" >&2
+	command -v logger >/dev/null 2>&1 && logger -t auto-mount-data -- "$*" || true
+}
 
-# Fallback to block info for labeled partition (data, userdata, openwrt-data)
-if [ -z "$CANDIDATE" ] && command -v block >/dev/null 2>&1; then
-	DATA_DEV=$(block info 2>/dev/null | grep -iE 'LABEL="(data|userdata|openwrt-data)"' | cut -d: -f1 | head -1)
-	if [ -n "$DATA_DEV" ]; then
-		CANDIDATE=$(basename "$DATA_DEV")
+cleanup_lock() {
+	rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+acquire_lock() {
+	mkdir -p "$LOCK_BASE" || return 1
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		log_error "another storage migration is already running"
+		return 1
 	fi
-fi
+	trap cleanup_lock EXIT
+	trap 'cleanup_lock; exit 1' HUP INT TERM
+}
 
-if [ -n "$CANDIDATE" ] && [ -b "/dev/$CANDIDATE" ]; then
-	DEV_PATH="/dev/$CANDIDATE"
-
-	# Check if already mounted
-	if ! grep -q "$DEV_PATH" /proc/mounts 2>/dev/null && ! grep -q " /data " /proc/mounts 2>/dev/null; then
-		FSTYPE=""
+block_inventory() {
+	if [ -n "$BLOCK_INFO_FIXTURE" ]; then
+		cat "$BLOCK_INFO_FIXTURE"
+	else
+		# block info is the normal OpenWrt source. util-linux blkid is also
+		# consulted because some block versions omit GPT PARTUUID metadata.
+		if command -v block >/dev/null 2>&1; then
+			block info 2>/dev/null
+		fi
 		if command -v blkid >/dev/null 2>&1; then
-			FSTYPE=$(blkid -s TYPE -o value "$DEV_PATH" 2>/dev/null || true)
-		fi
-
-		# Only mount if a valid filesystem exists; never blind-format
-		if [ -n "$FSTYPE" ]; then
-			if command -v uci >/dev/null 2>&1; then
-				if ! uci show fstab 2>/dev/null | grep -q "'/data'"; then
-					uci add fstab mount >/dev/null 2>&1 || true
-					uci set fstab.@mount[-1].target='/data'
-					uci set fstab.@mount[-1].device="$DEV_PATH"
-					uci set fstab.@mount[-1].enabled='1'
-					uci set fstab.@mount[-1].options='rw,noatime'
-					uci set fstab.@mount[-1].fstype="$FSTYPE"
-					uci commit fstab >/dev/null 2>&1 || true
-				fi
-			fi
-
-			mount -o rw,noatime "$DEV_PATH" /data 2>/dev/null || mount "$DEV_PATH" /data 2>/dev/null || true
+			blkid 2>/dev/null
 		fi
 	fi
-fi
+}
 
-# 2. Setup standard directory layout and guaranteed symlinks on /data
-mkdir -p /data/multica/workspaces
-mkdir -p /data/agent_workspaces
-mkdir -p /data/pi
-mkdir -p /data/opencode
-mkdir -p /data/pnpm
-mkdir -p /data/uv_cache
+uci_get() {
+	[ "$TESTING" = "1" ] && return 1
+	command -v uci >/dev/null 2>&1 || return 1
+	uci -q get "$1" 2>/dev/null
+}
 
-# Ensure /etc/multica/openwrt-agent.md is copied to /data/multica/
-if [ -f /etc/multica/openwrt-agent.md ] && [ ! -f /data/multica/openwrt-agent.md ]; then
-	cp /etc/multica/openwrt-agent.md /data/multica/openwrt-agent.md 2>/dev/null || true
-fi
+attribute_from_line() {
+	local line="$1"
+	local key="$2"
+	printf '%s\n' "$line" | sed -n "s/.*[[:space:]]$key=\"\([^\"]*\)\".*/\1/p"
+}
+
+valid_identifier() {
+	case "$1" in
+		''|*[!A-Za-z0-9._:+-]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+find_devices() {
+	local key="$1"
+	local expected="$2"
+	local line value
+
+	block_inventory | while IFS= read -r line; do
+		case "$line" in
+			/dev/*:*) ;;
+			*) continue ;;
+		esac
+		value="$(attribute_from_line "$line" "$key")"
+		[ "$value" = "$expected" ] && printf '%s\n' "${line%%:*}"
+	done | awk '!seen[$0]++'
+}
+
+device_line() {
+	local expected="$1"
+	local line
+	block_inventory | while IFS= read -r line; do
+		[ "${line%%:*}" = "$expected" ] && {
+			printf '%s\n' "$line"
+			break
+		}
+	done
+}
+
+select_candidate() {
+	local requested_uuid requested_partuuid requested_label enabled
+	local matches count device line fstype fs_uuid
+
+	enabled="$(uci_get fstab.data.enabled || true)"
+	if [ "$enabled" = "0" ]; then
+		log_error "fstab.data is explicitly disabled"
+		return 1
+	fi
+
+	requested_uuid="$(uci_get fstab.data.uuid || true)"
+	requested_partuuid="$(uci_get fstab.data.partuuid || true)"
+	requested_label="$(uci_get fstab.data.label || true)"
+
+	if [ -n "$requested_uuid" ]; then
+		valid_identifier "$requested_uuid" || {
+			log_error "fstab.data.uuid contains invalid characters"
+			return 1
+		}
+		matches="$(find_devices UUID "$requested_uuid")"
+	elif [ -n "$requested_partuuid" ]; then
+		valid_identifier "$requested_partuuid" || {
+			log_error "fstab.data.partuuid contains invalid characters"
+			return 1
+		}
+		matches="$(find_devices PARTUUID "$requested_partuuid")"
+	else
+		# Labels such as "data" and "userdata" are too generic to be safe.
+		# The only implicit opt-in is the exact provisioning label below.
+		[ -z "$requested_label" ] || [ "$requested_label" = "openwrt-data" ] || {
+			log_error "only LABEL=openwrt-data is accepted"
+			return 1
+		}
+		matches="$(find_devices LABEL openwrt-data)"
+	fi
+
+	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
+	if [ "$count" -ne 1 ]; then
+		log_error "expected exactly one opted-in data partition, found $count"
+		return 1
+	fi
+
+	device="$(printf '%s\n' "$matches" | awk 'NF { print; exit }')"
+	case "$device" in
+		/dev/*) ;;
+		*) log_error "candidate is not a /dev path"; return 1 ;;
+	esac
+	if [ "$TESTING" != "1" ] && [ ! -b "$device" ]; then
+		log_error "$device is not a block device"
+		return 1
+	fi
+
+	line="$(device_line "$device")"
+	fstype="$(attribute_from_line "$line" TYPE)"
+	fs_uuid="$(attribute_from_line "$line" UUID)"
+	case "$fstype" in
+		ext4|f2fs) ;;
+		*) log_error "$device has unsupported filesystem '$fstype'"; return 1 ;;
+	esac
+	valid_identifier "$fs_uuid" || {
+		log_error "$device has no usable filesystem UUID"
+		return 1
+	}
+
+	CANDIDATE_DEVICE="$device"
+	CANDIDATE_FSTYPE="$fstype"
+	CANDIDATE_UUID="$fs_uuid"
+}
+
+mounted_source() {
+	awk -v target="$DATA_ROOT" '$2 == target { print $1; exit }' "$MOUNTS_FILE" 2>/dev/null
+}
+
+source_matches_candidate() {
+	local source="$1"
+	local line uuid
+	[ "$source" = "$CANDIDATE_DEVICE" ] && return 0
+	[ "$source" = "UUID=$CANDIDATE_UUID" ] && return 0
+	case "$source" in
+		*/by-uuid/"$CANDIDATE_UUID") return 0 ;;
+	esac
+	line="$(device_line "$source")"
+	uuid="$(attribute_from_line "$line" UUID)"
+	[ -n "$uuid" ] && [ "$uuid" = "$CANDIDATE_UUID" ]
+}
+
+mount_candidate() {
+	mkdir -p "$DATA_ROOT" || return 1
+	if [ "$TESTING" = "1" ]; then
+		[ "${AUTO_MOUNT_TEST_MOUNT_FAIL:-0}" != "1" ] || return 1
+		printf '%s %s %s rw,noatime 0 0\n' \
+			"$CANDIDATE_DEVICE" "$DATA_ROOT" "$CANDIDATE_FSTYPE" >>"$MOUNTS_FILE"
+		return 0
+	fi
+	mount -t "$CANDIDATE_FSTYPE" -o rw,noatime "$CANDIDATE_DEVICE" "$DATA_ROOT"
+}
+
+verify_mounted_storage() {
+	local source probe
+	source="$(mounted_source)"
+	[ -n "$source" ] || {
+		log_error "$DATA_ROOT is not a real mountpoint"
+		return 1
+	}
+	source_matches_candidate "$source" || {
+		log_error "$DATA_ROOT is mounted from an unexpected source: $source"
+		return 1
+	}
+	probe="$DATA_ROOT/.openwrt-data-write-probe.$$"
+	( umask 077; : >"$probe" ) 2>/dev/null || {
+		log_error "$DATA_ROOT failed its write probe"
+		return 1
+	}
+	rm -f "$probe" || return 1
+}
+
+persist_fstab() {
+	if [ "$TESTING" = "1" ]; then
+		[ -n "$FSTAB_RECORD" ] || return 0
+		printf 'target=%s\nuuid=%s\nfstype=%s\noptions=rw,noatime\nenabled=1\n' \
+			"$DATA_ROOT" "$CANDIDATE_UUID" "$CANDIDATE_FSTYPE" >"$FSTAB_RECORD"
+		return $?
+	fi
+	command -v uci >/dev/null 2>&1 || {
+		log_error "uci is unavailable; refusing a non-persistent data mount"
+		return 1
+	}
+	uci -q set fstab.data=mount || return 1
+	uci -q set fstab.data.target='/data' || return 1
+	uci -q set "fstab.data.uuid=$CANDIDATE_UUID" || return 1
+	uci -q set "fstab.data.fstype=$CANDIDATE_FSTYPE" || return 1
+	uci -q set fstab.data.options='rw,noatime' || return 1
+	uci -q set fstab.data.enabled='1' || return 1
+	uci -q delete fstab.data.device 2>/dev/null || true
+	uci -q delete fstab.data.partuuid 2>/dev/null || true
+	uci -q delete fstab.data.label 2>/dev/null || true
+	uci -q commit fstab || return 1
+}
+
+ensure_real_directory() {
+	[ ! -L "$1" ] || {
+		log_error "refusing symlinked data directory: $1"
+		return 1
+	}
+	mkdir -p "$1" || return 1
+	[ -d "$1" ] || return 1
+	chmod 0700 "$1" 2>/dev/null || true
+}
+
+verify_tree() {
+	local source="$1"
+	local destination="$2"
+	(
+		cd "$source" || exit 1
+		find . -mindepth 1 -print
+	) | while IFS= read -r relative; do
+		local src="$source/$relative"
+		local dst="$destination/$relative"
+		if [ -L "$src" ]; then
+			[ -L "$dst" ] && [ "$(readlink "$src")" = "$(readlink "$dst")" ] || exit 1
+		elif [ -d "$src" ]; then
+			[ -d "$dst" ] && [ ! -L "$dst" ] || exit 1
+		elif [ -f "$src" ]; then
+			[ -f "$dst" ] && cmp -s "$src" "$dst" || exit 1
+		else
+			log_error "unsupported object during migration: $src"
+			exit 1
+		fi
+	done
+}
+
+copy_tree_verified() {
+	local source="$1"
+	local target="$2"
+	local stage="$DATA_ROOT/.migration-stage.$$.${3}"
+
+	ensure_real_directory "$stage" || return 1
+	if [ "$TESTING" = "1" ] && [ "${AUTO_MOUNT_TEST_COPY_FAIL:-0}" = "1" ]; then
+		rm -rf "$stage"
+		return 1
+	fi
+	cp -a "$source/." "$stage/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$stage" || {
+		rm -rf "$stage"
+		return 1
+	}
+	cp -a "$stage/." "$target/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$target" || {
+		rm -rf "$stage"
+		return 1
+	}
+	rm -rf "$stage"
+}
 
 link_directory() {
 	local target="$1"
 	local link_path="$2"
+	local name="$3"
+	local temporary="${link_path}.new.$$"
+	local backup="${link_path}.migration-backup.$$"
 
-	mkdir -p "$target"
-	if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
-		cp -an "$link_path"/* "$target"/ 2>/dev/null || true
-		rm -rf "$link_path"
+	ensure_real_directory "$target" || return 1
+	if [ -L "$link_path" ]; then
+		[ "$(readlink "$link_path")" = "$target" ] || {
+			log_error "refusing to replace unexpected symlink: $link_path"
+			return 1
+		}
+		return 0
 	fi
-	[ -L "$link_path" ] || ln -sfn "$target" "$link_path" 2>/dev/null || true
+	if [ -e "$link_path" ]; then
+		[ -d "$link_path" ] || {
+			log_error "refusing to replace non-directory: $link_path"
+			return 1
+		}
+		copy_tree_verified "$link_path" "$target" "$name" || {
+			log_error "verified copy failed; source preserved: $link_path"
+			return 1
+		}
+		ln -s "$target" "$temporary" || return 1
+		mv "$link_path" "$backup" || { rm -f "$temporary"; return 1; }
+		if ! mv "$temporary" "$link_path" || [ ! -L "$link_path" ] || \
+		   [ "$(readlink "$link_path")" != "$target" ]; then
+			rm -f "$temporary" "$link_path" 2>/dev/null || true
+			mv "$backup" "$link_path" 2>/dev/null || true
+			return 1
+		fi
+		rm -rf "$backup" || return 1
+		return 0
+	fi
+
+	ln -s "$target" "$temporary" || return 1
+	mv "$temporary" "$link_path" || { rm -f "$temporary"; return 1; }
 }
 
-if [ -d /root ]; then
-	link_directory /data/multica /root/.multica
-	link_directory /data/multica/workspaces /root/multica-workspaces
-	link_directory /data/pi /root/.pi
-	link_directory /data/opencode /root/.opencode
-fi
+prepare_agent_storage() {
+	local directory
+	for directory in \
+		"$DATA_ROOT/multica" \
+		"$DATA_ROOT/multica/workspaces" \
+		"$DATA_ROOT/agent_workspaces" \
+		"$DATA_ROOT/pi" \
+		"$DATA_ROOT/opencode" \
+		"$DATA_ROOT/pnpm" \
+		"$DATA_ROOT/npm" \
+		"$DATA_ROOT/cache" \
+		"$DATA_ROOT/uv_cache" \
+		"$DATA_ROOT/uv" \
+		"$DATA_ROOT/uv/python" \
+		"$DATA_ROOT/uv/python-cache"; do
+		ensure_real_directory "$directory" || return 1
+	done
 
-# UV Cache global redirection
-mkdir -p /opt
-[ -L /opt/uv ] || ln -sfn /data/uv_cache /opt/uv 2>/dev/null || true
+	if [ -f /etc/multica/openwrt-agent.md ]; then
+		cp -p /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
+		cmp -s /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
+		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
+	fi
 
-exit 0
+	[ -d "$ROOT_HOME" ] || return 0
+	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || return 1
+	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1
+	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || return 1
+	link_directory "$DATA_ROOT/opencode" "$ROOT_HOME/.opencode" opencode || return 1
+}
+
+main() {
+	local source
+	acquire_lock || return 1
+	select_candidate || return 1
+	source="$(mounted_source)"
+	if [ -n "$source" ]; then
+		source_matches_candidate "$source" || {
+			log_error "$DATA_ROOT is already mounted from an unapproved source: $source"
+			return 1
+		}
+	else
+		mount_candidate || {
+			log_error "failed to mount the opted-in data partition"
+			return 1
+		}
+	fi
+	verify_mounted_storage || return 1
+	persist_fstab || return 1
+	prepare_agent_storage || return 1
+}
+
+main

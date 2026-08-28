@@ -51,7 +51,9 @@ on:
         type: string
 
 #CI权限
-permissions: write-all
+permissions:
+  actions: write
+  contents: write
 
 #CI任务
 jobs:

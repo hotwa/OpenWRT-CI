@@ -7,6 +7,12 @@ PROBE_HOST="100.100.100.100"
 PROBE_PORT="53"
 PROBE_TAG="tailscale-quad100-health"
 
+tailnet_ready() {
+	ip link show dev tailscale0 >/dev/null 2>&1 || return 1
+	tailscale status --json 2>/dev/null |
+		grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'
+}
+
 probe_quad100() {
 	if command -v nc >/dev/null 2>&1; then
 		nc -z -w 2 "$PROBE_HOST" "$PROBE_PORT" >/dev/null 2>&1
@@ -26,6 +32,10 @@ start() {
 	local attempt=0
 
 	pgrep -x tailscaled >/dev/null 2>&1 || return 0
+	if ! tailnet_ready; then
+		logger -t "$PROBE_TAG" "skip Quad100 probe until tailscale0 is ready"
+		return 0
+	fi
 
 	while [ "$attempt" -lt 5 ]; do
 		if probe_quad100; then

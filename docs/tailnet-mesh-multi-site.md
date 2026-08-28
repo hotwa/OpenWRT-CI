@@ -1,108 +1,110 @@
 # Multi-Site Automated Mesh Tailnet Architecture
 
-## 1. Overview
+## 1. Scope and trust boundaries
 
-This document defines the zero-touch, multi-site automated Tailscale/Headscale mesh network architecture used across all hotwa OpenWrt devices (JDCloud Athena \`RE-CS-02\`, Nezha \`RE-SS-01\`, Taiyi \`RE-CS-07\`, CPE-5G, etc.).
+Each OpenWrt router joins `https://headscale.jmsu.top`, advertises its own LAN
+prefix, accepts approved remote prefixes, and provides LAN-to-Tailnet forwarding.
+The fw4 `tailscale` zone deliberately keeps `forward=REJECT`; this overlay adds
+only `lan -> tailscale` forwarding and does not create unrestricted
+`tailscale -> lan` access.
 
-Each router is flashed with a dedicated build containing its custom LAN subnet (e.g. \`192.168.11.1\`, \`192.168.10.1\`, \`192.168.12.1\`), and joins the central Headscale controller (\`https://headscale.jmsu.top\`) automatically on first boot, advertising its LAN subnet and accepting remote subnet routes with zero manual intervention.
+Every site must have a unique CIDR. Duplicate or overlapping LAN prefixes are a
+deployment error, not a high-availability configuration. Keep a controller-side
+site/CIDR inventory and reject collisions before building firmware.
 
----
+## 2. Router identities and enrollment keys
 
-## 2. Core Architectural Components
+The standard tags describe capabilities:
 
-\`\`\`
-                    ┌────────────────────────────────────────────────────────┐
-                    │       Central Headscale Controller & Headplane         │
-                    │              (https://headscale.jmsu.top)              │
-                    │        - ACL Auto-Approvers for 192.168.0.0/16         │
-                    │        - MagicDNS Server (100.100.100.100)             │
-                    └─────────────────────────┬──────────────────────────────┘
-                                              │
-                    ┌─────────────────────────┴──────────────────────────────┐
-                    │                                                        │
-         ┌──────────▼───────────┐                                 ┌──────────▼───────────┐
-         │  Site A: RE-CS-02    │                                 │  Site B: RE-CS-07    │
-         │  (LAN 192.168.11.0/24)│                                 │  (LAN 192.168.10.0/24)│
-         ├──────────────────────┤                                 ├──────────────────────┤
-         │ - Tailscale IP:      │   Direct P2P / Peer Relay       │ - Tailscale IP:      │
-         │   100.64.0.25        │ ◄─────────────────────────────► │   100.64.0.26        │
-         │ - Auto-Advertises:   │                                 │ - Auto-Advertises:   │
-         │   192.168.11.0/24    │                                 │   192.168.10.0/24    │
-         │ - Route Table 52:    │                                 │ - Route Table 52:    │
-         │   192.168.8.0/24     │                                 │   192.168.11.0/24    │
-         │   192.168.10.0/24    │                                 │   192.168.8.0/24     │
-         │ - Firewall Zone:     │                                 │ - Firewall Zone:     │
-         │   lan -> tailscale   │                                 │   lan -> tailscale   │
-         │   (SNAT Masquerade)  │                                 │   (SNAT Masquerade)  │
-         └──────────┬───────────┘                                 └──────────┬───────────┘
-                    │                                                        │
-            ┌───────▼────────┐                                       ┌───────▼────────┐
-            │ LAN Clients:   │                                       │ LAN Clients:   │
-            │ Win11/Phones   │                                       │ Servers/CPE    │
-            │ (192.168.11.x) │                                       │ (192.168.10.x) │
-            └────────────────┘                                       └────────────────┘
-\`\`\`
+| Tag | Purpose |
+| --- | --- |
+| `tag:openwrt` | OpenWrt router identity |
+| `tag:subnet-router` | May operate as a subnet router |
+| `tag:service-host` | May expose explicitly approved infrastructure services |
+| `tag:ssh-target` | Destination for policy-authorized Tailscale SSH |
+| `tag:peer-relay-client` | Optional private Peer Relay client |
 
----
+Grant only the roles required by a particular router. For automatic route
+approval, create a distinct site identity such as `tag:site-athena-router`.
+A shared `tag:subnet-router` proves that a node is a router; it does not prove
+that the node owns a particular site's CIDR.
 
-## 3. Tag Roles & Permissions
+Pre-auth keys must be one-use, short-lived and issued per device. Leave
+**Reusable** disabled. Prefer a just-in-time `provision_url` that returns a
+one-use key after device authentication. Embedding `HEADSCALE_OPENWRT_AUTHKEY`
+in a private build is a legacy fallback only.
 
-All router enrollment keys (Pre-Auth Keys) must bind the following 5 tags:
+Deleting `/etc/tailscale/headscale.authkey` after enrollment removes the writable
+overlay path. It cannot erase a copy embedded in immutable SquashFS (`/rom`) or
+in the original GitHub artifact. Keep such artifacts private and revoke or
+expire the key even after successful first boot.
 
-| Tag | Purpose | ACL Authority |
-| :--- | :--- | :--- |
-| \`tag:openwrt\` | Subnet access passport | Authorized in ACL to receive and access all remote \`192.168.x.0/24\` subnets |
-| \`tag:subnet-router\` | Subnet router capability | Authorized to advertise LAN subnets to Headscale |
-| \`tag:service-host\` | Infrastructure host | Long-lived node, never expires, accesses internal DNS and services |
-| \`tag:ssh-target\` | Tailscale SSH destination | Allows administrative \`tailscale ssh root@<node>\` |
-| \`tag:peer-relay-client\` | DERP-less relay client | High-speed direct tunnel traversal through cloud peer relays |
+## 3. Exact-prefix route approval
 
----
+Never auto-approve an entire RFC1918 aggregate. Approve each site's exact prefix
+for a site-scoped identity, for example:
 
-## 4. Headscale Controller Configuration
-
-### A. Pre-Auth Key Generation
-1. In Headplane (\`https://headplane.jmsu.top/admin/settings\`):
-   - Check **Reusable**;
-   - Select tags: \`tag:openwrt\`, \`tag:service-host\`, \`tag:subnet-router\`, \`tag:ssh-target\`, \`tag:peer-relay-client\`;
-   - Copy the generated \`hskey-auth-...\` key.
-
-### B. Auto-Approvers in ACL (\`https://headplane.jmsu.top/admin/acls\`)
-Add the following block to auto-approve subnets advertised by routers:
-
-\`\`\`json
+```json
 {
   "autoApprovers": {
     "routes": {
-      "192.168.0.0/16": [
-        "tag:subnet-router",
-        "tag:openwrt"
-      ],
-      "10.0.0.0/8": [
-        "tag:subnet-router",
-        "tag:openwrt"
-      ]
+      "192.168.11.0/24": ["tag:site-athena-router"],
+      "192.168.12.0/24": ["tag:site-taiyi-router"],
+      "192.168.13.0/24": ["tag:site-nezha-router"]
     }
   }
 }
-\`\`\`
+```
 
----
+Run `headscale policy check` before deployment. This repository intentionally
+does not edit the live Headscale policy. Removing unused reusable keys and
+deploying controller policy remain audited operations tasks.
 
-## 5. Firmware Zero-Touch Automation Flow
+## 4. Firmware and first-boot flow
 
-1. **Build Time**:
-   - The GitHub Secret \`HEADSCALE_OPENWRT_AUTHKEY\` is injected by CI into \`/etc/tailscale/headscale.authkey\`.
-   - The LAN subnet (e.g. \`192.168.11.0/24\`) is derived from \`WRT_IP\` and stored in \`headscale_auto_enroll.main.advertise_routes\`.
-   - \`headscale_auto_enroll.main.accept_routes\` is set to \`1\`.
+At build time, `WRT_IP` derives a `/24` route unless an explicit route is set.
+An explicit build route must be one canonical RFC1918 `/24`-`/30` containing
+`WRT_IP`; default routes, public ranges, aggregates and comma-separated routes
+are rejected.
 
-2. **First Boot**:
-   - Once WAN obtains an IP, \`/usr/sbin/headscale-auto-enroll\` registers with Headscale.
-   - If \`advertise_routes\` is empty, it dynamically derives the subnet from \`uci get network.lan.ipaddr\`.
-   - Headscale assigns the 5 tags and automatically approves the advertised subnet.
-   - Tailscale populates route table 52 with all peer subnets.
-   - The auth key file \`/etc/tailscale/headscale.authkey\` is securely wiped from flash.
+At runtime, `/usr/sbin/headscale-auto-enroll` reads the active LAN IPv4 address
+and prefix from ubus, with UCI as a fallback. The advertised route must exactly
+equal that active LAN prefix and must remain within `/24`-`/30`. This validation
+runs both for new enrollment and `tailscale set` on an already-enrolled node.
 
-3. **MagicDNS Dual-Layer Failover**:
-   - **Layer 1 (Native dnsmasq)**: \`/etc/init.d/tailscale-lan-tailnet\` injects \`server=/hs.jmsu.top/100.100.100.100@tailscale0\` into dnsmasq. LAN devices resolve \`*.hs.jmsu.top\` directly even without proxy software.
-   - **Layer 2 (Nikki Proxy Bypass)**: \`nikki-sub-merge\` prepends direct rules for \`100.64.0.0/10\` and \`hs.jmsu.top\` pointing to \`100.100.100.100#tailscale0\`, ensuring Fake-IP does not hijack Tailnet traffic.
+The wrtbak gate remains authoritative: restored Tailscale state is reloaded
+before a new key is consumed. Successful new, restored and already-enrolled
+paths all remove a residual writable auth-key file and reapply DNS/Nikki health
+guards.
+
+`accept_routes=1` is the private-build/Tailnet gateway default. Validate table
+52, Nikki marks, WireGuard and other policy-routing plugins on real hardware
+before promotion.
+
+## 5. MagicDNS and transparent proxy coexistence
+
+The design uses two persistent layers:
+
+1. The DNS mode guard installs
+   `server=/hs.jmsu.top/100.100.100.100@tailscale0` in dnsmasq. It watches both
+   `dhcp` and `mosdns` configuration changes, restoring this conditional route
+   after mosdns rewrites dnsmasq's server list. It does not patch generated
+   `/var/etc/mosdns.json`, which mosdns would overwrite on reload.
+2. The Nikki guard stores DIRECT rules, Fake-IP filters and the Quad100
+   nameserver policy in Nikki UCI mixins. These are regenerated on every local
+   profile or subscription reload. The protected destinations are
+   `hs.jmsu.top`, `ts.net`, `100.64.0.0/10`, `fd7a:115c:a1e0::/48` and RFC1918
+   routes.
+
+Until `tailscale0` is ready, only `*.hs.jmsu.top` fails closed. The Headscale,
+Headplane and DERP bootstrap names use non-Tailnet DNS, so Tailnet enrollment
+does not depend on MagicDNS and cannot form a bootstrap DNS loop.
+
+## 6. Required operational checks
+
+- Maintain a unique site/CIDR registry outside firmware inputs.
+- Revoke unused reusable or untagged pre-auth keys.
+- Test exact-prefix approvals and ACLs in a staging policy before deployment.
+- Verify `ip route show table 52`, `nft list ruleset`, Nikki generated rules and
+  `nslookup <node>.hs.jmsu.top 100.100.100.100` after every proxy upgrade.
+- Keep Dropbear key-based LAN SSH as the independent rescue path.

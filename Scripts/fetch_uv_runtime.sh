@@ -14,9 +14,12 @@ UV_CACHE_DIR="$UV_ROOT_DIR/cache"
 UV_PYTHON_INSTALL_MIRROR="file:///opt/uv/python-mirror"
 UV_AARCH64_ASSET="uv-aarch64-unknown-linux-musl"
 UV_X86_64_ASSET="uv-x86_64-unknown-linux-musl"
-UV_RELEASES_API="${UV_RELEASES_API:-https://api.github.com/repos/astral-sh/uv/releases/latest}"
-PYTHON_RELEASES_API="${PYTHON_RELEASES_API:-https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=1}"
-UV_FALLBACK_VERSION="${UV_FALLBACK_VERSION:-0.9.20}"
+UV_VERSION="0.12.7"
+UV_AARCH64_SHA256="6dcf60e3c085de88ace3671b949ca99f0652be561ff5627f0d21394140f041db"
+UV_X86_64_SHA256="3d64d44ed67da7908dc7f5c4d64ebb44bad326fa17f8a0a52fc9a7793017bbe1"
+PYTHON_RELEASE_TAG="20260825"
+PYTHON_RELEASES_API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$PYTHON_RELEASE_TAG"
+PYTHON_SHA256SUMS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/$PYTHON_RELEASE_TAG/SHA256SUMS"
 PYTHON_SERIES=(3.10 3.11 3.12 3.13)
 
 warn() {
@@ -87,40 +90,48 @@ prepare_overlay_dirs() {
 		"$UV_CACHE_DIR"
 }
 
-resolve_uv_version() {
-	local metadata_file version
-
-	metadata_file="$(mktemp)"
-	if retry_cmd 5 15 curl -fsSL "$UV_RELEASES_API" -o "$metadata_file"; then
-		version="$(jq -r '.tag_name // empty' "$metadata_file" 2>/dev/null || true)"
-		rm -f "$metadata_file"
-		printf '%s\n' "$version"
-		return 0
-	fi
-
-	rm -f "$metadata_file"
-	printf '\n'
+uv_archive_sha256() {
+	case "$1" in
+		aarch64-unknown-linux-musl)
+			echo "$UV_AARCH64_SHA256"
+			;;
+		x86_64-unknown-linux-musl)
+			echo "$UV_X86_64_SHA256"
+			;;
+		*)
+			return 1
+			;;
+	esac
 }
 
-download_uv_binary() {
+download_uv_binary() (
 	local uv_target="$1"
-	local uv_version="$2"
+	local uv_version="$UV_VERSION"
 	local archive="uv-${uv_target}.tar.gz"
 	local url="https://github.com/astral-sh/uv/releases/download/${uv_version}/${archive}"
-	local tmpdir uv_binary
+	local expected_hash actual_hash tmpdir uv_binary
+
+	expected_hash="$(uv_archive_sha256 "$uv_target")" || {
+		echo "ERROR: no trusted uv checksum is pinned for $uv_target" >&2
+		return 1
+	}
 
 	tmpdir="$(mktemp -d)"
+	trap 'rm -rf "$tmpdir"' EXIT
 	retry_cmd 5 15 curl -fsSL "$url" -o "$tmpdir/$archive"
+	actual_hash="$(sha256sum "$tmpdir/$archive" | awk '{print $1}')"
+	if [ "$actual_hash" != "$expected_hash" ]; then
+		echo "ERROR: uv $uv_version archive SHA256 mismatch for $uv_target" >&2
+		return 1
+	fi
 	tar -xzf "$tmpdir/$archive" -C "$tmpdir"
 	uv_binary="$(find "$tmpdir" -type f -name uv -print -quit)"
 	[ -n "$uv_binary" ] || {
-		rm -rf "$tmpdir"
 		echo "ERROR: failed to locate extracted uv binary for $uv_target" >&2
 		return 1
 	}
 	install -m 0755 "$uv_binary" "$UV_BIN_DIR/uv"
-	rm -rf "$tmpdir"
-}
+)
 
 prepare_mirror_manifest() {
 	cat >"$UV_PYTHON_MIRROR_DIR/manifest.txt" <<EOF
@@ -135,9 +146,8 @@ select_python_asset() {
 
 	jq -r --arg series "$series" --arg target "$pbs_target" '
 		[
-			map(select((.draft // false) == false and (.prerelease // false) == false))
-			| .[] as $release
-			| ($release.assets // [])[]
+			select((.draft // false) == false and (.prerelease // false) == false)
+			| (.assets // [])[]
 			| select(.name | test("^cpython-" + ($series | gsub("\\."; "\\\\.")) + "\\.[0-9]+\\+[0-9]+-" + $target + "-install_only\\.tar\\.gz$"))
 			| [.name, .browser_download_url]
 			| @tsv
@@ -148,14 +158,15 @@ select_python_asset() {
 mirror_python_series() {
 	local pbs_target="$1"
 	local releases_json="$2"
+	local checksums_file="$3"
 	local manifest="$UV_PYTHON_MIRROR_DIR/manifest.txt"
-	local row asset_name asset_url build_id
+	local row asset_name asset_url build_id expected_hash actual_hash asset_path
 
 	for series in "${PYTHON_SERIES[@]}"; do
 		row="$(select_python_asset "$releases_json" "$series" "$pbs_target")"
 		if [ -z "$row" ]; then
-			warn "no mirrored CPython asset found for $series on $pbs_target"
-			continue
+			echo "ERROR: pinned CPython $PYTHON_RELEASE_TAG has no $series asset for $pbs_target" >&2
+			return 1
 		fi
 
 		IFS=$'\t' read -r asset_name asset_url <<EOF
@@ -167,32 +178,39 @@ EOF
 			build_id="${BASH_REMATCH[1]}"
 		fi
 		if [ -z "$build_id" ]; then
-			warn "unable to parse build id from $asset_name"
-			continue
+			echo "ERROR: unable to parse build id from $asset_name" >&2
+			return 1
 		fi
 
 		mkdir -p "$UV_PYTHON_MIRROR_DIR/$build_id"
-		if retry_cmd 5 15 curl -fsSL "$asset_url" -o "$UV_PYTHON_MIRROR_DIR/$build_id/$asset_name"; then
-			printf '%s\t%s\t%s\n' "$series" "$build_id" "$asset_name" >>"$manifest"
-		else
-			warn "failed to mirror $asset_name"
+		asset_path="$UV_PYTHON_MIRROR_DIR/$build_id/$asset_name"
+		expected_hash="$(awk -v name="$asset_name" '$2 == name { print $1; exit }' "$checksums_file")"
+		[ -n "$expected_hash" ] || {
+			echo "ERROR: $asset_name is absent from the official SHA256SUMS" >&2
+			return 1
+		}
+		retry_cmd 5 15 curl -fsSL "$asset_url" -o "$asset_path"
+		actual_hash="$(sha256sum "$asset_path" | awk '{print $1}')"
+		if [ "$actual_hash" != "$expected_hash" ]; then
+			echo "ERROR: CPython archive SHA256 mismatch for $asset_name" >&2
+			return 1
 		fi
+		printf '%s\t%s\t%s\t%s\n' "$series" "$build_id" "$asset_name" "$expected_hash" >>"$manifest"
 	done
 }
 
 fetch_python_releases_json() {
 	local output_file="$1"
 
-	if retry_cmd 5 15 curl -fsSL "$PYTHON_RELEASES_API" -o "$output_file"; then
-		return 0
-	fi
-
-	warn "unable to fetch python-build-standalone release metadata; skipping mirrored Python assets"
-	return 1
+	retry_cmd 5 15 curl -fsSL "$PYTHON_RELEASES_API" -o "$output_file"
+	[ "$(jq -r '.tag_name // empty' "$output_file")" = "$PYTHON_RELEASE_TAG" ] || {
+		echo "ERROR: python-build-standalone release metadata did not match $PYTHON_RELEASE_TAG" >&2
+		return 1
+	}
 }
 
 main() {
-	local uv_target uv_version releases_json
+	local uv_target releases_json checksums_file
 
 	prepare_overlay_dirs
 
@@ -201,20 +219,17 @@ main() {
 		exit 0
 	fi
 
-	uv_version="$(resolve_uv_version)"
-	if [ -z "$uv_version" ]; then
-		warn "failed to resolve latest uv release; falling back to $UV_FALLBACK_VERSION"
-		uv_version="$UV_FALLBACK_VERSION"
-	fi
-
-	download_uv_binary "$uv_target" "$uv_version"
+	download_uv_binary "$uv_target"
 	prepare_mirror_manifest
 
 	releases_json="$(mktemp)"
-	if fetch_python_releases_json "$releases_json"; then
-		mirror_python_series "$uv_target" "$releases_json"
-	fi
-	rm -f "$releases_json"
+	checksums_file="$(mktemp)"
+	trap 'rm -f "$releases_json" "$checksums_file"' EXIT
+	fetch_python_releases_json "$releases_json"
+	retry_cmd 5 15 curl -fsSL "$PYTHON_SHA256SUMS_URL" -o "$checksums_file"
+	mirror_python_series "$uv_target" "$releases_json" "$checksums_file"
+	rm -f "$releases_json" "$checksums_file"
+	trap - EXIT
 }
 
 main "$@"

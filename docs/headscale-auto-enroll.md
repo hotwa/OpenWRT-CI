@@ -8,7 +8,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - Use ordinary SSH to the router over its Tailscale IP for normal management after the router joins Headscale, for example `ssh root@100.64.x.x`.
 - `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
-- Keep `accept_routes` disabled by default. Enable it only after checking it will not conflict with WireGuard, WAN policy routing, DAE, or Nikki.
+- The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
 
 ## Files
 
@@ -52,13 +52,27 @@ logread -e headscale-auto-enroll
 tailscale status
 ```
 
-After a successful enrollment the script removes `/etc/tailscale/headscale.authkey` by default.
+After a successful enrollment, recovery of an existing state, or detection of an
+already-enrolled node, the script removes the writable
+`/etc/tailscale/headscale.authkey` path by default. This is not secure erasure of
+a build-time key: a SquashFS copy remains recoverable under `/rom` and from the
+original firmware artifact.
 
 ## GitHub Actions secret pattern
 
 Do not commit an auth key to this repository. If a private firmware build must auto-enroll during first boot, store the key as the GitHub Actions secret `HEADSCALE_OPENWRT_AUTHKEY`. The workflow calls `Scripts/HeadscaleAutoEnroll.sh` after copying the overlay into `wrt/files`; when the secret is present it writes `/etc/tailscale/headscale.authkey` into that private build root and sets `headscale_auto_enroll.main.enabled=1`. When the secret is empty, the script leaves firmware auto-enroll disabled.
 
-The resulting firmware artifact contains the enrollment key until the router boots and the script deletes `/etc/tailscale/headscale.authkey`. Keep those artifacts private and rotate the key if an artifact leaks.
+> **Warning:** the firmware artifact contains the enrollment key inside the
+> read-only SquashFS image. The first-boot `rm` only creates a whiteout in the
+> writable overlay; the original key is still recoverable under `/rom` and from
+> the firmware artifact itself. Treat every private build as a secret-bearing
+> artifact: do not distribute it, and revoke/rotate the key after a build or
+> device is lost, retired, or shared.
+
+The resulting firmware artifact permanently contains the enrollment key. An
+overlay deletion after boot does not modify immutable SquashFS. Keep those
+artifacts private and use a one-use, short-expiry, per-device key. Prefer
+`provision_url` so the firmware contains no Headscale key at all.
 
 Optional non-secret environment variables:
 
@@ -82,14 +96,30 @@ When `wrtbak.main.firstboot_auto_enabled=1`, Headscale registration waits for th
 
 The init service and WAN hotplug hook can fire close together. A PID-aware runtime lock serializes these attempts, reclaims stale locks after service restart, and prevents two concurrent `tailscale up` calls.
 
-Prefer a tagged, router-scoped key with the narrow tags needed by the router:
+Prefer a one-use, short-expiry, per-device key with only the narrow tags needed
+by the router:
 
 - `tag:service-host`
 - `tag:ssh-target`
 - `tag:subnet-router`
 - `tag:peer-relay-client` only for routers that should use Peer Relay
 
-Long-lived reusable keys are operationally convenient but are enrollment secrets. If one leaks, revoke it from Headscale and rotate the GitHub secret.
+Do not use a shared reusable key for firmware enrollment. If a legacy artifact
+contains one, revoke it from Headscale and rotate the GitHub secret even if every
+router reports successful enrollment.
+
+## Route advertisement validation
+
+The runtime advertises exactly one IPv4 LAN route. It reads the active LAN
+address and prefix from ubus, with UCI as a fallback, and accepts only a
+canonical RFC1918 `/24`-`/30` that exactly equals the active LAN prefix. It
+rejects `0.0.0.0/0`, public space, wide aggregates, comma-separated route lists
+and stale build-time prefixes. The same validation is applied before updating an
+already-enrolled node.
+
+The build helper performs the corresponding syntax, RFC1918, prefix-length and
+containment checks. A controller-side site/CIDR inventory is still required to
+detect a collision between two different firmware builds.
 
 ## Deployment cautions for 192.168.12.1
 

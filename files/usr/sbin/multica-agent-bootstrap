@@ -1,15 +1,19 @@
 #!/bin/sh
-# Multica bootstrap: Network online gate & initial Agent creation
+# Multica bootstrap: wait for the exact local runtime, then create one agent.
 
 set -eu
 
 CONFIG="multica"
 SECTION="main"
 LOG_TAG="multica-bootstrap"
+MULTICA_BIN="${MULTICA_BIN:-/usr/local/bin/multica}"
+DATA_DIR="${MULTICA_DATA_DIR:-/data/multica}"
+LOCK_DIR="${MULTICA_BOOTSTRAP_LOCK_DIR:-/var/run/multica-agent-bootstrap.lock}"
+JSHN_LIB="${MULTICA_JSHN_LIB:-/usr/share/libubox/jshn.sh}"
 
 log() {
 	logger -t "$LOG_TAG" "$*"
-	echo "[$LOG_TAG] $*"
+	printf '[%s] %s\n' "$LOG_TAG" "$*"
 }
 
 cfg() {
@@ -21,91 +25,213 @@ cfg() {
 	printf '%s' "$value"
 }
 
-wait_for_network() {
-	local server_url="$1"
-	local retries=0
-	local max_retries=120
-
-	log "waiting for network connectivity (WAN/PPPoE/DHCP) to reach $server_url..."
-	while [ "$retries" -lt "$max_retries" ]; do
-		# 1. Check default gateway
-		if ip route show default 2>/dev/null | grep -q default; then
-			# 2. Check HTTP/HTTPS reachability to server
-			if command -v curl >/dev/null 2>&1; then
-				if curl -s -m 5 "$server_url" >/dev/null 2>&1; then
-					log "network is online and $server_url is reachable!"
-					return 0
-				fi
-			else
-				return 0
-			fi
-		fi
-		retries=$((retries + 1))
-		sleep 5
-	done
-
-	log "WARNING: network wait timeout; continuing in background"
-	return 0
+release_lock() {
+	rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+	rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
-bootstrap_agent() {
-	local agent_init_flag="/data/multica/.agent_initialized"
-	[ ! -f "$agent_init_flag" ] || return 0
-
-	local instructions_file="/data/multica/openwrt-agent.md"
-	[ -f "$instructions_file" ] || instructions_file="/etc/multica/openwrt-agent.md"
-	[ -f "$instructions_file" ] || instructions_file="/root/.multica/openwrt-agent.md"
-	[ -f "$instructions_file" ] || {
-		log "instructions file not found, skipping agent auto-creation"
-		return 0
-	}
-
-	command -v multica >/dev/null 2>&1 || return 0
-
-	local retries=0
-	local runtime_id=""
-
-	# Wait for daemon to register and obtain runtime_id
-	while [ "$retries" -lt 30 ]; do
-		sleep 5
-		runtime_id="$(multica runtime list --output json 2>/dev/null | grep -o '"id": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
-		if [ -n "$runtime_id" ]; then
-			break
-		fi
-		retries=$((retries + 1))
-	done
-
-	if [ -z "$runtime_id" ]; then
-		log "could not detect runtime_id from multica daemon; agent creation deferred"
+acquire_lock() {
+	local old_pid
+	mkdir -p "$(dirname "$LOCK_DIR")"
+	if mkdir "$LOCK_DIR" 2>/dev/null; then
+		printf '%s\n' "$$" > "$LOCK_DIR/pid"
+		trap release_lock EXIT HUP INT TERM
 		return 0
 	fi
 
-	local agent_name="$(cfg agent_name 'OpenWrt 管家')"
-	log "registering default $agent_name Agent with runtime_id: $runtime_id"
-	local instructions="$(cat "$instructions_file")"
+	old_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+	case "$old_pid" in
+		''|*[!0-9]*) old_pid="" ;;
+	esac
+	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+		log "another bootstrap instance is already running"
+		return 1
+	fi
 
-	if multica agent create \
+	# Recover only this known stale lock, never a caller-supplied tree.
+	rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+	rmdir "$LOCK_DIR" 2>/dev/null || true
+	mkdir "$LOCK_DIR" 2>/dev/null || return 1
+	printf '%s\n' "$$" > "$LOCK_DIR/pid"
+	trap release_lock EXIT HUP INT TERM
+}
+
+server_reachable() {
+	local server_url="$1"
+	ip route show default 2>/dev/null | grep -q '^default ' || return 1
+	command -v curl >/dev/null 2>&1 || return 1
+	curl --fail --silent --show-error --location \
+		--connect-timeout 5 --max-time 10 \
+		--proto '=https' --tlsv1.2 \
+		"$server_url" >/dev/null 2>&1
+}
+
+load_json() {
+	local json_file="$1"
+	[ -r "$JSHN_LIB" ] || return 1
+	# shellcheck source=/usr/share/libubox/jshn.sh
+	. "$JSHN_LIB"
+	json_cleanup 2>/dev/null || true
+	json_load "$(cat "$json_file")"
+}
+
+select_runtime_id() {
+	local json_file="$1"
+	local expected_name="$2"
+	local expected_provider="$3"
+	local keys key candidate_id candidate_name candidate_provider candidate_status
+	local matched_id="" matches=0
+
+	load_json "$json_file" || return 1
+	json_get_keys keys
+	for key in $keys; do
+		json_select "$key" || continue
+		candidate_id=""; candidate_name=""; candidate_provider=""; candidate_status=""
+		json_get_var candidate_id id
+		json_get_var candidate_name name
+		json_get_var candidate_provider provider
+		json_get_var candidate_status status
+		json_select ..
+		if [ "$candidate_name" = "$expected_name" ] && \
+			[ "$candidate_provider" = "$expected_provider" ] && \
+			[ "$candidate_status" = "online" ] && [ -n "$candidate_id" ]; then
+			matches=$((matches + 1))
+			matched_id="$candidate_id"
+		fi
+	done
+	json_cleanup 2>/dev/null || true
+	[ "$matches" -eq 1 ] || return 1
+	printf '%s' "$matched_id"
+}
+
+agent_exists() {
+	local json_file="$1"
+	local expected_name="$2"
+	local expected_runtime_id="$3"
+	local keys key candidate_name candidate_runtime_id candidate_status
+
+	load_json "$json_file" || return 1
+	json_get_keys keys
+	for key in $keys; do
+		json_select "$key" || continue
+		candidate_name=""; candidate_runtime_id=""; candidate_status=""
+		json_get_var candidate_name name
+		json_get_var candidate_runtime_id runtime_id
+		json_get_var candidate_status status
+		json_select ..
+		if [ "$candidate_name" = "$expected_name" ] && \
+			[ "$candidate_runtime_id" = "$expected_runtime_id" ] && \
+			[ "$candidate_status" = "active" ]; then
+			json_cleanup 2>/dev/null || true
+			return 0
+		fi
+	done
+	json_cleanup 2>/dev/null || true
+	return 1
+}
+
+write_success_flag() {
+	local flag="$1"
+	local temporary="${flag}.new.$$"
+	umask 077
+	: > "$temporary"
+	mv -f "$temporary" "$flag"
+}
+
+try_bootstrap() {
+	local server_url="$1"
+	local expected_runtime_name="$2"
+	local expected_provider="$3"
+	local agent_name="$4"
+	local instructions_file="$5"
+	local runtime_json agent_json runtime_id instructions
+
+	server_reachable "$server_url" || return 1
+	[ -x "$MULTICA_BIN" ] || return 1
+	[ -r "$JSHN_LIB" ] || return 1
+
+	runtime_json="/tmp/multica-runtimes.$$"
+	agent_json="/tmp/multica-agents.$$"
+	rm -f "$runtime_json" "$agent_json"
+	if ! "$MULTICA_BIN" runtime list --output json > "$runtime_json" 2>/dev/null; then
+		rm -f "$runtime_json" "$agent_json"
+		return 1
+	fi
+	runtime_id="$(select_runtime_id "$runtime_json" "$expected_runtime_name" "$expected_provider" || true)"
+	rm -f "$runtime_json"
+	[ -n "$runtime_id" ] || return 1
+
+	if "$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null && \
+		agent_exists "$agent_json" "$agent_name" "$runtime_id"; then
+		rm -f "$agent_json"
+		return 0
+	fi
+	rm -f "$agent_json"
+
+	instructions="$(cat "$instructions_file")"
+	[ -n "$instructions" ] || return 1
+	"$MULTICA_BIN" agent create \
 		--name "$agent_name" \
 		--runtime-id "$runtime_id" \
 		--description "OpenWrt 系统与网络管理智能体" \
-		--instructions "$instructions" >/dev/null 2>&1 || multica agent list 2>/dev/null | grep -q "$agent_name"; then
-		touch "$agent_init_flag"
-		log "successfully confirmed $agent_name in Multica workspace!"
+		--instructions "$instructions" >/dev/null 2>&1 || return 1
+
+	# Do not mark success based solely on a zero exit code. Confirm the exact
+	# agent/runtime binding returned by the service.
+	"$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null || return 1
+	local confirmed
+	if agent_exists "$agent_json" "$agent_name" "$runtime_id"; then
+		confirmed=0
 	else
-		log "agent creation returned non-zero; will retry on next service restart"
+		confirmed=1
 	fi
+	rm -f "$agent_json"
+	return "$confirmed"
 }
 
 main() {
-	local enabled="$(cfg enabled 0)"
+	local enabled server_url expected_runtime_name expected_provider agent_name
+	local instructions_file success_flag delay
+
+	enabled="$(cfg enabled 0)"
 	case "$enabled" in
 		1|true|yes|on) ;;
 		*) return 0 ;;
 	esac
 
-	local server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
-	wait_for_network "$server_url"
-	bootstrap_agent &
+	acquire_lock || return 0
+	mkdir -p "$DATA_DIR"
+	success_flag="$DATA_DIR/.agent_initialized"
+	[ ! -f "$success_flag" ] || return 0
+
+	server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
+	expected_runtime_name="$(cfg runtime_name 'Pi (OpenWrt-Router)')"
+	expected_provider="$(cfg runtime_provider 'pi')"
+	agent_name="$(cfg agent_name 'OpenWrt 管家')"
+	instructions_file="$DATA_DIR/openwrt-agent.md"
+	[ -f "$instructions_file" ] || instructions_file="/etc/multica/openwrt-agent.md"
+	[ -f "$instructions_file" ] || {
+		log "agent instructions are unavailable; bootstrap will retry"
+		instructions_file=""
+	}
+
+	delay=5
+	while :; do
+		if [ -n "$instructions_file" ] && \
+			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name"; then
+			write_success_flag "$success_flag"
+			log "default agent is registered on the expected online runtime"
+			return 0
+		fi
+		log "bootstrap prerequisites are not ready; retrying in ${delay}s"
+		sleep "$delay"
+		if [ "$delay" -lt 60 ]; then
+			delay=$((delay * 2))
+			[ "$delay" -le 60 ] || delay=60
+		fi
+	done
 }
 
-main "$@"
+if [ "${MULTICA_BOOTSTRAP_LIBRARY_ONLY:-0}" != "1" ]; then
+	main "$@"
+fi

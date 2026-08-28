@@ -69,8 +69,8 @@ grep -q 'python-build-standalone' "$FETCH_SCRIPT" || {
   exit 1
 }
 
-grep -q 'python-build-standalone/releases?per_page=1}' "$FETCH_SCRIPT" || {
-  echo "fetch_uv_runtime.sh does not limit release metadata to the latest release"
+grep -q 'python-build-standalone/releases/tags/' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not pin a specific python-build-standalone release tag"
   exit 1
 }
 

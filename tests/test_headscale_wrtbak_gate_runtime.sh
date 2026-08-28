@@ -34,6 +34,8 @@ case "$key" in
 	headscale_auto_enroll.main.restore_gate_interval) printf '0\n' ;;
 	headscale_auto_enroll.main.delete_auth_key_file) printf '0\n' ;;
 	wrtbak.main.firstboot_auto_enabled) printf '1\n' ;;
+	network.lan.ipaddr) printf '192.168.12.1\n' ;;
+	network.lan.netmask) printf '255.255.255.0\n' ;;
 	*) exit 1 ;;
 esac
 EOF

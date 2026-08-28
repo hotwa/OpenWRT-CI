@@ -6,11 +6,15 @@ WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 PROFILE_NODE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
 PROFILE_UPDATE="$ROOT_DIR/files/etc/profile.d/30-agent-update-check.sh"
+AGENT_MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
+AGENT_LOCK="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"
 
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$FETCH_SCRIPT" ] || { echo "missing fetch_node_runtime.sh"; exit 1; }
 [ -f "$PROFILE_NODE" ] || { echo "missing 20-node-agent.sh"; exit 1; }
 [ -f "$PROFILE_UPDATE" ] || { echo "missing 30-agent-update-check.sh"; exit 1; }
+[ -f "$AGENT_MANIFEST" ] || { echo "missing node-agent-runtime/package.json"; exit 1; }
+[ -f "$AGENT_LOCK" ] || { echo "missing node-agent-runtime/package-lock.json"; exit 1; }
 
 grep -q '\$GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not run fetch_node_runtime.sh"
@@ -36,17 +40,19 @@ grep -q 'linux-x64-musl' "$FETCH_SCRIPT" || {
   exit 1
 }
 
-grep -q 'opencode-ai' "$FETCH_SCRIPT" || {
-  echo "fetch_node_runtime.sh does not pre-install opencode-ai"
+grep -q 'node-agent-runtime' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not reference the node-agent-runtime manifest directory"
   exit 1
 }
 
-grep -q '@earendil-works/pi-coding-agent' "$FETCH_SCRIPT" || {
-  echo "fetch_node_runtime.sh does not pre-install @earendil-works/pi-coding-agent"
+grep -q 'npm ci' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not install the locked agent runtime with npm ci"
   exit 1
 }
 
-for ext in \
+for pkg in \
+  "opencode-ai" \
+  "@earendil-works/pi-coding-agent" \
   "@aaronkyriesenbach/pi-package-manager" \
   "btw-pi" \
   "pi-plan-mode" \
@@ -55,9 +61,10 @@ for ext in \
   "@tarquinen/opencode-dcp" \
   "@mohak34/opencode-notifier" \
   "opencode-conductor-plugin" \
-  "hermes-agent"; do
-  grep -q "$ext" "$FETCH_SCRIPT" || {
-    echo "fetch_node_runtime.sh missing extension or agent: $ext"
+  "hermes-agent" \
+  "pnpm"; do
+  grep -q "$pkg" "$AGENT_MANIFEST" || {
+    echo "node-agent-runtime/package.json missing package: $pkg"
     exit 1
   }
 done

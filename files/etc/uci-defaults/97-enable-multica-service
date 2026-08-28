@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Install the rc.d link even when UCI keeps the service disabled. Enabling the
+# UCI option later then only requires a normal service start or reboot.
+if [ -x /etc/init.d/multica ]; then
+	/etc/init.d/multica enable
+fi
+
+exit 0

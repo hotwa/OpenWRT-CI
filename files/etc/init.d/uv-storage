@@ -1,59 +1,55 @@
 #!/bin/sh /etc/rc.common
 
-START=99
+START=90
 STOP=10
 
-RUNTIME_ENV=/tmp/uv-env.sh
+DATA_ROOT="${UV_STORAGE_DATA_ROOT:-/data}"
+MOUNTS_FILE="${UV_STORAGE_MOUNTS_FILE:-/proc/mounts}"
+RUNTIME_ENV="${UV_STORAGE_RUNTIME_ENV:-/tmp/uv-env.sh}"
 
-mounted_uv_root() {
-	if mount | grep -q ' on /data ' && [ -d /data ] && [ -w /data ]; then
-		echo "/data/uv_cache"
-		return 0
-	fi
-
-	if mount | grep -q ' on /mnt/mmc ' && [ -d /mnt/mmc ] && [ -w /mnt/mmc ]; then
-		echo "/mnt/mmc/uv"
-		return 0
-	fi
-
-	for path in /mnt/*; do
-		[ -d "$path" ] || continue
-		[ -w "$path" ] || continue
-		echo "$path/uv"
-		return 0
-	done
-
-	return 1
-}
-
-select_uv_root() {
-	local uv_root
-	local attempt
-
-	attempt=0
-	while [ "$attempt" -lt 5 ]; do
-		if uv_root="$(mounted_uv_root)"; then
-			echo "$uv_root"
-			return 0
-		fi
-		attempt=$((attempt + 1))
-		sleep 1
-	done
-
-	echo "/opt/uv"
+data_is_ready() {
+	local probe="$DATA_ROOT/.uv-storage-write-probe.$$"
+	awk -v target="$DATA_ROOT" '$2 == target { found=1 } END { exit !found }' \
+		"$MOUNTS_FILE" 2>/dev/null || return 1
+	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
+	( umask 077; : >"$probe" ) 2>/dev/null || return 1
+	rm -f "$probe"
 }
 
 write_runtime_env() {
-	local uv_root
+	local temporary="${RUNTIME_ENV}.new.$$"
 
-	uv_root="$(select_uv_root)"
-	mkdir -p "$uv_root/cache" "$uv_root/python" "$uv_root/python-cache"
+	data_is_ready || {
+		rm -f "$RUNTIME_ENV" "$temporary" 2>/dev/null || true
+		return 1
+	}
+	mkdir -p \
+		"$DATA_ROOT/uv_cache" \
+		"$DATA_ROOT/uv/python" \
+		"$DATA_ROOT/uv/python-cache" \
+		"$DATA_ROOT/pnpm/store" \
+		"$DATA_ROOT/npm/cache" \
+		"$DATA_ROOT/cache" || return 1
+	chmod 0700 \
+		"$DATA_ROOT/uv_cache" \
+		"$DATA_ROOT/uv" \
+		"$DATA_ROOT/pnpm" \
+		"$DATA_ROOT/npm" \
+		"$DATA_ROOT/cache" 2>/dev/null || true
 
-	cat >"$RUNTIME_ENV" <<EOF
-export UV_CACHE_DIR=$uv_root/cache
-export UV_PYTHON_INSTALL_DIR=$uv_root/python
-export UV_PYTHON_CACHE_DIR=$uv_root/python-cache
+	( umask 077; cat >"$temporary" <<EOF
+export MULTICA_WORKSPACE=$DATA_ROOT/multica
+export MULTICA_DATA_DIR=$DATA_ROOT/multica
+export UV_CACHE_DIR=$DATA_ROOT/uv_cache
+export UV_PYTHON_INSTALL_DIR=$DATA_ROOT/uv/python
+export UV_PYTHON_CACHE_DIR=$DATA_ROOT/uv/python-cache
+export PNPM_STORE_DIR=$DATA_ROOT/pnpm/store
+export NPM_CONFIG_CACHE=$DATA_ROOT/npm/cache
+export npm_config_cache=$DATA_ROOT/npm/cache
+export XDG_CACHE_HOME=$DATA_ROOT/cache
 EOF
+	) || return 1
+	mv "$temporary" "$RUNTIME_ENV"
 }
 
 start() {

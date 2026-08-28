@@ -30,6 +30,7 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-07
+      WRT_REQUIRED_DEVICE: jdcloud_re-cs-07
       WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
       WRTBAK_DEVICE_ALIAS: home-re-cs-07
       CI_NAME: RE-CS-07-BUILD

@@ -14,6 +14,13 @@ grep -Fq 'WRT_BUILD_ONLY: ${{inputs.WRT_BUILD_ONLY}}' "$CORE"
 grep -Fq 'WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}' "$CORE"
 grep -Fq "if: inputs.WRT_EXPECTED_DEVICE != ''" "$CORE"
 grep -Fq "if: env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$CORE"
+grep -Fq 'mkdir -p ./wrt/files' "$CORE"
+for runtime_fetch in fetch_uv_runtime.sh fetch_node_runtime.sh fetch_multica_runtime.sh; do
+	grep -Fq "$runtime_fetch \"\$GITHUB_WORKSPACE/wrt/files\"" "$CORE" || {
+		echo "$runtime_fetch is not given the explicit firmware overlay target"
+		exit 1
+	}
+done
 
 if grep -Eq '(defconfig|stage)[[:space:]]+\+' "$CORE"; then
 	echo "WRT-CORE contains a literal plus concatenated to a guard command"
@@ -55,6 +62,7 @@ grep -Fq 'WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git' "$DEDICATED"
 grep -Fq 'WRT_BRANCH: main' "$DEDICATED"
 grep -Fq 'WRT_BUILD_ONLY: true' "$DEDICATED"
 grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-07' "$DEDICATED"
+grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-07' "$DEDICATED"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$DEDICATED"
 grep -Fq 'WRTBAK_DEVICE_ALIAS: home-re-cs-07' "$DEDICATED"
 

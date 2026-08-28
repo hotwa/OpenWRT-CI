@@ -9,14 +9,16 @@ on:
     - cron: 0 20 * * 0
   #手动清理
   workflow_dispatch:
-permissions: write-all
+permissions:
+  actions: write
+  contents: read
 
 jobs:
   auto_clean:
     runs-on: ubuntu-22.04
     steps:
       - name: Delete old workflow runs
-        uses: ophub/delete-releases-workflows@main
+        uses: ophub/delete-releases-workflows@185ead47518014ad09d25f358e70353483bdb22f # v0.1.0
         with:
           gh_token: ${{secrets.GITHUB_TOKEN}}
           delete_releases: false

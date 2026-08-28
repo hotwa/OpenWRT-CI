@@ -34,11 +34,20 @@ UPDATE_PACKAGE() {
 		fi
 	done
 
-	# 克隆 GitHub 仓库
-	retry_cmd 5 15 git clone --depth=1 --single-branch --branch $PKG_BRANCH "https://github.com/$PKG_REPO.git"
+	# A reviewed commit is fetched directly so a moving branch can never affect
+	# the build before the detached checkout.  Branch-only mode remains available
+	# for local development, but production package declarations below are pinned.
 	if [ -n "$PKG_COMMIT" ]; then
+		git init "$REPO_NAME"
+		git -C "$REPO_NAME" remote add origin "https://github.com/$PKG_REPO.git"
 		retry_cmd 5 15 git -C "$REPO_NAME" fetch --depth=1 origin "$PKG_COMMIT"
 		git -C "$REPO_NAME" checkout --detach "$PKG_COMMIT"
+		[ "$(git -C "$REPO_NAME" rev-parse HEAD)" = "$PKG_COMMIT" ] || {
+			echo "ERROR: $PKG_REPO did not resolve to reviewed commit $PKG_COMMIT" >&2
+			exit 1
+		}
+	else
+		retry_cmd 5 15 git clone --depth=1 --single-branch --branch "$PKG_BRANCH" "https://github.com/$PKG_REPO.git"
 	fi
 
 	# 处理克隆的仓库

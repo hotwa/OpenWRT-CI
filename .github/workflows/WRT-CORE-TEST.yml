@@ -46,6 +46,8 @@ on:
       WRT_ARCH:
         required: false
         type: string
+permissions:
+  contents: read
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -69,7 +71,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Projects
-        uses: actions/checkout@main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Initialization Values
         run: |
@@ -96,4 +98,3 @@ jobs:
           . $GITHUB_WORKSPACE/Scripts/function.sh
           cd ./wrt/
           generate_config && cat .config
-

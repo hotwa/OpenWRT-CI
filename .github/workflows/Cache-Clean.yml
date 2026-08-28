@@ -10,7 +10,9 @@ on:
   #手动清理
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  actions: write
+  contents: read
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
@@ -19,8 +21,5 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Projects
-        uses: actions/checkout@main
-
       - name: Cache Clean
         run: gh cache delete --all

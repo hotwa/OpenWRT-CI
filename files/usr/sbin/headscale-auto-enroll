@@ -28,6 +28,161 @@ bool_arg() {
 	esac
 }
 
+is_ipv4() {
+	local ip="$1" octet
+	local old_ifs="$IFS"
+
+	case "$ip" in
+		''|*[!0-9.]*) return 1 ;;
+	esac
+	IFS=.
+	set -- $ip
+	IFS="$old_ifs"
+	[ "$#" -eq 4 ] || return 1
+	for octet in "$@"; do
+		[ -n "$octet" ] || return 1
+		case "$octet" in
+			0|[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+			*) return 1 ;;
+		esac
+	done
+}
+
+ipv4_to_u32() {
+	local ip="$1" old_ifs="$IFS"
+	IFS=.
+	set -- $ip
+	IFS="$old_ifs"
+	printf '%s' "$((($1 * 16777216) + ($2 * 65536) + ($3 * 256) + $4))"
+}
+
+u32_to_ipv4() {
+	local value="$1"
+	printf '%s.%s.%s.%s' \
+		"$(((value >> 24) & 255))" \
+		"$(((value >> 16) & 255))" \
+		"$(((value >> 8) & 255))" \
+		"$((value & 255))"
+}
+
+is_rfc1918_ipv4() {
+	local ip="$1" old_ifs="$IFS"
+	is_ipv4 "$ip" || return 1
+	IFS=.
+	set -- $ip
+	IFS="$old_ifs"
+	case "$1" in
+		10) return 0 ;;
+		192) [ "$2" -eq 168 ] && return 0 ;;
+		172) [ "$2" -ge 16 ] && [ "$2" -le 31 ] && return 0 ;;
+	esac
+	return 1
+}
+
+canonical_network() {
+	local ip="$1" prefix="$2" value mask network
+	is_ipv4 "$ip" || return 1
+	case "$prefix" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$prefix" -ge 0 ] && [ "$prefix" -le 32 ] || return 1
+	value="$(ipv4_to_u32 "$ip")"
+	if [ "$prefix" -eq 0 ]; then
+		mask=0
+	else
+		mask="$(((4294967295 << (32 - prefix)) & 4294967295))"
+	fi
+	network="$((value & mask))"
+	u32_to_ipv4 "$network"
+}
+
+netmask_to_prefix() {
+	local netmask="$1" value prefix=0 seen_partial=0 octet bits old_ifs="$IFS"
+	is_ipv4 "$netmask" || return 1
+	IFS=.
+	set -- $netmask
+	IFS="$old_ifs"
+	for octet in "$@"; do
+		[ "$seen_partial" -eq 0 ] || [ "$octet" -eq 0 ] || return 1
+		case "$octet" in
+			255) bits=8 ;;
+			254) bits=7; seen_partial=1 ;;
+			252) bits=6; seen_partial=1 ;;
+			248) bits=5; seen_partial=1 ;;
+			240) bits=4; seen_partial=1 ;;
+			224) bits=3; seen_partial=1 ;;
+			192) bits=2; seen_partial=1 ;;
+			128) bits=1; seen_partial=1 ;;
+			0) bits=0; seen_partial=1 ;;
+			*) return 1 ;;
+		esac
+		prefix=$((prefix + bits))
+	done
+	printf '%s' "$prefix"
+}
+
+validate_lan_prefix() {
+	local prefix="$1"
+	case "$prefix" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	# Router LAN advertisement is intentionally limited to /24-/30. Wider
+	# RFC1918 routes must be approved and configured outside this bootstrap.
+	[ "$prefix" -ge 24 ] && [ "$prefix" -le 30 ]
+}
+
+derive_lan_route() {
+	local ip="$1" prefix="$2" network
+	is_rfc1918_ipv4 "$ip" || return 1
+	validate_lan_prefix "$prefix" || return 1
+	network="$(canonical_network "$ip" "$prefix")" || return 1
+	printf '%s/%s' "$network" "$prefix"
+}
+
+validate_advertise_route() {
+	local route="$1" lan_ip="$2" lan_prefix="$3"
+	local route_ip route_prefix expected
+	case "$route" in
+		''|*,*|*[!0-9./]*) return 1 ;;
+	esac
+	route_ip="${route%/*}"
+	route_prefix="${route##*/}"
+	[ "$route_ip" != "$route" ] || return 1
+	is_rfc1918_ipv4 "$route_ip" || return 1
+	validate_lan_prefix "$route_prefix" || return 1
+	[ "$route_ip" = "$(canonical_network "$route_ip" "$route_prefix")" ] || return 1
+	expected="$(derive_lan_route "$lan_ip" "$lan_prefix")" || return 1
+	[ "$route" = "$expected" ]
+}
+
+read_actual_lan_cidr() {
+	local status ip prefix netmask
+	if command -v ubus >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1; then
+		status="$(ubus call network.interface.lan status 2>/dev/null || true)"
+		ip="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)"
+		prefix="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].mask' 2>/dev/null || true)"
+		if is_rfc1918_ipv4 "$ip" && validate_lan_prefix "$prefix"; then
+			printf '%s %s' "$ip" "$prefix"
+			return 0
+		fi
+	fi
+
+	ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+	case "$ip" in
+		*/*)
+			prefix="${ip##*/}"
+			ip="${ip%/*}"
+			;;
+		*)
+			netmask="$(uci -q get network.lan.netmask 2>/dev/null || true)"
+			prefix="$(netmask_to_prefix "$netmask")" || return 1
+			;;
+	esac
+	is_rfc1918_ipv4 "$ip" || return 1
+	validate_lan_prefix "$prefix" || return 1
+	printf '%s %s' "$ip" "$prefix"
+}
+
 is_enrolled() {
 	tailscale status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'
 }
@@ -187,6 +342,36 @@ read_auth_key() {
 	fetch_provision_key "$provision_url" "$provision_token_file" | sed -n '1p' | tr -d '\r\n'
 }
 
+cleanup_auth_key_file() {
+	local auth_key_file="$1" delete_auth_key_file="$2"
+	[ "$(bool_arg "$delete_auth_key_file")" = "true" ] || return 0
+
+	if [ -e "$auth_key_file" ] || [ -L "$auth_key_file" ]; then
+		rm -f "$auth_key_file" || {
+			log "failed to remove residual auth key file $auth_key_file"
+			return 1
+		}
+		log "removed residual auth key file after enrollment"
+	fi
+
+	case "$auth_key_file" in
+		/etc/*)
+			if [ -e "/rom$auth_key_file" ]; then
+				log "warning: auth key remains recoverable from immutable /rom; rotate the preauth key and do not distribute this firmware artifact"
+			fi
+			;;
+	esac
+}
+
+post_enrollment_guards() {
+	[ -x /etc/init.d/tailscale-dns-mode-guard ] &&
+		/etc/init.d/tailscale-dns-mode-guard reload >/dev/null 2>&1 || true
+	[ -x /etc/init.d/tailscale-nikki-guard ] &&
+		/etc/init.d/tailscale-nikki-guard reload >/dev/null 2>&1 || true
+	[ -x /etc/init.d/tailscale-quad100-health ] &&
+		/etc/init.d/tailscale-quad100-health restart >/dev/null 2>&1 || true
+}
+
 build_hostname() {
 	local override="$1"
 	local prefix="$2"
@@ -269,6 +454,7 @@ main() {
 	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
 	local max_attempts retry_interval delete_auth_key_file auth_key hostname
 	local restore_gate_file restore_gate_attempts restore_gate_interval restore_gate_state
+	local lan_state lan_ip lan_prefix derived_route
 	local attempt=0
 
 	enabled="$(cfg enabled 0)"
@@ -290,13 +476,21 @@ main() {
 	accept_dns="$(cfg accept_dns 0)"
 	accept_routes="$(cfg accept_routes 1)"
 	advertise_routes="$(cfg advertise_routes '')"
+	lan_state="$(read_actual_lan_cidr)" || {
+		log "refusing route advertisement: LAN must have an active RFC1918 IPv4 prefix between /24 and /30"
+		exit 1
+	}
+	lan_ip="${lan_state% *}"
+	lan_prefix="${lan_state##* }"
+	derived_route="$(derive_lan_route "$lan_ip" "$lan_prefix")" || {
+		log "refusing route advertisement: unable to derive the active LAN prefix"
+		exit 1
+	}
 	if [ -z "$advertise_routes" ]; then
-		lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
-		case "$lan_ip" in
-			192.168.*.*|10.*.*.*|172.*.*.*)
-				advertise_routes="${lan_ip%.*}.0/24"
-				;;
-		esac
+		advertise_routes="$derived_route"
+	elif ! validate_advertise_route "$advertise_routes" "$lan_ip" "$lan_prefix"; then
+		log "refusing advertise_routes=$advertise_routes: it must exactly match active LAN prefix $derived_route"
+		exit 1
 	fi
 	max_attempts="$(cfg max_attempts 60)"
 	retry_interval="$(cfg retry_interval 10)"
@@ -312,6 +506,8 @@ main() {
 			log "tailscale already enrolled; failed to apply runtime preferences"
 		fi
 		touch "$DONE_FILE" 2>/dev/null || true
+		cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file" || true
+		post_enrollment_guards
 		exit 0
 	fi
 
@@ -325,6 +521,8 @@ main() {
 					log "recovered tailscale state; failed to apply runtime preferences"
 				fi
 				touch "$DONE_FILE" 2>/dev/null || true
+				cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file" || true
+				post_enrollment_guards
 				exit 0
 			fi
 			log "wrtbak gate opened without a usable recovered tailscale state"
@@ -350,9 +548,8 @@ main() {
 	while [ "$attempt" -lt "$max_attempts" ]; do
 		if run_tailscale_up "$login_server" "$auth_key" "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
 			touch "$DONE_FILE" 2>/dev/null || true
-			if [ -f "$auth_key_file" ] && [ "$(bool_arg "$delete_auth_key_file")" = "true" ]; then
-				rm -f "$auth_key_file"
-			fi
+			cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file" || true
+			post_enrollment_guards
 			log "enrolled to $login_server as $hostname"
 			exit 0
 		fi
@@ -365,4 +562,4 @@ main() {
 	exit 1
 }
 
-main "$@"
+[ "${HEADSCALE_AUTO_ENROLL_LIBRARY_ONLY:-0}" = "1" ] || main "$@"

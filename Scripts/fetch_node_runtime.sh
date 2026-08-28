@@ -14,9 +14,10 @@ NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PROFILE_DIR="$TARGET_FILES/etc/profile.d"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
+AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 
 # Default Node.js target version (Node 24 LTS line)
-NODE_DEFAULT_VERSION="24.13.1"
+NODE_DEFAULT_VERSION="24.20.0"
 NODE_FALLBACK_VERSION="22.23.2"
 NODE_VERSION="${NODE_VERSION:-$NODE_DEFAULT_VERSION}"
 
@@ -94,58 +95,115 @@ prepare_directories() {
 		"$PI_CONFIG_DIR"
 }
 
-download_node_tarball() {
+node_archive_sha256() {
+	case "$1:$2" in
+		24.20.0:linux-arm64-musl)
+			echo "2c8c507ccb0f20812d9526ba8ca454b1652aadef68fc8bad06f07fb1122dd1ef"
+			;;
+		24.20.0:linux-x64-musl)
+			echo "9ae1399fef4bd8990e15773ce1327b336a20b9e97d8c7549f4f42ca73c43f562"
+			;;
+		22.23.2:linux-arm64-musl)
+			echo "b7a1a2b1c7c76e47550f17764676939840e0a64b4d04bdd375a4ac14bccaa8d8"
+			;;
+		22.23.2:linux-x64-musl)
+			echo "396e11ee609eb2e5cb990f045c4d037aa47b2c247f3cecb01c5c162e33ffa9af"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+download_node_tarball() (
 	local node_arch="$1"
 	local version="$2"
 	local archive="node-v${version}-${node_arch}.tar.gz"
 	local url_unofficial="${NODE_MIRROR_UNOFFICIAL}/v${version}/${archive}"
 	local url_github="${NODE_MIRROR_GITHUB}/${archive}"
-	local tmpdir
+	local expected_hash actual_hash extracted_root tmpdir
+
+	expected_hash="$(node_archive_sha256 "$version" "$node_arch")" || {
+		echo "ERROR: no reviewed Node.js checksum for v${version}/${node_arch}" >&2
+		return 1
+	}
 
 	tmpdir="$(mktemp -d)"
+	trap 'rm -rf "$tmpdir"' EXIT
 	log_info "Downloading Node.js v${version} for ${node_arch}..."
 
-	if retry_cmd 3 10 curl -fsSL "$url_unofficial" -o "$tmpdir/$archive" || \
-	   retry_cmd 3 10 curl -fsSL "$url_github" -o "$tmpdir/$archive"; then
-		log_info "Extracting ${archive} to ${NODE_ROOT_DIR}..."
-		tar -xzf "$tmpdir/$archive" --strip-components=1 -C "$NODE_ROOT_DIR"
-		rm -rf "$tmpdir"
-		return 0
+	if ! retry_cmd 3 10 curl -fsSL "$url_unofficial" -o "$tmpdir/$archive"; then
+		log_info "Primary Node.js mirror unavailable; trying the reviewed GitHub mirror..."
+		retry_cmd 3 10 curl -fsSL "$url_github" -o "$tmpdir/$archive"
 	fi
 
-	rm -rf "$tmpdir"
-	warn "Failed to download Node.js v${version} for ${node_arch}"
-	return 1
-}
+	actual_hash="$(sha256sum "$tmpdir/$archive" | awk '{print $1}')"
+	if [ "$actual_hash" != "$expected_hash" ]; then
+		echo "ERROR: Node.js v${version}/${node_arch} SHA256 mismatch" >&2
+		echo "ERROR: expected $expected_hash, got $actual_hash" >&2
+		return 1
+	fi
 
-preinstall_cli_agents_and_extensions() {
-	log_info "Pre-installing OpenCode, Pi CLI, and extensions..."
+	mkdir -p "$tmpdir/extracted"
+	tar -xzf "$tmpdir/$archive" -C "$tmpdir/extracted"
+	extracted_root="$tmpdir/extracted/node-v${version}-${node_arch}"
+	[ -x "$extracted_root/bin/node" ] || {
+		echo "ERROR: verified Node.js archive has an unexpected layout" >&2
+		return 1
+	}
 
-	local packages=(
-		"pnpm@latest"
-		"opencode-ai@latest"
-		"@tarquinen/opencode-dcp@latest"
-		"@mohak34/opencode-notifier@latest"
-		"opencode-conductor-plugin@latest"
-		"@earendil-works/pi-coding-agent@latest"
-		"@aaronkyriesenbach/pi-package-manager@latest"
-		"btw-pi@latest"
-		"pi-plan-mode@latest"
-		"pi-web-search@latest"
-		"pi-wechat-assistant@latest"
-		"hermes-agent@latest"
-	)
+	log_info "Installing verified ${archive} to ${NODE_ROOT_DIR}..."
+	cp -a "$extracted_root/." "$NODE_ROOT_DIR/"
+)
 
-	# If host has npm, install packages into the target node_modules prefix
-	if command -v npm >/dev/null 2>&1; then
-		log_info "Running npm install for global agent packages..."
-		npm install --prefix "$NODE_ROOT_DIR" -g "${packages[@]}" --no-audit --no-fund || {
-			warn "Host npm install encountered warnings/errors, continuing with binary links..."
+preinstall_cli_agents_and_extensions() (
+	local node_arch="$1"
+	local npm_arch staging_dir bin
+
+	log_info "Installing OpenCode, Pi CLI, Hermes and extensions from package-lock.json..."
+	command -v npm >/dev/null 2>&1 || {
+		echo "ERROR: host npm is required for the locked agent runtime install" >&2
+		return 1
+	}
+	[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package.json" ] && \
+		[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package-lock.json" ] || {
+		echo "ERROR: locked agent runtime manifest is incomplete" >&2
+		return 1
+	}
+
+	case "$node_arch" in
+		linux-arm64-musl) npm_arch="arm64" ;;
+		linux-x64-musl) npm_arch="x64" ;;
+		*)
+			echo "ERROR: unsupported npm target $node_arch" >&2
+			return 1
+			;;
+	esac
+
+	staging_dir="$(mktemp -d)"
+	trap 'rm -rf "$staging_dir"' EXIT
+	cp "$AGENT_RUNTIME_MANIFEST_DIR/package.json" "$AGENT_RUNTIME_MANIFEST_DIR/package-lock.json" "$staging_dir/"
+	npm_config_arch="$npm_arch" \
+	npm_config_platform="linux" \
+	npm_config_libc="musl" \
+		npm ci --prefix "$staging_dir" --omit=dev --no-audit --no-fund \
+			--os=linux --cpu="$npm_arch" --libc=musl
+
+	[ -d "$staging_dir/node_modules" ] || {
+		echo "ERROR: npm ci completed without producing node_modules" >&2
+		return 1
+	}
+	cp -a "$staging_dir/node_modules/." "$NODE_LIB_DIR/"
+
+	for bin in pnpm opencode pi hermes; do
+		[ -e "$NODE_LIB_DIR/.bin/$bin" ] || {
+			echo "ERROR: locked agent runtime did not install $bin" >&2
+			return 1
 		}
-	else
-		log_info "Host npm not found in runner, setting up wrapper binaries..."
-	fi
-}
+		ln -sf "../lib/node_modules/.bin/$bin" "$NODE_BIN_DIR/$bin"
+	done
+
+)
 
 setup_symlinks() {
 	log_info "Configuring binary symlinks..."
@@ -182,9 +240,11 @@ configure_profiles() {
 export PATH=/opt/node/bin:$PATH
 export PNPM_HOME=/opt/node/bin
 export NODE_PATH=/opt/node/lib/node_modules
-export MULTICA_WORKSPACE=/data/multica
-export MULTICA_DATA_DIR=/data/multica
-export UV_CACHE_DIR=/data/uv_cache
+
+# Mutable runtime paths are published only after /data is a verified mountpoint.
+# Services that do not load login profiles must source this file explicitly or
+# pass the same values through procd_set_param env.
+[ -r /tmp/uv-env.sh ] && . /tmp/uv-env.sh
 EOF
 
 	cat >"$PROFILE_DIR/30-agent-update-check.sh" <<'EOF'
@@ -237,16 +297,17 @@ main() {
 	if ! download_node_tarball "$node_arch" "$NODE_VERSION"; then
 		log_info "Trying fallback Node.js version ${NODE_FALLBACK_VERSION}..."
 		download_node_tarball "$node_arch" "$NODE_FALLBACK_VERSION" || {
-			warn "Unable to fetch pre-compiled Node.js binary; continuing build"
+			echo "ERROR: unable to install a checksummed Node.js runtime" >&2
+			exit 1
 		}
 	fi
 
-	preinstall_cli_agents_and_extensions
+	preinstall_cli_agents_and_extensions "$node_arch"
 	setup_symlinks
 	configure_pi_extensions
 	configure_profiles
 
-	log_info "Node.js 24 LTS and CLI agent runtime setup complete."
+	log_info "Checksummed Node.js and locked CLI agent runtime setup complete."
 }
 
 main "$@"

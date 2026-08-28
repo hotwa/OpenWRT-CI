@@ -143,6 +143,14 @@ on:
     secrets:
       HEADSCALE_OPENWRT_AUTHKEY:
         required: false
+      MULTICA_TOKEN:
+        required: false
+      MULTICA_SERVER_URL:
+        required: false
+      MULTICA_APP_URL:
+        required: false
+      MULTICA_WORKSPACE_ID:
+        required: false
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS:
         required: false
       WRTBAK_R2_ENDPOINT:
@@ -164,22 +172,6 @@ on:
       WRTBAK_DORM_PROXY_URL:
         required: false
 env:
-  GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-  HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
-  MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
-  MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
-  MULTICA_APP_URL: ${{secrets.MULTICA_APP_URL}}
-  MULTICA_WORKSPACE_ID: ${{secrets.MULTICA_WORKSPACE_ID}}
-  OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
-  WRTBAK_R2_ENDPOINT: ${{secrets.WRTBAK_R2_ENDPOINT}}
-  WRTBAK_R2_REGION: ${{secrets.WRTBAK_R2_REGION}}
-  WRTBAK_R2_BUCKET: ${{secrets.WRTBAK_R2_BUCKET}}
-  WRTBAK_R2_PREFIX: ${{secrets.WRTBAK_R2_PREFIX}}
-  WRTBAK_R2_ACCESS_KEY_ID: ${{secrets.WRTBAK_R2_ACCESS_KEY_ID}}
-  WRTBAK_R2_SECRET_ACCESS_KEY: ${{secrets.WRTBAK_R2_SECRET_ACCESS_KEY}}
-  WRTBAK_HOME_PROXY_URL: ${{secrets.WRTBAK_HOME_PROXY_URL}}
-  WRTBAK_OFFICE_PROXY_URL: ${{secrets.WRTBAK_OFFICE_PROXY_URL}}
-  WRTBAK_DORM_PROXY_URL: ${{secrets.WRTBAK_DORM_PROXY_URL}}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
@@ -243,7 +235,7 @@ jobs:
 
       - name: Free Disk Space
         if: ${{ !contains(inputs.RUNNER_LABELS, 'self-hosted') }}
-        uses: endersonmenezes/free-disk-space@v2
+        uses: endersonmenezes/free-disk-space@713d134e243b926eba4a5cce0cf608bfd1efb89a # v2.1.1
         with:
           remove_android: true
           remove_dotnet: true
@@ -256,7 +248,7 @@ jobs:
           testing: false
 
       - name: Checkout Projects
-        uses: actions/checkout@main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Validate LAN IP
         run: |
@@ -348,7 +340,7 @@ jobs:
 
       - name: Setup Go
         if: env.GO_INSTALLED != 'true'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.26'
 
@@ -425,7 +417,7 @@ jobs:
           done
 
       - name: Cache Dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ./wrt/.ccache
@@ -455,31 +447,83 @@ jobs:
           retry_cmd 5 15 ./scripts/feeds update -a
           retry_cmd 5 15 ./scripts/feeds install -a
 
-      - name: Custom Packages
+      - name: Setup Node.js for Agent Runtime Packaging
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+          check-latest: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Custom Packages and Agent Runtimes
         run: |
           cd ./wrt/package/
 
           $GITHUB_WORKSPACE/Scripts/Packages.sh
           $GITHUB_WORKSPACE/Scripts/Handles.sh
-          $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh
-          $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh
-          $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh
-          $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files
+          $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
+          else
+            echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
+          fi
+
+      - name: Inject Private Firmware Configuration
+        if: inputs.WRT_FEATURE_OVERLAY == true
+        env:
+          HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
+          MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
+          MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
+          MULTICA_APP_URL: ${{secrets.MULTICA_APP_URL}}
+          MULTICA_WORKSPACE_ID: ${{secrets.MULTICA_WORKSPACE_ID}}
+          OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS}}
+          WRTBAK_R2_ENDPOINT: ${{secrets.WRTBAK_R2_ENDPOINT}}
+          WRTBAK_R2_REGION: ${{secrets.WRTBAK_R2_REGION}}
+          WRTBAK_R2_BUCKET: ${{secrets.WRTBAK_R2_BUCKET}}
+          WRTBAK_R2_PREFIX: ${{secrets.WRTBAK_R2_PREFIX}}
+          WRTBAK_R2_ACCESS_KEY_ID: ${{secrets.WRTBAK_R2_ACCESS_KEY_ID}}
+          WRTBAK_R2_SECRET_ACCESS_KEY: ${{secrets.WRTBAK_R2_SECRET_ACCESS_KEY}}
+          WRTBAK_HOME_PROXY_URL: ${{secrets.WRTBAK_HOME_PROXY_URL}}
+          WRTBAK_OFFICE_PROXY_URL: ${{secrets.WRTBAK_OFFICE_PROXY_URL}}
+          WRTBAK_DORM_PROXY_URL: ${{secrets.WRTBAK_DORM_PROXY_URL}}
+        run: |
+            guard_env="$(mktemp)"
+            trap 'rm -f "$guard_env"' EXIT
+            credential_supplied=false
+            for credential_name in \
+              HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
+              WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY \
+              WRTBAK_HOME_PROXY_URL WRTBAK_OFFICE_PROXY_URL WRTBAK_DORM_PROXY_URL; do
+              [ -z "${!credential_name:-}" ] || credential_supplied=true
+            done
             $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/MulticaAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/WrtbakR2Config.sh "$GITHUB_WORKSPACE/wrt/files"
-            $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" >> "$GITHUB_ENV"
-          else
-            echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
-          fi
+            $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
+            [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
+            [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]
+            [ "$(grep -c '^WRT_ARTIFACT_PRIVACY_SUFFIX=' "$guard_env")" -eq 1 ]
+            if [ "$credential_supplied" = true ]; then
+              grep -qx 'WRT_PRIVATE_BUILD=true' "$guard_env" || {
+                echo "ERROR: injected credentials were not classified as private firmware" >&2
+                exit 1
+              }
+            fi
+            if grep -qx 'WRT_PRIVATE_BUILD=true' "$guard_env"; then
+              grep -qx 'WRT_ARTIFACT_PRIVACY_SUFFIX=private' "$guard_env"
+            else
+              grep -qx 'WRT_PRIVATE_BUILD=false' "$guard_env"
+              grep -qx 'WRT_ARTIFACT_PRIVACY_SUFFIX=public' "$guard_env"
+            fi
+            cat "$guard_env" >> "$GITHUB_ENV"
 
       - name: Custom Settings
         run: |
@@ -530,7 +574,7 @@ jobs:
             echo "ERROR: uv init script is missing from files overlay"
             exit 1
           }
-          test -L "$GITHUB_WORKSPACE/files/etc/rc.d/S99uv-storage" || {
+          test -L "$GITHUB_WORKSPACE/files/etc/rc.d/S90uv-storage" || {
             echo "ERROR: uv init service is not enabled in files overlay"
             exit 1
           }
@@ -692,6 +736,10 @@ jobs:
               '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay}' \
               > ./upload/metadata.json
             (cd ./upload && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
+            if [[ -n "$WRT_EXPECTED_DEVICE" ]]; then
+              "$GITHUB_WORKSPACE/Scripts/GuardReCs07Artifact.sh" verify \
+                ./upload "$WRT_EXPECTED_DEVICE"
+            fi
 
             make clean -j$(nproc)
           fi
@@ -704,7 +752,7 @@ jobs:
 
       - name: Upload Firmware Artifact
         if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
           path: ./wrt/upload/
@@ -713,7 +761,7 @@ jobs:
 
       - name: Upload jdcloud_re-ss-01 Firmware Artifact
         if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-ss-01
           path: ./wrt/artifact-groups/jdcloud_re-ss-01/
@@ -722,7 +770,7 @@ jobs:
 
       - name: Upload jdcloud_re-cs-02 Firmware Artifact
         if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-02
           path: ./wrt/artifact-groups/jdcloud_re-cs-02/
@@ -731,7 +779,7 @@ jobs:
 
       - name: Upload jdcloud_re-cs-07 Firmware Artifact
         if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-07
           path: ./wrt/artifact-groups/jdcloud_re-cs-07/
@@ -740,7 +788,7 @@ jobs:
 
       - name: Upload Other Device Firmware Artifact
         if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-other-devices
           path: ./wrt/artifact-groups/other-devices/

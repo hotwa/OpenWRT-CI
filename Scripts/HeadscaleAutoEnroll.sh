@@ -14,14 +14,74 @@ HEADSCALE_OPENWRT_ADVERTISE_ROUTES="${HEADSCALE_OPENWRT_ADVERTISE_ROUTES:-}"
 
 derive_lan_subnet() {
 	local ip="${1:-}"
-	case "$ip" in
-		192.168.*.*|10.*.*.*|172.*.*.*)
-			printf '%s.0/24' "${ip%.*}"
-			;;
-		*)
-			printf ''
-			;;
-	esac
+	is_rfc1918_ipv4 "$ip" || return 1
+	printf '%s.0/24' "${ip%.*}"
+}
+
+is_ipv4() {
+	local ip="$1" octet
+	local -a parts
+	IFS=. read -r -a parts <<<"$ip"
+	[[ ${#parts[@]} -eq 4 ]] || return 1
+	for octet in "${parts[@]}"; do
+		[[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+		(( octet <= 255 )) || return 1
+	done
+}
+
+is_rfc1918_ipv4() {
+	local ip="$1"
+	local -a parts
+	is_ipv4 "$ip" || return 1
+	IFS=. read -r -a parts <<<"$ip"
+	(( parts[0] == 10 )) && return 0
+	(( parts[0] == 192 && parts[1] == 168 )) && return 0
+	(( parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31 )) && return 0
+	return 1
+}
+
+ipv4_to_u32() {
+	local ip="$1"
+	local -a parts
+	IFS=. read -r -a parts <<<"$ip"
+	printf '%s' "$(((parts[0] * 16777216) + (parts[1] * 65536) + (parts[2] * 256) + parts[3]))"
+}
+
+u32_to_ipv4() {
+	local value="$1"
+	printf '%s.%s.%s.%s' \
+		"$(((value >> 24) & 255))" \
+		"$(((value >> 16) & 255))" \
+		"$(((value >> 8) & 255))" \
+		"$((value & 255))"
+}
+
+canonical_network() {
+	local ip="$1" prefix="$2" value mask
+	is_ipv4 "$ip" || return 1
+	[[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+	(( prefix >= 24 && prefix <= 30 )) || return 1
+	value="$(ipv4_to_u32 "$ip")"
+	mask="$(((4294967295 << (32 - prefix)) & 4294967295))"
+	u32_to_ipv4 "$((value & mask))"
+}
+
+validate_build_advertise_route() {
+	local route="$1" lan_ip="${2:-}" route_ip route_prefix network ip_value network_value mask
+	[[ "$route" != *','* && "$route" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || return 1
+	route_ip="${route%/*}"
+	route_prefix="${route##*/}"
+	is_rfc1918_ipv4 "$route_ip" || return 1
+	(( route_prefix >= 24 && route_prefix <= 30 )) || return 1
+	network="$(canonical_network "$route_ip" "$route_prefix")" || return 1
+	[[ "$route_ip" == "$network" ]] || return 1
+	if [[ -n "$lan_ip" ]]; then
+		is_rfc1918_ipv4 "$lan_ip" || return 1
+		ip_value="$(ipv4_to_u32 "$lan_ip")"
+		network_value="$(ipv4_to_u32 "$network")"
+		mask="$(((4294967295 << (32 - route_prefix)) & 4294967295))"
+		(( (ip_value & mask) == network_value )) || return 1
+	fi
 }
 
 set_config_option() {
@@ -46,6 +106,7 @@ lan_ip_site_id() {
 	local ip="$1"
 	local third
 
+	is_rfc1918_ipv4 "$ip" || return 0
 	case "$ip" in
 		192.168.*.*)
 			third="${ip#192.168.}"
@@ -115,7 +176,15 @@ set_config_option ssh "$HEADSCALE_OPENWRT_ENABLE_SSH"
 set_config_option accept_dns 0
 set_config_option accept_routes "$HEADSCALE_OPENWRT_ACCEPT_ROUTES"
 if [ -z "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" ] && [ -n "${WRT_IP:-}" ]; then
-	HEADSCALE_OPENWRT_ADVERTISE_ROUTES="$(derive_lan_subnet "${WRT_IP:-}")"
+	HEADSCALE_OPENWRT_ADVERTISE_ROUTES="$(derive_lan_subnet "${WRT_IP:-}")" || {
+		echo "headscale auto-enroll: WRT_IP must be a canonical RFC1918 IPv4 address" >&2
+		exit 1
+	}
+fi
+if [ -n "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" ] &&
+	! validate_build_advertise_route "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" "${WRT_IP:-}"; then
+	echo "headscale auto-enroll: advertise route must be one canonical RFC1918 /24-/30 containing WRT_IP" >&2
+	exit 1
 fi
 set_config_option advertise_routes "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES"
 set_config_option auth_key_file /etc/tailscale/headscale.authkey

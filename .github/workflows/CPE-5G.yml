@@ -27,7 +27,9 @@ on:
         required: false
         type: string
 
-permissions: write-all
+permissions:
+  actions: write
+  contents: write
 
 jobs:
   baseline_a:

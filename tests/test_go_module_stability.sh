@@ -23,8 +23,8 @@ grep -q 'GOSUMDB=sum.golang.org' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'uses: actions/setup-go@v6' "$WORKFLOW" || {
-  echo "workflow missing setup-go fallback for Go 1.26"
+grep -q 'uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0' "$WORKFLOW" || {
+  echo "workflow missing SHA-pinned setup-go fallback for Go 1.26"
   exit 1
 }
 
