@@ -350,6 +350,7 @@ jobs:
       - name: Initialization Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
+          echo "WRT_CACHE_DATE=$(TZ=UTC-8 date +"%y.%m.%d")" >> $GITHUB_ENV
           echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
           echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
           WRT_INFO_VALUE="${WRT_SOURCE%%/*}"
@@ -424,7 +425,7 @@ jobs:
             ./wrt/staging_dir
             ./wrt/dl/go-mod-cache
             ./wrt/tmp/go-build
-          key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_DATE }}
+          key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_CACHE_DATE }}
           restore-keys: |
             ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-
             ${{ env.WRT_ARCH }}-

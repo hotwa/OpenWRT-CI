@@ -102,8 +102,11 @@ patch_wrtbak_proxy_url
 PROCD_MAKEFILE="../package/system/procd/Makefile"
 if [ -f "$PROCD_MAKEFILE" ]; then
 	sed -i 's#^PKG_SOURCE_URL:=.*procd\.git$#PKG_SOURCE_URL:=https://github.com/openwrt/procd.git#g' "$PROCD_MAKEFILE"
-	grep -q '^PKG_SOURCE_URL:=https://github.com/openwrt/procd.git$' "$PROCD_MAKEFILE" && \
+	if grep -q '^PKG_SOURCE_URL:=https://github.com/openwrt/procd.git$' "$PROCD_MAKEFILE"; then
 		cd "$PKG_PATH" && echo "procd source url has been switched to GitHub mirror!"
+	else
+		echo "WARNING: procd mirror sed did not match, original URL retained" >&2
+	fi
 fi
 
 # 修复 gettext-full 0.24.1 host 编译失败：上游源码树用 gnulib stable-202501 重新
@@ -185,7 +188,11 @@ if [ -d "$MOSDNS_ROOT" ]; then
 fi
 
 #预置HomeProxy数据
-if [ -d *"homeproxy"* ]; then
+HP_DIR=""
+for d in "$PKG_PATH"/*homeproxy*; do
+	[ -d "$d" ] && HP_DIR="$d" && break
+done
+if [ -n "$HP_DIR" ]; then
 	echo " "
 
 	HP_RULE="surge"
@@ -193,7 +200,10 @@ if [ -d *"homeproxy"* ]; then
 
 	rm -rf ./$HP_PATH/resources/*
 
-	git clone -q --depth=1 --single-branch --branch "release" "https://github.com/Loyalsoldier/surge-rules.git" ./$HP_RULE/
+	retry_cmd 5 15 git clone -q --depth=1 --single-branch --branch "release" "https://github.com/Loyalsoldier/surge-rules.git" ./$HP_RULE/ || {
+		echo "ERROR: failed to clone surge-rules for homeproxy" >&2
+		exit 1
+	}
 	cd ./$HP_RULE/ && RES_VER=$(git log -1 --pretty=format:'%s' | grep -o "[0-9]*")
 
 	echo $RES_VER | tee china_ip4.ver china_ip6.ver china_list.ver gfw_list.ver
@@ -222,7 +232,7 @@ if [ -d *"luci-app-aurora-config"* ]; then
 
 	cd ./luci-app-aurora-config/
 
-	sed -i "s/nav_submenu_type '.*'/nav_submenu_type 'boxed-dropdown'/g" $(find ./root/ -type f -name "*aurora")
+	find ./root/ -type f -name "*aurora" -exec sed -i "s/nav_submenu_type '.*'/nav_submenu_type 'boxed-dropdown'/g" {} +
 
 	cd $PKG_PATH && echo "theme-aurora has been fixed!"
 fi
@@ -255,7 +265,11 @@ if [ -f "$RUST_FILE" ]; then
 
 	sed -i 's/ci-llvm=true/ci-llvm=false/g' "$RUST_FILE"
 
-	echo "rust has been fixed!"
+	if grep -q 'ci-llvm=false' "$RUST_FILE"; then
+		echo "rust has been fixed!"
+	else
+		echo "WARNING: rust ci-llvm sed did not match" >&2
+	fi
 fi
 
 #修复DiskMan编译失败
@@ -274,7 +288,8 @@ if [ -d *"luci-app-netspeedtest"* ]; then
 
 	cd ./luci-app-netspeedtest/
 
-	sed -i '$a\exit 0' ./netspeedtest/files/99_netspeedtest.defaults
+	grep -q '^exit 0$' ./netspeedtest/files/99_netspeedtest.defaults || \
+		sed -i '$a\exit 0' ./netspeedtest/files/99_netspeedtest.defaults
 	sed -i 's/ca-certificates/ca-bundle/g' ./speedtest-cli/Makefile
 
 	cd $PKG_PATH && echo "netspeedtest has been fixed!"

@@ -291,7 +291,7 @@ function install_dependencies() {
 	chmod 0755 "/usr/bin/upx-ucl"
 	ln -svf "/usr/bin/upx-ucl" "/usr/bin/upx"
 
-	curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/main/tools/padjffs2/src/padjffs2.c"
+	curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/d06b68fe83ebb969baa64335779045d80bc41f89/tools/padjffs2/src/padjffs2.c"
 	gcc -Wall -Werror -o "padjffs2" "padjffs2.c"
 	strip "padjffs2"
 	rm -rf "padjffs2.c" "/usr/bin/padjffs2"
