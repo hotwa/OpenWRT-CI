@@ -106,6 +106,31 @@ if [ -f "$PROCD_MAKEFILE" ]; then
 		cd "$PKG_PATH" && echo "procd source url has been switched to GitHub mirror!"
 fi
 
+# 修复 gettext-full 0.24.1 host 编译失败：上游源码树用 gnulib stable-202501 重新
+# bootstrap，其 string-desc.h 将 sd_new_addr 的非常量分支改为 rw_string_desc_t，
+# 与 0.24.1 的 msgl-iconv.c 返回类型不兼容。对齐 immortalwrt 上游提交
+# 0237b9a06b（"gettext-full: update to 0.24.2"，含 DEPENDS 构建顺序修正），
+# 将 gettext-full 升级到 0.24.2。
+GETTEXT_MAKEFILE="./libs/gettext-full/Makefile"
+GETTEXT_OLD_HASH="6164ec7aa61653ac9cdfb41d5c2344563b21f707da1562712e48715f1d2052a6"
+GETTEXT_NEW_HASH="fcc0187f597aef6bc5bc95c629db1126315beb196b20570eaec6a4941850f7c5"
+if [ -f "$GETTEXT_MAKEFILE" ]; then
+	if grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE"; then
+		cd "$PKG_PATH" && echo "gettext-full is already at 0.24.2!"
+	elif grep -q '^PKG_VERSION:=0\.24\.1$' "$GETTEXT_MAKEFILE" && \
+		grep -q "^PKG_HASH:=$GETTEXT_OLD_HASH\$" "$GETTEXT_MAKEFILE"; then
+		sed -i 's/^PKG_VERSION:=0\.24\.1$/PKG_VERSION:=0.24.2/' "$GETTEXT_MAKEFILE"
+		sed -i "s/^PKG_HASH:=$GETTEXT_OLD_HASH\$/PKG_HASH:=$GETTEXT_NEW_HASH/" "$GETTEXT_MAKEFILE"
+		sed -i 's|^  URL:=https://www.gnu.org/software/gettext/$|  URL:=https://www.gnu.org/software/gettext/\n  DEPENDS:=+libunistring +libxml2|' "$GETTEXT_MAKEFILE"
+		grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE" && \
+			grep -q "^PKG_HASH:=$GETTEXT_NEW_HASH\$" "$GETTEXT_MAKEFILE" || {
+			echo "ERROR: failed to bump gettext-full to 0.24.2" >&2
+			exit 1
+		}
+		cd "$PKG_PATH" && echo "gettext-full has been bumped to 0.24.2!"
+	fi
+fi
+
 # 修复 sbwml/luci-app-mosdns 的 ES6+ 语法与 LuCI jsmin 的兼容问题。
 MOSDNS_ROOT="./luci-app-mosdns"
 if [ -d "$MOSDNS_ROOT" ]; then
