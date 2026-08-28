@@ -35,8 +35,7 @@
 - Dropbear over Tailscale is provided by `/etc/uci-defaults/90-tailscale-dropbear-access`: do not bind Dropbear only to `br-lan`, do not create `network.tailscale`, and keep fw4 using `device 'tailscale0'` with input accepted and forwarding rejected.
 - `headscale-auto-enroll` must apply `tailscale set --ssh=true` for already-enrolled nodes when `headscale_auto_enroll.main.ssh=1`; otherwise LuCI-enrolled or previously enrolled routers can remain at `RunSSH=false`.
 - When wrtbak firstboot restore is enabled, preserve the wrtbak recovery gate: Headscale must not consume an auth key until restore reaches a terminal decision, and must reload a restored Tailscale state first.
-- Public SSH keys for firmware images should be injected with `OPENWRT_DROPBEAR_AUTHORIZED_KEYS`. Do not commit private keys or Tailscale state.
-- For router auth keys, prefer Headscale preauth keys scoped to `tag:service-host`, `tag:ssh-target`, and `tag:subnet-router`; add `tag:peer-relay-client` only for routers that should use Peer Relay.
+- For router auth keys, prefer Headscale preauth keys scoped to the 5 standard mesh tags (`tag:openwrt`, `tag:service-host`, `tag:subnet-router`, `tag:ssh-target`, `tag:peer-relay-client`) as documented in `docs/tailnet-mesh-multi-site.md`. Router firmware automatically advertises its LAN subnet (`192.168.x.0/24`) and accepts peer routes by default.
 
 ## CPE-5G verified firmware baseline
 
