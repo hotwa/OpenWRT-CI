@@ -886,7 +886,7 @@ jobs:
           HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
         run: |
           set -uo pipefail
-          echo "Debug gate triggered: DEBUG_SSH=${DEBUG_SSH:-} custom_packages=${steps.custom_packages.outcome:-} compile_firmware=${steps.compile_firmware.outcome:-}"
+          echo "Debug gate triggered: DEBUG_SSH=${DEBUG_SSH:-} custom_packages=${{ steps.custom_packages.outcome }} compile_firmware=${{ steps.compile_firmware.outcome }}"
           if [ -z "${HEADSCALE_AUTHKEY:-}" ] || [ -z "${HEADSCALE_LOGIN:-}" ]; then
             echo "WARN: HEADSCALE_CI_AUTHKEY / HEADSCALE_URL secrets missing; skipping Tailscale debug gate"
             exit 0
