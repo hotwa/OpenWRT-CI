@@ -104,10 +104,15 @@ if grep -q 'python-build-standalone/releases?per_page=100}' "$FETCH_SCRIPT"; the
   exit 1
 fi
 
-grep -q "3.10 3.11 3.12 3.13" "$FETCH_SCRIPT" || {
-  echo "fetch_uv_runtime.sh does not target Python 3.10-3.13"
+grep -q '^PYTHON_SERIES=(3.12 3.13)$' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh must mirror only the Python series the firmware uses"
   exit 1
 }
+
+if grep -Eq '^PYTHON_SERIES=\(.*(3\.10|3\.11).*\)$' "$FETCH_SCRIPT"; then
+  echo "fetch_uv_runtime.sh mirrors unused Python series; each entry is an incompressible tarball that costs tens of MB of artifact"
+  exit 1
+fi
 
 # Functional regression: select_python_asset must match a pinned-style asset
 # name. A double-escaped dot in the jq gsub once made every series unmatchable

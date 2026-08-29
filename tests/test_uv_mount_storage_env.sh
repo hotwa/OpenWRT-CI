@@ -86,5 +86,9 @@ done
 [ -f "$SMOKE" ] || { echo "missing uv runtime smoke helper"; exit 1; }
 grep -q 'python3 -m venv /tmp/uv-smoke-venv' "$SMOKE"
 grep -q '. /tmp/uv-env.sh' "$SMOKE"
+grep -q '/opt/uv/python-mirror/manifest.txt' "$SMOKE" || {
+	echo "uv runtime smoke helper must take its interpreter series from the offline mirror manifest"
+	exit 1
+}
 
 echo "uv mount-aware storage fixture tests passed"
