@@ -9,16 +9,9 @@ set -uo pipefail
 : "${HEADSCALE_AUTHKEY:?HEADSCALE_AUTHKEY is required}"
 : "${HEADSCALE_LOGIN:?HEADSCALE_LOGIN is required}"
 
-TS_INSTALL="https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION:-1.86.5}_amd64.deb"
-# 2026-08: 1.86.5 is a conservative stable floor; bump after the derper
-# (v1.98.8) compatibility review if a newer client is wanted.
-
 if ! command -v tailscale >/dev/null 2>&1; then
-  echo "Installing tailscale client ($TS_INSTALL)"
-  curl -fsSL "$TS_INSTALL" -o "$RUNNER_TEMP/tailscale.deb"
-  if command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else SUDO=""; fi
-  $SUDO apt -yqq install ca-certificates gnupg >/dev/null
-  $SUDO dpkg -i "$RUNNER_TEMP/tailscale.deb" || $SUDO apt -f -yqq install
+  echo "Installing tailscale client"
+  curl -fsSL https://tailscale.com/install.sh | sh
 fi
 
 tailscale version | head -n1
