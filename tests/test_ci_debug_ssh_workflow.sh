@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/CI-DEBUG-SSH-TEST.yml"
+PROBE="$ROOT_DIR/Scripts/ci-debug-probe.sh"
 
 fail() {
   echo "CI Debug SSH workflow contract failed: $*" >&2
@@ -10,6 +11,7 @@ fail() {
 }
 
 [ -f "$WORKFLOW" ] || fail "workflow is missing"
+[ -f "$PROBE" ] || fail "environment probe is missing"
 
 has_fixed() {
   if command -v rg >/dev/null 2>&1; then
@@ -59,5 +61,11 @@ has_fixed 'Hold timeout reached; releasing runner safely' || fail "safe timeout 
 has_fixed 'sudo kill "$CI_TSCALE_PID"' || fail "targeted tailscaled cleanup is missing"
 has_fixed 'sudo rm -f /run/tailscaled-tmp.state' || fail "temporary state cleanup is missing"
 has_fixed 'trap cleanup EXIT' || fail "cleanup trap is missing"
+
+grep -Fq 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' "$PROBE" || fail "probe must derive the repository root from its own path"
+grep -Fq 'WRT_DIR="$ROOT_DIR/wrt"' "$PROBE" || fail "probe must locate wrt below the derived repository root"
+if grep -Fq 'WRT_DIR="${GITHUB_WORKSPACE' "$PROBE"; then
+  fail "probe must not rely on GITHUB_WORKSPACE inherited over SSH"
+fi
 
 echo "CI Debug SSH workflow contract test passed"

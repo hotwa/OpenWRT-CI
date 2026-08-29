@@ -136,3 +136,9 @@ minutes). It requires `HEADSCALE_CI_AUTHKEY` and `HEADSCALE_URL`, prints the
 `ci-debug-<run_id>-<attempt>` IP/hostname and SSH examples, and releases on
 remote `touch /tmp/continue-ci` or timeout. It is concurrency-limited to one
 smoke runner and cleans `CI_TSCALE_PID` plus temporary state on every exit.
+Smoke run `33262059158` verified Win11 -> `root@192.168.11.1` ->
+`runner@100.64.0.x` and remote `touch /tmp/continue-ci`. If MagicDNS SSH lands
+on `198.18.x.x` while `tailscale ping` shows the correct `100.64.0.x`, Nikki
+Fake-IP intercepted name resolution; use the enrolled IP directly. Remote SSH
+does not inherit `GITHUB_WORKSPACE`, so use the absolute checkout path; the
+probe derives its repository root from its own script location.

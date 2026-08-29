@@ -34,11 +34,20 @@ reach `tag:ci-debug` as SSH user `runner`; Tailscale SSH also has to be enabled
 by the enrolled runner's `--ssh` setting. If that ACL is not present, use an
 already-authorized tailnet host or the documented ECS gateway path.
 
+If `tailscale ping ci-debug-...` resolves to `100.64.0.x` but ordinary `ssh`
+to the MagicDNS name connects to `198.18.x.x`, Nikki/Fake-IP intercepted the
+DNS lookup. Use the enrolled `100.64.0.x` address directly. This was verified
+from Win11 through `root@192.168.11.1` in smoke run `33262059158`.
+
 Run the environment probe immediately after login:
 
 ```sh
 bash "$GITHUB_WORKSPACE/Scripts/ci-debug-probe.sh"
 ```
+
+An SSH session does not inherit the workflow's `GITHUB_WORKSPACE`; invoke the
+probe with its absolute checkout path when entering commands manually. The
+probe itself derives the repository root from its own location.
 
 The old Actions run cannot be resumed or have skipped steps restored. Manual
 commands on a held runner are for diagnosis only; after applying a fix,
@@ -69,3 +78,8 @@ SSH user runs `touch /tmp/continue-ci` or the timeout safely releases it. The
 workflow uses the same `bash` entrypoint and same-step environment-file
 contract as the build gate, then always cleans the runner process and temporary
 state. Only one smoke run is allowed at a time.
+
+Verified control path (2026-08-29, run `33262059158`): Win11 connected to
+`root@192.168.11.1`, OpenWrt pinged the enrolled runner over DERP WuHan, SSH to
+`runner@100.64.0.30` authenticated through Tailscale policy, and remote
+`touch /tmp/continue-ci` released the workflow to `completed success`.

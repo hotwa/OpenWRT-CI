@@ -4,6 +4,9 @@
 # No sudo required. All find calls are depth-bounded to avoid I/O storms.
 set -u
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WRT_DIR="$ROOT_DIR/wrt"
+
 echo "========================================================================"
 echo "CI DEBUG ENV PROBE"
 echo "Date: $(date -u "+%Y-%m-%d %H:%M:%S UTC")"
@@ -12,7 +15,8 @@ echo "User: $(whoami) (UID: $(id -u), GID: $(id -g))"
 echo ""
 
 echo "=== [1/7] WORKSPACE & DISK ==="
-echo "GITHUB_WORKSPACE = ${GITHUB_WORKSPACE:-/home/runner/work}"
+echo "GITHUB_WORKSPACE = ${GITHUB_WORKSPACE:-<not inherited over SSH>}"
+echo "Repository root  = $ROOT_DIR"
 echo "Current PWD      = $(pwd)"
 df -h . 2>/dev/null || true
 echo ""
@@ -38,7 +42,6 @@ for q in qemu-aarch64 qemu-aarch64-static qemu-arm qemu-arm-static qemu-mips qem
 done
 echo ""
 
-WRT_DIR="${GITHUB_WORKSPACE:-/home/runner/work}/wrt"
 echo "=== [3/7] OPENWRT STAGING & TOOLCHAIN DIRS ==="
 if [ -d "$WRT_DIR" ]; then
   find "$WRT_DIR" -maxdepth 3 -type d \( -name staging_dir -o -name build_dir \) 2>/dev/null
