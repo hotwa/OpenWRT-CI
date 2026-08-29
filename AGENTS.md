@@ -57,3 +57,9 @@
 - Any change to Linux kernel, qca-nss, qca-nss-dp, qca-nss-drv, qca-nss-ecm, qca-ssdk, Qualcommax kernel patches, RE-SS-01 DTB, factory pipeline, or the firmware source commit must update the baseline table in `README.md`.
 - Before promoting a candidate, record the exact source SHA and Action/artifact SHA256, then complete RE-SS-01 实机验证: successful flash, LAN/WAN and NSS checks, two soft reboots, one cold boot, and the CPE `192.168.66.1:6677` management path.
 - If an upstream candidate fails to boot or regresses Ethernet/NSS/factory behavior, 回退 only the CPE firmware source pin to the last verified complete SHA. Do not revert unrelated hotwa CPE, Lucky, Tailscale/Headscale, wrtbak, or network feature commits.
+
+## Development and Subagent Test Policy
+
+- **Targeted verification first**: During active development or subagent execution, do not unconditionally run the full 85+ test suite (`tests/test_*.sh`) in loops. Full-suite execution contains heavy sleep mocks, geodata download fixtures, and mount simulations that cause unnecessary delays.
+- **Focused module tests**: Subagents must only run tests directly relevant to their modified files (e.g. `bash tests/test_agent_runtime_manager.sh` or `bash tests/test_pi_plan_mode_vendor.sh`), which execute in 1-2 seconds.
+- **Full-suite fixture/mock simulation is optional during iteration**: Full-suite fixture/mock runs are optional during subagent development and should be reserved for final pre-commit verification or delegated to GitHub Actions CI (`WRT-CORE.yml` smoke tests). Subagents should skip full-suite fixture/mock runs to prevent timeouts.
