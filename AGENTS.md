@@ -96,23 +96,28 @@ Trigger: dispatch `RE-SS-01-BUILD` (or any caller workflow) with
 `Compile Firmware` failure. The gate enrolls the runner as ephemeral node
 `ci-debug-<run_id>-<attempt>` (`tag:ci-debug`) and holds it up to 90 minutes.
 
-1. Watch the Actions log for `Enrolled: ci-debug-... / 100.64.0.x (ssh user: runner)`.
+1. Watch the Actions log for `Enrolled: ci-debug-... / 100.64.0.x (ssh user: runner)`
+   and `MagicDNS FQDN: ci-debug-....hs.jmsu.top`.
    If you instead see `WARN: Tailscale debug gate setup failed`, the runner was
    NOT held — the job already finished, so read the failure above that line.
 2. From any tailnet host with `tag:ssh-admin` (e.g. local WSL / Antigravity
    agent), connect via the ECS gateway container:
    `ssh -o "ProxyCommand=ssh -i <ECS key> root@112.124.106.23 docker exec -i tailscale-gw nc %h %p" runner@100.64.0.x`
 3. Run the environment probe first:
-   `ssh runner@100.64.0.x "bash $GITHUB_WORKSPACE/Scripts/ci-debug-probe.sh"`
+   `ssh runner@100.64.0.x "bash /home/runner/work/OpenWRT-CI/OpenWRT-CI/Scripts/ci-debug-probe.sh"`
    (disk, binfmt/QEMU, staging_dir symlinks, musl loaders, node/uv paths).
 4. Reproduce the failing package in isolation:
-   `cd $GITHUB_WORKSPACE/wrt && make package/feeds/custom/<pkg>/compile V=s -j1`
+   `cd /home/runner/work/OpenWRT-CI/OpenWRT-CI/wrt && make package/feeds/custom/<pkg>/compile V=s -j1`
 5. Write the fix locally in this repo, commit, push; then release the runner:
    `ssh runner@100.64.0.x "touch /tmp/continue-ci"`
    and re-trigger the build.
 
 LAN jump path: use `ssh root@192.168.11.1`, then `tailscale status`,
-`tailscale ping 100.64.0.x`, and `ssh runner@100.64.0.x`. Headscale ACLs must
+`tailscale ping <full-name>.hs.jmsu.top`, and
+`ssh runner@<full-name>.hs.jmsu.top` (or `ssh runner@100.64.0.x`). Always use
+the full `.hs.jmsu.top` name: Nikki forwards that suffix to MagicDNS at
+`100.100.100.100`, while the bare `ci-debug-...` short name can enter Fake-IP.
+Headscale ACLs must
 permit the OpenWrt admin node to reach `tag:ci-debug` as `runner`. The old
 Actions run cannot be resumed; manual held-runner verification must be
 followed by a fresh Action run. See `docs/ci-debug-gate.md` for the full SOP.
@@ -136,9 +141,15 @@ minutes). It requires `HEADSCALE_CI_AUTHKEY` and `HEADSCALE_URL`, prints the
 `ci-debug-<run_id>-<attempt>` IP/hostname and SSH examples, and releases on
 remote `touch /tmp/continue-ci` or timeout. It is concurrency-limited to one
 smoke runner and cleans `CI_TSCALE_PID` plus temporary state on every exit.
-Smoke run `33262059158` verified Win11 -> `root@192.168.11.1` ->
-`runner@100.64.0.x` and remote `touch /tmp/continue-ci`. If MagicDNS SSH lands
-on `198.18.x.x` while `tailscale ping` shows the correct `100.64.0.x`, Nikki
-Fake-IP intercepted name resolution; use the enrolled IP directly. Remote SSH
+Smoke runs `33262059158` and `33262670362` verified Win11 ->
+`root@192.168.11.1` -> held runner and remote `touch /tmp/continue-ci`. Run
+`33262670362` specifically verified that the full
+`ci-debug-....hs.jmsu.top` name resolves to `100.64.0.x` and supports
+Tailscale SSH; only the bare short name resolved into Nikki Fake-IP. Future
+agents should debug failures directly on the held Action runner first, using
+the checkout and build state already present there, then commit/push the fix,
+release with `/tmp/continue-ci`, and re-run CI for a recorded clean result.
+The normal firmware gate holds for 90 minutes; the dedicated smoke defaults to
+30 minutes and accepts 1-90 minutes. Remote SSH
 does not inherit `GITHUB_WORKSPACE`, so use the absolute checkout path; the
 probe derives its repository root from its own script location.

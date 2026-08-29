@@ -62,6 +62,7 @@ case "${1:-}" in
   version) echo '1.94.2';;
   up) printf '%s\n' "$*" > "${MOCK_TAILSCALE_UP_ARGS:?}";;
   ip) echo '100.64.0.42';;
+  status) printf '%s\n' '{' '  "Self": {' '    "DNSName": "ci-debug-test.hs.jmsu.top."' '  }' '}';;
   netcheck) echo 'mock netcheck';;
   *) exit 0;;
 esac
@@ -99,11 +100,16 @@ grep -q '^CI_TAILNET_IP=100\.64\.0\.42$' "$GITHUB_ENV" || {
   echo "GITHUB_ENV output missing tailnet IP"
   exit 1
 }
+grep -q '^CI_TSCALE_DNS_NAME=ci-debug-test\.hs\.jmsu\.top$' "$GITHUB_ENV" || {
+  echo "GITHUB_ENV output missing full MagicDNS name"
+  exit 1
+}
 # Verify the explicit same-step file is sourceable and carries the values.
 # shellcheck disable=SC1090
 source "$CI_DEBUG_ENV_FILE"
 [ "$CI_TAILNET_IP" = '100.64.0.42' ] || exit 1
 [ "$CI_TAILNET_OCTET" = '42' ] || exit 1
+[ "$CI_TSCALE_DNS_NAME" = 'ci-debug-test.hs.jmsu.top' ] || exit 1
 
 kill "$CI_TSCALE_PID" 2>/dev/null || true
 echo "CI debug gate test passed"

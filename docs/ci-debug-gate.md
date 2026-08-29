@@ -34,15 +34,17 @@ reach `tag:ci-debug` as SSH user `runner`; Tailscale SSH also has to be enabled
 by the enrolled runner's `--ssh` setting. If that ACL is not present, use an
 already-authorized tailnet host or the documented ECS gateway path.
 
-If `tailscale ping ci-debug-...` resolves to `100.64.0.x` but ordinary `ssh`
-to the MagicDNS name connects to `198.18.x.x`, Nikki/Fake-IP intercepted the
-DNS lookup. Use the enrolled `100.64.0.x` address directly. This was verified
-from Win11 through `root@192.168.11.1` in smoke run `33262059158`.
+Use the full `ci-debug-....hs.jmsu.top` MagicDNS name printed by the setup
+script, not the bare `ci-debug-...` host label. Nikki forwards the
+`.hs.jmsu.top` suffix to `100.100.100.100`, so the FQDN resolves to the
+runner's `100.64.0.x` address. The bare short name does not match that suffix
+rule and may receive a `198.18.x.x` Fake-IP address. The enrolled IP remains a
+safe fallback.
 
 Run the environment probe immediately after login:
 
 ```sh
-bash "$GITHUB_WORKSPACE/Scripts/ci-debug-probe.sh"
+bash /home/runner/work/OpenWRT-CI/OpenWRT-CI/Scripts/ci-debug-probe.sh
 ```
 
 An SSH session does not inherit the workflow's `GITHUB_WORKSPACE`; invoke the
@@ -79,7 +81,8 @@ workflow uses the same `bash` entrypoint and same-step environment-file
 contract as the build gate, then always cleans the runner process and temporary
 state. Only one smoke run is allowed at a time.
 
-Verified control path (2026-08-29, run `33262059158`): Win11 connected to
-`root@192.168.11.1`, OpenWrt pinged the enrolled runner over DERP WuHan, SSH to
-`runner@100.64.0.30` authenticated through Tailscale policy, and remote
-`touch /tmp/continue-ci` released the workflow to `completed success`.
+Verified control paths (2026-08-29): run `33262059158` proved direct-IP SSH;
+run `33262670362` proved the full `.hs.jmsu.top` FQDN resolves to
+`100.64.0.31`, authenticates as `runner` through Tailscale policy, finds the
+checked-out probe, and accepts remote `touch /tmp/continue-ci`. Both workflows
+released to `completed success`.

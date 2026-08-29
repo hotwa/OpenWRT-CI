@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # CI Debug Gate - Tailscale setup (GitHub Actions runner)
 # Requires env: HEADSCALE_AUTHKEY (hskey-auth-...), HEADSCALE_LOGIN (https://...)
-# Outputs env file entries: CI_TAILNET_IP, CI_TAILNET_OCTET
+# Outputs env file entries: CI_TAILNET_IP, CI_TAILNET_OCTET,
+# CI_TSCALE_HOSTNAME (the full MagicDNS name) and CI_TSCALE_DNS_NAME.
 # If CI_DEBUG_ENV_FILE is set, it receives shell-safe assignments for the
 # current caller to source. GITHUB_ENV remains populated for later steps.
 # Idempotent-ish: re-runs just re-up; on failure returns nonzero so the
@@ -85,13 +86,19 @@ if [ -z "$TS_IP" ]; then
   exit 1
 fi
 TS_OCTET="${TS_IP##*.}"
+TS_DNS_NAME="$($SUDO tailscale status --json 2>/dev/null \
+  | sed -n 's/^[[:space:]]*"DNSName": "\([^"]*\)".*/\1/p' \
+  | head -n 1)"
+TS_DNS_NAME="${TS_DNS_NAME%.}"
+[ -n "$TS_DNS_NAME" ] || TS_DNS_NAME="$HOSTNAME_LABEL"
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   {
     printf 'CI_TAILNET_IP=%s\n' "$TS_IP"
     printf 'CI_TAILNET_OCTET=%s\n' "$TS_OCTET"
     printf 'CI_TSCALE_PID=%s\n' "$TS_PID"
-    printf 'CI_TSCALE_HOSTNAME=%s\n' "$HOSTNAME_LABEL"
+    printf 'CI_TSCALE_HOSTNAME=%s\n' "$TS_DNS_NAME"
+    printf 'CI_TSCALE_DNS_NAME=%s\n' "$TS_DNS_NAME"
   } >> "$GITHUB_ENV"
 fi
 
@@ -103,9 +110,11 @@ mkdir -p "$(dirname "$CI_DEBUG_ENV_FILE")"
   printf 'CI_TAILNET_IP=%q\n' "$TS_IP"
   printf 'CI_TAILNET_OCTET=%q\n' "$TS_OCTET"
   printf 'CI_TSCALE_PID=%q\n' "$TS_PID"
-  printf 'CI_TSCALE_HOSTNAME=%q\n' "$HOSTNAME_LABEL"
+  printf 'CI_TSCALE_HOSTNAME=%q\n' "$TS_DNS_NAME"
+  printf 'CI_TSCALE_DNS_NAME=%q\n' "$TS_DNS_NAME"
 } > "$CI_DEBUG_ENV_FILE"
 
 echo "Enrolled: $HOSTNAME_LABEL / $TS_IP (ssh user: runner)"
+echo "MagicDNS FQDN: $TS_DNS_NAME"
 echo "DERP/netcheck evidence:"
 $SUDO timeout 30 tailscale netcheck 2>&1 | sed -n '1,25p' || true
