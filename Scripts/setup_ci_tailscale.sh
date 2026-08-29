@@ -36,6 +36,7 @@ if ! tailscale up \
     --hostname="$HOSTNAME_LABEL" \
     --advertise-tags=tag:ci-debug \
     --ssh \
+    --ephemeral \
     --accept-routes=false \
     --accept-dns=false \
     --timeout=120s; then
