@@ -129,3 +129,10 @@ or not permitted`, enrollment failed before a runner address exists, so do not
 attempt SSH. If repository smoke tests report a real-looking auth key, inspect
 test fixtures for contiguous `hskey-auth-*` literals and split adjacent shell
 strings before changing the scanner.
+
+Dedicated SSH smoke: `.github/workflows/CI-DEBUG-SSH-TEST.yml` provides a
+build-free `workflow_dispatch` check with a 30-minute default hold (1-90
+minutes). It requires `HEADSCALE_CI_AUTHKEY` and `HEADSCALE_URL`, prints the
+`ci-debug-<run_id>-<attempt>` IP/hostname and SSH examples, and releases on
+remote `touch /tmp/continue-ci` or timeout. It is concurrency-limited to one
+smoke runner and cleans `CI_TSCALE_PID` plus temporary state on every exit.

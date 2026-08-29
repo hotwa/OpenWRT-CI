@@ -1,0 +1,103 @@
+name: CI Debug SSH Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      hold_minutes:
+        description: 'Minutes to keep the runner available (1-90)'
+        required: true
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-debug-ssh-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Tailscale SSH smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Enroll and hold runner for SSH smoke test
+        shell: bash
+        env:
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+          HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
+          HOLD_MINUTES: ${{ inputs.hold_minutes }}
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "${HEADSCALE_AUTHKEY:-}" ]; then
+            echo "::error::HEADSCALE_CI_AUTHKEY is missing; refusing to run the SSH smoke test" >&2
+            exit 1
+          fi
+          if [ -z "${HEADSCALE_LOGIN:-}" ]; then
+            echo "::error::HEADSCALE_URL is missing; refusing to run the SSH smoke test" >&2
+            exit 1
+          fi
+
+          case "${HOLD_MINUTES:-}" in
+            ''|*[!0-9]*)
+              echo "::error::hold_minutes must be an integer from 1 to 90" >&2
+              exit 1
+              ;;
+          esac
+          if (( HOLD_MINUTES < 1 || HOLD_MINUTES > 90 )); then
+            echo "::error::hold_minutes must be between 1 and 90" >&2
+            exit 1
+          fi
+
+          DEBUG_ENV_FILE="${RUNNER_TEMP}/ci-debug-env"
+          export CI_DEBUG_ENV_FILE
+
+          cleanup() {
+            local rc=$?
+            if [ -n "${CI_TSCALE_PID:-}" ]; then
+              sudo kill "$CI_TSCALE_PID" 2>/dev/null || true
+            fi
+            sudo rm -f /run/tailscaled-tmp.state 2>/dev/null || true
+            rm -f "$DEBUG_ENV_FILE" /tmp/continue-ci
+            echo "CI Debug SSH smoke cleanup complete"
+            return "$rc"
+          }
+          trap cleanup EXIT
+
+          rm -f "$DEBUG_ENV_FILE" /tmp/continue-ci
+          # Always invoke through bash: Windows checkouts can lose executable mode.
+          bash "$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"
+          if [ ! -s "$DEBUG_ENV_FILE" ]; then
+            echo "::error::Tailscale setup did not produce CI_DEBUG_ENV_FILE" >&2
+            exit 1
+          fi
+          # setup_ci_tailscale.sh writes this file for same-step communication.
+          # shellcheck disable=SC1090
+          source "$DEBUG_ENV_FILE"
+
+          echo "Enrolled IP: ${CI_TAILNET_IP}"
+          echo "MagicDNS name: ${CI_TSCALE_HOSTNAME}"
+          echo "SSH connection examples:"
+          echo "  ssh runner@${CI_TSCALE_HOSTNAME}"
+          echo "  ssh runner@${CI_TAILNET_IP}"
+          echo "Environment probe:"
+          echo "  ssh runner@${CI_TSCALE_HOSTNAME} 'bash ${GITHUB_WORKSPACE}/Scripts/ci-debug-probe.sh'"
+          echo "Release command from the runner: touch /tmp/continue-ci"
+          echo "Holding for ${HOLD_MINUTES} minute(s); timeout will release safely."
+
+          deadline=$(( $(date +%s) + HOLD_MINUTES * 60 ))
+          while [ ! -e /tmp/continue-ci ]; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Hold timeout reached; releasing runner safely"
+              break
+            fi
+            sleep 15
+          done
+          if [ -e /tmp/continue-ci ]; then
+            echo "Remote continue-ci signal detected; releasing runner"
+          fi

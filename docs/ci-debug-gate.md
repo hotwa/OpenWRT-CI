@@ -57,3 +57,15 @@ not trip the repository secret guard.
 setup failed` means the gate degraded and no runner was held. Inspect the
 preceding Tailscale error before attempting SSH; an enrollment rejection means
 there is no reachable runner address.
+
+## Dedicated SSH smoke workflow
+
+Use `.github/workflows/CI-DEBUG-SSH-TEST.yml` for a focused Tailscale SSH
+connectivity check without starting a firmware build. Dispatch it with the
+`hold_minutes` input (default 30, maximum 90). It requires the repository
+secrets `HEADSCALE_CI_AUTHKEY` and `HEADSCALE_URL`, prints the enrolled IP and
+`ci-debug-<run_id>-<attempt>` hostname, and holds the runner until a permitted
+SSH user runs `touch /tmp/continue-ci` or the timeout safely releases it. The
+workflow uses the same `bash` entrypoint and same-step environment-file
+contract as the build gate, then always cleans the runner process and temporary
+state. Only one smoke run is allowed at a time.
