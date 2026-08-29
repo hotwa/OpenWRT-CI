@@ -95,6 +95,19 @@ cleanup() { rm -rf -- "$build_dir"; }
 trap cleanup EXIT
 archive="$build_dir/hermes.tar.gz"
 
+if [ "$npm_arch" = arm64 ] && [ -z "${QEMU_LD_PREFIX:-}" ]; then
+  if [ ! -f /lib/ld-musl-aarch64.so.1 ] && [ ! -f /etc/qemu-binfmt/aarch64/lib/ld-musl-aarch64.so.1 ]; then
+    musl_sysroot="$build_dir/qemu-musl-sysroot"
+    if [ ! -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ]; then
+      mkdir -p "$musl_sysroot"
+      curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+        "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz" \
+        | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+    fi
+    [ -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ] && export QEMU_LD_PREFIX="$musl_sysroot"
+  fi
+fi
+
 log "fetching ${upstream_repo}@${upstream_commit} for ${NODE_TARGET}"
 curl -fsSL --proto '=https' --tlsv1.2 \
   "https://codeload.github.com/${upstream_repo}/tar.gz/${upstream_commit}" -o "$archive"
