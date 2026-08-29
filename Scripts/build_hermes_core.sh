@@ -70,7 +70,11 @@ elf_machine_id() {
 
 json_value() {
   local expression="$1"
-  target_exec "$NODE_BIN" -e "const p=require(process.argv[1]); console.log($expression)" "$HERMES_DIR/package.json"
+  if command -v node >/dev/null 2>&1; then
+    node -e "const p=require(process.argv[1]); console.log($expression)" "$HERMES_DIR/package.json"
+  else
+    target_exec "$NODE_BIN" -e "const p=require(process.argv[1]); console.log($expression)" "$HERMES_DIR/package.json"
+  fi
 }
 
 hermes_version="$(json_value 'p.version')"
