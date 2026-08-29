@@ -9,6 +9,17 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 [ -f "$SETUP" ] || { echo "missing CI Tailscale setup script"; exit 1; }
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
+# The workflow invokes this script directly in some historical revisions, so
+# keep the executable bit in Git as well as the defensive `bash` invocation.
+[ "$(git -C "$ROOT_DIR" ls-files -s -- Scripts/setup_ci_tailscale.sh | awk '{print $1}')" = "100755" ] || {
+  echo "CI Tailscale setup script must be executable in Git"
+  exit 1
+}
+grep -q 'bash "\$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"' "$WORKFLOW" || {
+  echo "workflow must invoke the setup script through bash"
+  exit 1
+}
+
 # Static guards catch regressions without touching the network or secrets.
 if grep -Eq '^[[:space:]]+--ephemeral([[:space:]]|\\|)' "$SETUP"; then
   echo "tailscale setup must not pass unsupported --ephemeral"

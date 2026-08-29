@@ -894,7 +894,9 @@ jobs:
           DEBUG_ENV_FILE="${RUNNER_TEMP}/ci-debug-env"
           rm -f "$DEBUG_ENV_FILE"
           export CI_DEBUG_ENV_FILE="$DEBUG_ENV_FILE"
-          if ! "$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"; then
+          # Invoke through bash as a defensive fallback for checkouts where a
+          # platform or archive transport loses the executable mode bit.
+          if ! bash "$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"; then
             echo "WARN: Tailscale debug gate setup failed; continuing pipeline without remote SSH"
             exit 0
           fi
