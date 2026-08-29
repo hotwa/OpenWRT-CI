@@ -10,6 +10,11 @@
 # set (Core; no extras).
 set -euo pipefail
 
+# Surface the exact command that fails: several checks below can exit under
+# `set -e` without printing anything (e.g. a failed qemu target_exec), which
+# otherwise leaves the CI log with only "exit code 1".
+trap 'printf "ERROR: hermes-core: command failed at line %s: %s\n" "$LINENO" "${BASH_COMMAND}" >&2' ERR
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TARGET_FILES="${1:-$ROOT_DIR/files}"
@@ -255,12 +260,15 @@ while IFS= read -r script; do
   esac
 done < <(find "$VENV_DIR/bin" -type f -perm -0100 -print)
 
+log "validating target Node.js ABI and architecture"
 target_node_abi="$(target_exec "$NODE_BIN" -p 'process.versions.modules')"
 target_node_arch="$(target_exec "$NODE_BIN" -p 'process.arch')"
 [ "$target_node_arch" = "$npm_arch" ] || die "target node reports $target_node_arch, expected $npm_arch"
+
+log "validating target uv and Hermes Core Python module"
 target_uv_version="$(target_exec "$UV_BIN" --version | awk '{print $2}')"
 target_exec "$VENV_DIR/bin/python" -c 'import hermes_cli.main' >/dev/null
-target_exec "$VENV_DIR/bin/hermes" --version >/dev/null
+target_exec "$VENV_DIR/bin/python" "$VENV_DIR/bin/hermes" --version >/dev/null
 
 # `uv venv` has now expanded the exact 3.11 interpreter into the shared
 # /opt/uv/python prefix. Keeping its install_only archive in python-mirror

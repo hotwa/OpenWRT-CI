@@ -31,7 +31,17 @@ fi
 
 tailscale version | head -n1
 
-# Start tailscaled manually (no systemd on hosted runners)
+# The deb postinst auto-starts a systemd-managed tailscaled on hosted runners,
+# which holds /var/run/tailscale/tailscaled.sock and makes our manual
+# userspace-networking instance die with "address already in use".
+$SUDO systemctl stop tailscaled 2>/dev/null || true
+$SUDO systemctl disable tailscaled 2>/dev/null || true
+for _ in 1 2 3 4 5; do
+  [ -S /var/run/tailscale/tailscaled.sock ] || break
+  sleep 1
+done
+
+# Start tailscaled manually (userspace TUN; hosted runners have no TUN device)
 $SUDO tailscaled --tun=userspace-networking --socks5-server=127.0.0.1:1055 --state=/run/tailscaled-tmp.state >/tmp/tailscaled.log 2>&1 &
 TS_PID=$!
 echo "tailscaled pid=$TS_PID"
@@ -44,7 +54,7 @@ fi
 
 # Register as an ephemeral node; hostname doubles as MagicDNS label
 HOSTNAME_LABEL="ci-debug-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
-if ! tailscale up \
+if ! $SUDO tailscale up \
     --login-server="$HEADSCALE_LOGIN" \
     --authkey="$HEADSCALE_AUTHKEY" \
     --hostname="$HOSTNAME_LABEL" \
@@ -60,7 +70,7 @@ if ! tailscale up \
   exit 1
 fi
 
-TS_IP="$(tailscale ip -4)"
+TS_IP="$($SUDO tailscale ip -4)"
 if [ -z "$TS_IP" ]; then
   echo "ERROR: no tailnet IPv4 assigned"
   kill "$TS_PID" 2>/dev/null || true
@@ -77,4 +87,4 @@ TS_OCTET="${TS_IP##*.}"
 
 echo "Enrolled: $HOSTNAME_LABEL / $TS_IP (ssh user: runner)"
 echo "DERP/netcheck evidence:"
-timeout 30 tailscale netcheck 2>&1 | sed -n '1,25p' || true
+$SUDO timeout 30 tailscale netcheck 2>&1 | sed -n '1,25p' || true

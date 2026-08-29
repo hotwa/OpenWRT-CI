@@ -916,4 +916,9 @@ jobs:
             echo "continue-ci detected; releasing runner"
           fi
           rm -f /tmp/continue-ci
+          # Stop the debug tailscaled we started (system instance was
+          # stopped+disabled in setup_ci_tailscale.sh, so any live tailscaled
+          # here is ours); avoids a stale socket/state for later steps.
+          sudo pkill -x tailscaled 2>/dev/null || true
+          sudo rm -f /run/tailscaled-tmp.state 2>/dev/null || true
           echo "CI resumed"

@@ -63,3 +63,55 @@
 - **Targeted verification first**: During active development or subagent execution, do not unconditionally run the full 85+ test suite (`tests/test_*.sh`) in loops. Full-suite execution contains heavy sleep mocks, geodata download fixtures, and mount simulations that cause unnecessary delays.
 - **Focused module tests**: Subagents must only run tests directly relevant to their modified files (e.g. `bash tests/test_agent_runtime_manager.sh` or `bash tests/test_pi_plan_mode_vendor.sh`), which execute in 1-2 seconds.
 - **Full-suite fixture/mock simulation is optional during iteration**: Full-suite fixture/mock runs are optional during subagent development and should be reserved for final pre-commit verification or delegated to GitHub Actions CI (`WRT-CORE.yml` smoke tests). Subagents should skip full-suite fixture/mock runs to prevent timeouts.
+
+## CI string / quoting pitfalls (2026-08-29 RE-SS-01 debug-gate runs)
+
+These three bugs each cost a full failed CI run. Check for them when editing
+`WRT-CORE.yml`, `Scripts/*.sh`, or any GHA step:
+
+- **GHA expressions are not bash expansions.** `${{ steps.x.outcome }}` is
+  substituted by the runner before the shell runs. Writing bash-default
+  syntax `${steps.x.outcome:-}` inside `run:` makes bash hit a dot in a
+  parameter name and abort the whole step with `bad substitution`.
+  Always emit `${{ steps.x.outcome }}` (or use an `env:` entry) for step
+  results; `${VAR:-default}` is only for real shell variables.
+- **`IFS='\t'` is two characters (backslash + t), not a tab.** Bash does not
+  interpret escape sequences in plain quotes; tab-separated rows then split on
+  every `t` and `\`, corrupting fields silently (no `die` message). Use
+  `IFS=$'\t'` (ANSI-C quoting) or a `read -d ''`/awk-based parse. See
+  `Scripts/build_hermes_core.sh` mirror-row parsing and commit `29afaa9`.
+- **`set -e` + command substitution swallows failures silently.** A failing
+  `var="$(cmd)"` (e.g. a qemu `target_exec` that cannot load the target
+  binary) exits the script with code 1 and prints nothing; the CI log ends
+  with only `##[error]Process completed with exit code 1.` after the last
+  successful log line. `Scripts/build_hermes_core.sh` now carries an ERR trap
+  printing the failing `LINENO` and `BASH_COMMAND`; when adding new
+  verification gates, wrap bare `$( ... )` calls in `|| die "..."` with the
+  context message instead of relying on `set -e`.
+
+## CI Debug Gate — SSH into a held runner (SOP)
+
+Trigger: dispatch `RE-SS-01-BUILD` (or any caller workflow) with
+`DEBUG_SSH: true`, or any `Custom Packages and Agent Runtimes` /
+`Compile Firmware` failure. The gate enrolls the runner as ephemeral node
+`ci-debug-<run_id>-<attempt>` (`tag:ci-debug`) and holds it up to 90 minutes.
+
+1. Watch the Actions log for `Enrolled: ci-debug-... / 100.64.0.x (ssh user: runner)`.
+   If you instead see `WARN: Tailscale debug gate setup failed`, the runner was
+   NOT held — the job already finished, so read the failure above that line.
+2. From any tailnet host with `tag:ssh-admin` (e.g. local WSL / Antigravity
+   agent), connect via the ECS gateway container:
+   `ssh -o "ProxyCommand=ssh -i <ECS key> root@112.124.106.23 docker exec -i tailscale-gw nc %h %p" runner@100.64.0.x`
+3. Run the environment probe first:
+   `ssh runner@100.64.0.x "bash $GITHUB_WORKSPACE/Scripts/ci-debug-probe.sh"`
+   (disk, binfmt/QEMU, staging_dir symlinks, musl loaders, node/uv paths).
+4. Reproduce the failing package in isolation:
+   `cd $GITHUB_WORKSPACE/wrt && make package/feeds/custom/<pkg>/compile V=s -j1`
+5. Write the fix locally in this repo, commit, push; then release the runner:
+   `ssh runner@100.64.0.x "touch /tmp/continue-ci"`
+   and re-trigger the build.
+
+Secrets (GitHub repo `hotwa/OpenWRT-CI`): `HEADSCALE_CI_AUTHKEY`
+(reusable preauthkey `tag:ci-debug`, no expiration), `HEADSCALE_URL`
+(`https://headscale.jmsu.top`). DERP map is single-region WuHan (900);
+US-hosted runners reach it over DERP relay, expect ~150 ms.
