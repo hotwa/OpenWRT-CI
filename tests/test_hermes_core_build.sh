@@ -12,7 +12,7 @@ bash -n "$BUILDER"
 # and enables every optional extra. None of those actions may be on the device
 # path or accidentally reintroduced to the firmware builder.
 grep -q -- '--ignore-scripts' "$FETCH" || { echo "npm ci still runs host postinstall"; exit 1; }
-grep -q 'sync --locked --no-dev --no-install-project --no-editable' "$BUILDER" || {
+grep -qE 'sync --(frozen|locked) --no-dev --no-install-project --no-editable' "$BUILDER" || {
   echo "Core builder no longer uses a locked Core-only sync"; exit 1;
 }
 if awk '!/^[[:space:]]*#/ { print }' "$BUILDER" | grep -Eq -- 'sync .*--extra[[:space:]]+all|sync .*--all-extras|--extra[[:space:]]+all'; then
