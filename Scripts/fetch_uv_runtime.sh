@@ -186,6 +186,12 @@ select_python_asset() {
 		[
 			select((.draft // false) == false and (.prerelease // false) == false)
 			| (.assets // [])[]
+			| select(.name | test("^cpython-" + ($series | gsub("\\."; "\\.")) + "\\.[0-9]+\\+[0-9]+-" + $target + "-install_only_stripped\\.tar\\.gz$"))
+			| [.name, .browser_download_url]
+			| @tsv
+		][0] // [
+			select((.draft // false) == false and (.prerelease // false) == false)
+			| (.assets // [])[]
 			| select(.name | test("^cpython-" + ($series | gsub("\\."; "\\.")) + "\\.[0-9]+\\+[0-9]+-" + $target + "-install_only\\.tar\\.gz$"))
 			| [.name, .browser_download_url]
 			| @tsv
@@ -234,6 +240,12 @@ EOF
 			return 1
 		fi
 		printf '%s\t%s\t%s\t%s\n' "$series" "$build_id" "$asset_name" "$expected_hash" >>"$manifest"
+
+		if [[ "$asset_name" == *"_stripped.tar.gz" ]]; then
+			ln -sf "$asset_name" "$UV_PYTHON_MIRROR_DIR/$build_id/${asset_name//_stripped/}"
+		elif [[ "$asset_name" == *"-install_only.tar.gz" ]]; then
+			ln -sf "$asset_name" "$UV_PYTHON_MIRROR_DIR/$build_id/${asset_name//-install_only.tar.gz/-install_only_stripped.tar.gz}"
+		fi
 	done
 }
 

@@ -128,7 +128,7 @@ export UV_PYTHON_INSTALL_BIN=false
 export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
 
 log "creating managed Python $python_series from the offline mirror"
-target_exec "$UV_BIN" venv --managed-python --python "$python_series" "$VENV_DIR"
+target_exec "$UV_BIN" venv --managed-python --python "$python_series-linux-$npm_arch-musl" "$VENV_DIR"
 export UV_PYTHON="$VENV_DIR/bin/python"
 export VIRTUAL_ENV="$VENV_DIR"
 log "syncing locked Hermes Core dependencies (no extras)"
@@ -200,13 +200,15 @@ case "$mirror_asset" in
   *) die "invalid Hermes Python mirror asset name" ;;
 esac
 case "$mirror_asset" in
-  *+*-install_only.tar.gz) ;;
+  *+*-install_only.tar.gz|*+*-install_only_stripped.tar.gz) ;;
   *) die "invalid Hermes Python mirror asset name" ;;
 esac
 mirror_archive="$MIRROR_DIR/$mirror_build/$mirror_asset"
 [ -f "$mirror_archive" ] || die "Hermes Python mirror archive is missing"
 [ "$(sha256sum "$mirror_archive" | awk '{print $1}')" = "$mirror_sha" ] || die "Hermes Python mirror checksum changed"
 rm -f -- "$mirror_archive"
+rm -f -- "$MIRROR_DIR/$mirror_build/${mirror_asset//_stripped/}"
+rm -f -- "$MIRROR_DIR/$mirror_build/${mirror_asset//-install_only.tar.gz/-install_only_stripped.tar.gz}"
 rmdir "$MIRROR_DIR/$mirror_build" 2>/dev/null || true
 sed -i "/^${python_series}[[:space:]]/d" "$MIRROR_DIR/manifest.txt"
 

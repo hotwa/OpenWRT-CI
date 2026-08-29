@@ -147,7 +147,7 @@ SELECTED_ROW="$(FETCH_UV_RUNTIME_LIBRARY_ONLY=1 bash -c '
 }
 
 case "$SELECTED_ROW" in
-  cpython-3.10.21+20260825-aarch64-unknown-linux-musl-install_only.tar.gz*https://example.invalid/cpython-3.10.tar.gz) ;;
+  cpython-3.10.21+20260825-aarch64-unknown-linux-musl-install_only*.tar.gz*https://example.invalid/cpython-3.10*.tar.gz) ;;
   *)
     echo "select_python_asset returned an unexpected row: $SELECTED_ROW"
     exit 1
