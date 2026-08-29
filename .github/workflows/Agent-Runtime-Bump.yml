@@ -98,12 +98,7 @@ jobs:
             exit 0
           fi
           if git diff --quiet -- "${paths[@]}"; then
-            input_sha="$(node - <<'NODE'
-const crypto=require('node:crypto'), fs=require('node:fs');
-const files=['Scripts/node-agent-runtime/package.json','Scripts/node-agent-runtime/package-lock.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/plan-mode.ts','Scripts/node-agent-runtime/runtime-release','Scripts/fetch_multica_runtime.sh'];
-const h=crypto.createHash('sha256'); for (const f of files) h.update(fs.readFileSync(f)); console.log(h.digest('hex'));
-NODE
-)"
+            input_sha="$(node -e "const crypto=require('node:crypto'), fs=require('node:fs'); const files=['Scripts/node-agent-runtime/package.json','Scripts/node-agent-runtime/package-lock.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/plan-mode.ts','Scripts/node-agent-runtime/runtime-release','Scripts/fetch_multica_runtime.sh']; const h=crypto.createHash('sha256'); for (const f of files) h.update(fs.readFileSync(f)); console.log(h.digest('hex'));")"
             channel='https://github.com/hotwa/OpenWRT-CI/releases/download/agent-runtime-stable'
             mkdir -p "$RUNNER_TEMP/channel-check"
             if ! curl -fsSL "$channel/index.json" -o "$RUNNER_TEMP/channel-check/index.json" || \
@@ -113,21 +108,7 @@ NODE
               echo 'Stable signed channel is missing or invalid; rebuilding it.'
               exit 0
             fi
-            if ! node - "$RUNNER_TEMP/channel-check/index.json" <<'NODE' >"$RUNNER_TEMP/channel-check/assets.tsv"
-const index = require(process.argv[2]);
-if (index.schema_version !== 1 || index.release_tag !== 'agent-runtime-stable' ||
-    !Number.isSafeInteger(index.runtime_release) || index.runtime_release < 1) process.exit(1);
-for (const arch of ['arm64', 'x64']) {
-  const release = index.releases?.[arch];
-  const prefix = `agent-runtime-${index.runtime_release}-${arch}-musl`;
-  if (!release || release.runtime_release !== index.runtime_release || release.libc !== 'musl' ||
-      release.manifest !== `${prefix}.manifest.json` ||
-      release.manifest_signature !== `${prefix}.manifest.json.sig` ||
-      release.bundle !== `${prefix}.tar.gz`) process.exit(1);
-  console.log(`${arch}\t${release.manifest}\t${release.bundle}`);
-}
-NODE
-            then
+            if ! node -e "const index = require(process.argv[1]); if (index.schema_version !== 1 || index.release_tag !== 'agent-runtime-stable' || !Number.isSafeInteger(index.runtime_release) || index.runtime_release < 1) process.exit(1); for (const arch of ['arm64', 'x64']) { const release = index.releases?.[arch]; const prefix = 'agent-runtime-' + index.runtime_release + '-' + arch + '-musl'; if (!release || release.runtime_release !== index.runtime_release || release.libc !== 'musl' || release.manifest !== (prefix + '.manifest.json') || release.manifest_signature !== (prefix + '.manifest.json.sig') || release.bundle !== (prefix + '.tar.gz')) process.exit(1); console.log(arch + '\t' + release.manifest + '\t' + release.bundle); }" "$RUNNER_TEMP/channel-check/index.json" >"$RUNNER_TEMP/channel-check/assets.tsv"; then
               echo 'changed=true' >> "$GITHUB_OUTPUT"
               echo 'Stable signed channel index is incomplete; rebuilding it.'
               exit 0
