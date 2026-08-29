@@ -51,7 +51,7 @@ target_exec() {
   elif [ "$npm_arch" = arm64 ]; then
     command -v qemu-aarch64 >/dev/null 2>&1 || die "arm64 Core build requires qemu-aarch64 or HERMES_TARGET_RUNNER"
     if [ -n "${musl_sysroot:-}" ] && [ -d "$musl_sysroot" ]; then
-      qemu-aarch64 -L "$musl_sysroot" "$@"
+      QEMU_LD_PREFIX="$musl_sysroot" QEMU_SET_ENV="LD_LIBRARY_PATH=/lib:/usr/lib" qemu-aarch64 -L "$musl_sysroot" "$@"
     else
       qemu-aarch64 "$@"
     fi
@@ -106,6 +106,18 @@ if [ "$npm_arch" = arm64 ]; then
     curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
       "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz" \
       | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+    index_tar="$build_dir/APKINDEX-arm64.tar.gz"
+    if curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+      "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/APKINDEX.tar.gz" -o "$index_tar" 2>/dev/null; then
+      for pkg in libgcc libstdc++; do
+        pkg_ver="$(tar -xzOf "$index_tar" APKINDEX 2>/dev/null | awk -v p="$pkg" '$0 ~ "^P:"p"$" { getline; sub(/^V:/,""); print $0; exit }' || true)"
+        if [ -n "$pkg_ver" ]; then
+          curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+            "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/${pkg}-${pkg_ver}.apk" \
+            | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+        fi
+      done
+    fi
   fi
   if [ -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ]; then
     export QEMU_LD_PREFIX="$musl_sysroot"
@@ -132,6 +144,18 @@ elif [ "$npm_arch" = x64 ]; then
     curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
       "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.3-x86_64.tar.gz" \
       | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+    index_tar="$build_dir/APKINDEX-x64.tar.gz"
+    if curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+      "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/x86_64/APKINDEX.tar.gz" -o "$index_tar" 2>/dev/null; then
+      for pkg in libgcc libstdc++; do
+        pkg_ver="$(tar -xzOf "$index_tar" APKINDEX 2>/dev/null | awk -v p="$pkg" '$0 ~ "^P:"p"$" { getline; sub(/^V:/,""); print $0; exit }' || true)"
+        if [ -n "$pkg_ver" ]; then
+          curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+            "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/x86_64/${pkg}-${pkg_ver}.apk" \
+            | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+        fi
+      done
+    fi
   fi
   if [ -f "$musl_sysroot/lib/ld-musl-x86_64.so.1" ]; then
     export QEMU_LD_PREFIX="$musl_sysroot"
