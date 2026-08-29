@@ -95,8 +95,8 @@ cleanup() { rm -rf -- "$build_dir"; }
 trap cleanup EXIT
 archive="$build_dir/hermes.tar.gz"
 
-if [ "$npm_arch" = arm64 ] && [ -z "${QEMU_LD_PREFIX:-}" ]; then
-  if [ ! -f /lib/ld-musl-aarch64.so.1 ] && [ ! -f /etc/qemu-binfmt/aarch64/lib/ld-musl-aarch64.so.1 ]; then
+if [ "$npm_arch" = arm64 ]; then
+  if [ ! -f /lib/ld-musl-aarch64.so.1 ] || [ ! -f /etc/qemu-binfmt/aarch64/lib/ld-musl-aarch64.so.1 ]; then
     musl_sysroot="$build_dir/qemu-musl-sysroot"
     if [ ! -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ]; then
       mkdir -p "$musl_sysroot"
@@ -104,7 +104,39 @@ if [ "$npm_arch" = arm64 ] && [ -z "${QEMU_LD_PREFIX:-}" ]; then
         "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.3-aarch64.tar.gz" \
         | tar -xz -C "$musl_sysroot" 2>/dev/null || true
     fi
-    [ -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ] && export QEMU_LD_PREFIX="$musl_sysroot"
+    if [ -f "$musl_sysroot/lib/ld-musl-aarch64.so.1" ]; then
+      [ -n "${QEMU_LD_PREFIX:-}" ] || export QEMU_LD_PREFIX="$musl_sysroot"
+      if [ "$(id -u)" -eq 0 ]; then
+        mkdir -p /lib /etc/qemu-binfmt/aarch64/lib
+        cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /lib/ 2>/dev/null || true
+        cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /etc/qemu-binfmt/aarch64/lib/ 2>/dev/null || true
+        chmod 0755 /lib/ld-musl-*.so.* /lib/libc.musl-*.so.* /etc/qemu-binfmt/aarch64/lib/* 2>/dev/null || true
+      elif command -v sudo >/dev/null 2>&1; then
+        sudo mkdir -p /lib /etc/qemu-binfmt/aarch64/lib 2>/dev/null || true
+        sudo cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /lib/ 2>/dev/null || true
+        sudo cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /etc/qemu-binfmt/aarch64/lib/ 2>/dev/null || true
+        sudo chmod 0755 /lib/ld-musl-*.so.* /lib/libc.musl-*.so.* /etc/qemu-binfmt/aarch64/lib/* 2>/dev/null || true
+      fi
+    fi
+  fi
+elif [ "$npm_arch" = x64 ] && [ ! -f /lib/ld-musl-x86_64.so.1 ]; then
+  musl_sysroot="$build_dir/qemu-musl-sysroot-x64"
+  if [ ! -f "$musl_sysroot/lib/ld-musl-x86_64.so.1" ]; then
+    mkdir -p "$musl_sysroot"
+    curl -fsSL --retry 3 --proto '=https' --tlsv1.2 \
+      "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.3-x86_64.tar.gz" \
+      | tar -xz -C "$musl_sysroot" 2>/dev/null || true
+  fi
+  if [ -f "$musl_sysroot/lib/ld-musl-x86_64.so.1" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      mkdir -p /lib
+      cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /lib/ 2>/dev/null || true
+      chmod 0755 /lib/ld-musl-*.so.* /lib/libc.musl-*.so.* 2>/dev/null || true
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo mkdir -p /lib 2>/dev/null || true
+      sudo cp -f "$musl_sysroot"/lib/ld-musl-*.so.* "$musl_sysroot"/lib/libc.musl-*.so.* /lib/ 2>/dev/null || true
+      sudo chmod 0755 /lib/ld-musl-*.so.* /lib/libc.musl-*.so.* 2>/dev/null || true
+    fi
   fi
 fi
 
