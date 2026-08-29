@@ -8,7 +8,7 @@
 ## Edge AI Agent ecosystem and runtime (Multica / OpenCode / Pi / Hermes)
 
 - **Primary Workflow**: Multica orchestration + OpenCode / Pi CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
-- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and `Scripts/fetch_uv_runtime.sh` (Python 3.12 + `uv`) in `WRT-CORE.yml`.
+- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and `Scripts/fetch_uv_runtime.sh` (`uv` + the offline CPython 3.11/3.12/3.13 mirror) in `WRT-CORE.yml`.
 - Preserve pre-installed CLI tools and extensions:
   - `opencode-ai` (`opencode` CLI) + `@tarquinen/opencode-dcp`, `@mohak34/opencode-notifier`, `opencode-conductor-plugin`
   - `@earendil-works/pi-coding-agent` (`pi` CLI) + `@aaronkyriesenbach/pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-wechat-assistant`
@@ -16,6 +16,10 @@
   - `luci-app-openclaw` (WeChat/TG gateway and LuCI manager)
 - Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner).
 - Keep `homeproxy`, `daed`, and `dae` pruned from `Config/GENERAL.txt` in favor of Nikki to prevent multi-proxy conflicts and save rootfs space.
+- Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. Layered policy: the app layer (opencode, pi, hermes, their extensions, pnpm, Multica) auto-follows upstream latest via `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`, which commits straight to `main` only after the arm64/x64 musl cross-install, hermes managed-CPython, and repository guard gates all pass.
+- Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION`, `UV_VERSION` and its SHA256s, `PYTHON_RELEASE_TAG`, `PYTHON_SERIES`, and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
+- Do not remove CPython 3.11 from `PYTHON_SERIES` or drop the build-time check in `write_agent_runtime_policy()`; `hermes-agent`'s postinstall requests managed Python 3.11 through `UV_NO_CONFIG`, so it can only resolve from the local `file:///opt/uv/python-mirror`. Keep the `WRT-CORE.yml` order uv → node → multica; the node step reads the mirror manifest the uv step writes.
+- Global npm/pnpm installs on device must target `/data/node`, never `/opt` (read-only squashfs). `/etc/profile.d/20-node-agent.sh` shadows `/opt/node` for shells, and procd services (`multica`, `hermes-runtime`) must set their own `PATH` because procd never loads `profile.d`.
 
 ## Tailscale LAN Gateway and Route Acceptance
 

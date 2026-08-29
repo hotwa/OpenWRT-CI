@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 VIKINGYFY
+
+#应用层组件自动跟随上游最新版：opencode、pi、hermes 及其插件、pnpm、Multica。
+#运行时底座（Node.js、uv、离线 CPython 镜像、OpenWrt 源码 commit、内核）不由本工作流改动，
+#只能人工按 docs/agent-runtime-version-policy.md 修改。
+name: Agent-Runtime-Bump
+
+on:
+  #每日检查一次上游新版本：UTC 19:00 = 北京时间 03:00
+  schedule:
+    - cron: 0 19 * * *
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只报告可升级项，不提交改动'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-runtime-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump app-layer agent runtime
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # apply 先重写 manifest/lock/Multica pin，再在同一进程内跑完全部硬门槛：
+      # 两个固件 CPU 的 musl 交叉安装、hermes 托管 CPython 与离线镜像系列比对、仓库守卫套件。
+      # 任一门槛失败即以非零退出，后续提交步骤不会执行。
+      - name: Resolve and apply app-layer bumps
+        run: |
+          set -euo pipefail
+          if [ "${DRY_RUN}" = "true" ]; then
+            mode=plan
+          else
+            mode=apply
+          fi
+          bash Scripts/bump_agent_runtime.sh "$mode" 2>&1 | tee "$RUNNER_TEMP/bump.log"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## Agent runtime bump"
+            echo
+            echo '```'
+            if [ -f "$RUNNER_TEMP/bump.log" ]; then
+              cat "$RUNNER_TEMP/bump.log"
+            else
+              echo "(no bump output captured)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "Dry run: nothing was committed."
+            exit 0
+          fi
+          paths=(
+            Scripts/node-agent-runtime/package.json
+            Scripts/node-agent-runtime/package-lock.json
+            Scripts/fetch_multica_runtime.sh
+          )
+          if git diff --quiet -- "${paths[@]}"; then
+            echo "Already on the newest verified releases; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${paths[@]}"
+          {
+            echo "chore(agent-runtime): follow latest app-layer releases"
+            echo
+            grep -E '^[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+-> ' \
+              "$RUNNER_TEMP/bump.log" || true
+          } > "$RUNNER_TEMP/commit-message.txt"
+          git commit -F "$RUNNER_TEMP/commit-message.txt"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
