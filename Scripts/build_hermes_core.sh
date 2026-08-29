@@ -171,6 +171,7 @@ export UV_PYTHON_INSTALL_DIR="$PYTHON_DIR"
 export UV_CACHE_DIR="$build_dir/uv-cache"
 export UV_PYTHON_INSTALL_BIN=false
 export UV_PROJECT_ENVIRONMENT="$VENV_DIR"
+export HERMES_NIX_BUILD=1
 
 log "creating managed Python $python_series from the offline mirror"
 target_exec "$UV_BIN" venv --managed-python --python "$python_series-linux-$npm_arch-musl" "$VENV_DIR"
