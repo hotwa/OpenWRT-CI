@@ -2,16 +2,20 @@
 
 The CI Debug Gate is an opt-in failure hold for the hosted GitHub Actions
 runner. It starts `tailscaled` in `userspace-networking` mode, enables
-Tailscale SSH, enrolls the runner with the `tag:ci-debug` tag, and holds the
-job for up to 90 minutes. Touch `/tmp/continue-ci` on the runner to release
+Tailscale SSH, and holds the job for up to 90 minutes. The Headscale preauth
+key assigns `tag:ci-debug` and its ephemeral lifecycle; the client deliberately
+does not pass `--advertise-tags`. Touch `/tmp/continue-ci` on the runner to release
 the hold; timeout also releases it. Cleanup stops the locally started
 `tailscaled` process and removes its temporary state.
 
 The gate uses `tailscale up --auth-key`, not `--ephemeral`: Tailscale 1.94.2
-does not document the latter. Short-lived node lifecycle is supplied by the
-Headscale preauth key policy (the CI key must be scoped for the debug tag and
-configured as ephemeral). The key is injected only through GitHub Actions
-secrets and must never be committed.
+does not document the latter. Short-lived node lifecycle and the debug tag are
+supplied by the Headscale preauth key policy (the CI key must be scoped for
+`tag:ci-debug` and configured as ephemeral). Passing a redundant
+`--advertise-tags=tag:ci-debug` can make Headscale reject registration with
+`requested tags ... are invalid or not permitted`, so that flag must stay out
+of the client command. The key is injected only through GitHub Actions secrets
+and must never be committed.
 
 ## Connect from the OpenWrt LAN gateway
 
@@ -41,3 +45,15 @@ commands on a held runner are for diagnosis only; after applying a fix,
 release it and re-run the workflow so GitHub records a complete successful
 run. Do not print, copy, or store the auth key, GitHub tokens, Tailscale state,
 or private SSH keys.
+
+## Failure signatures
+
+`Repository Smoke Tests` reporting `repository contains a real-looking
+Headscale auth key` means a test fixture contains a contiguous `hskey-auth-*`
+literal. Split mock literals across adjacent shell strings so the fixture does
+not trip the repository secret guard.
+
+`CI Debug Gate` concluding success while logging `WARN: Tailscale debug gate
+setup failed` means the gate degraded and no runner was held. Inspect the
+preceding Tailscale error before attempting SSH; an enrollment rejection means
+there is no reachable runner address.

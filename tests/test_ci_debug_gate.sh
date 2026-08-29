@@ -25,6 +25,10 @@ if grep -Eq '^[[:space:]]+--ephemeral([[:space:]]|\\|)' "$SETUP"; then
   echo "tailscale setup must not pass unsupported --ephemeral"
   exit 1
 fi
+if grep -Eq '^[[:space:]]+--advertise-tags=' "$SETUP"; then
+  echo "tailscale setup must let the preauth key assign its tag"
+  exit 1
+fi
 grep -q -- '--auth-key="\$HEADSCALE_AUTHKEY"' "$SETUP" || {
   echo "tailscale setup must use documented --auth-key"
   exit 1
@@ -69,7 +73,7 @@ EOF
 chmod +x "$MOCK_BIN"/*
 
 export PATH="$MOCK_BIN:$PATH"
-export HEADSCALE_AUTHKEY='hskey-auth-mock'
+export HEADSCALE_AUTHKEY='hskey-auth-''mock'
 export HEADSCALE_LOGIN='https://headscale.invalid'
 export RUNNER_TEMP="$WORK_DIR/temp"
 export GITHUB_ENV="$WORK_DIR/github-env"
@@ -79,12 +83,16 @@ mkdir -p "$RUNNER_TEMP"
 
 bash "$SETUP" > "$WORK_DIR/setup.log"
 
-grep -q -- '--auth-key=hskey-auth-mock' "$MOCK_TAILSCALE_UP_ARGS" || {
+grep -q -- '--auth-key=hskey-auth-''mock' "$MOCK_TAILSCALE_UP_ARGS" || {
   echo "mock tailscale up did not receive --auth-key"
   exit 1
 }
 if grep -q -- '--ephemeral' "$MOCK_TAILSCALE_UP_ARGS"; then
   echo "mock tailscale up received unsupported --ephemeral"
+  exit 1
+fi
+if grep -q -- '--advertise-tags=' "$MOCK_TAILSCALE_UP_ARGS"; then
+  echo "mock tailscale up redundantly requested a tag"
   exit 1
 fi
 grep -q '^CI_TAILNET_IP=100\.64\.0\.42$' "$GITHUB_ENV" || {

@@ -58,15 +58,16 @@ if ! kill -0 "$TS_PID" 2>/dev/null; then
   exit 1
 fi
 
-# Register a short-lived debug node; lifecycle/ephemeral cleanup is owned by
-# the Headscale preauth key policy because tailscale 1.94.2 has no
+# Register a short-lived debug node. The Headscale preauth key owns the
+# tag:ci-debug and ephemeral properties; do not redundantly request a tag
+# here, because the control plane may reject a client-requested tag even when
+# the key itself is already scoped to it. Tailscale 1.94.2 also has no
 # documented `tailscale up --ephemeral` flag.
 HOSTNAME_LABEL="ci-debug-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 if ! $SUDO tailscale up \
     --login-server="$HEADSCALE_LOGIN" \
     --auth-key="$HEADSCALE_AUTHKEY" \
     --hostname="$HOSTNAME_LABEL" \
-    --advertise-tags=tag:ci-debug \
     --ssh \
     --accept-routes=false \
     --accept-dns=false \

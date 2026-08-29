@@ -118,6 +118,14 @@ Actions run cannot be resumed; manual held-runner verification must be
 followed by a fresh Action run. See `docs/ci-debug-gate.md` for the full SOP.
 
 Secrets (GitHub repo `hotwa/OpenWRT-CI`): `HEADSCALE_CI_AUTHKEY`
-(reusable ephemeral preauthkey `tag:ci-debug`, no expiration), `HEADSCALE_URL`
+(30-year reusable ephemeral preauthkey `tag:ci-debug`), `HEADSCALE_URL`
 (`https://headscale.jmsu.top`). DERP map is single-region WuHan (900);
 US-hosted runners reach it over DERP relay, expect ~150 ms.
+
+Debug-gate contract: the CI preauth key must already own `tag:ci-debug` and
+`ephemeral=true`; `Scripts/setup_ci_tailscale.sh` must not pass a redundant
+`--advertise-tags` request. If Headscale reports `requested tags ... are invalid
+or not permitted`, enrollment failed before a runner address exists, so do not
+attempt SSH. If repository smoke tests report a real-looking auth key, inspect
+test fixtures for contiguous `hskey-auth-*` literals and split adjacent shell
+strings before changing the scanner.

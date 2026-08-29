@@ -273,7 +273,9 @@ grep -q 'wrtbak recovery gate' "$DOC" || {
   exit 1
 }
 
-if grep -R --exclude-dir=.git -n -E 'hskey-auth-[A-Za-z0-9_-]+' "$ROOT_DIR" >/dev/null; then
+# Check tracked repository content only. Ignored local browser/tool snapshots
+# may contain redacted UI examples and are not part of the checkout artifact.
+if git -C "$ROOT_DIR" grep -n -E 'hskey-auth-[A-Za-z0-9_-]+' -- . >/dev/null; then
   echo "repository contains a real-looking Headscale auth key"
   exit 1
 fi
