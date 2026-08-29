@@ -172,10 +172,13 @@ if grep -q '/opt/node/bin/opencode --version' "$PROFILE_UPDATE"; then
   exit 1
 fi
 
-# Regression: node-pre-gyp style packages (msgpackr-extract) ship the build
-# host's prebuilt *.node inside their main tarball, so no optional platform
-# package exists for npm to skip and only an ELF machine check removes it. An
-# unpruned x86-64 module aborted every arm64 firmware build.
+# Regression: a musl cross install leaves three classes of native the router can
+# never load: node-pre-gyp packages (msgpackr-extract) ship the build host's
+# prebuild inside their main tarball so no optional platform package exists for
+# npm to skip; npm filters optional packages by os/cpu only, so every glibc twin
+# of a musl build is installed too; and pi-tui / pnpm's bundled @reflink pack
+# whole-platform prebuild directories into their own tarball. An unpruned
+# x86-64 module aborted every arm64 firmware build.
 PRUNE_FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$PRUNE_FIXTURE"' EXIT
 make_elf_stub() {
@@ -187,8 +190,29 @@ make_elf_stub() {
     head -c 9000 /dev/zero
   } >"$path"
 }
+make_macho_stub() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  { printf '\317\372\355\376'; head -c 9000 /dev/zero; } >"$path"
+}
+make_pe_stub() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  { printf 'MZ\220\000'; head -c 9000 /dev/zero; } >"$path"
+}
 make_elf_stub "$PRUNE_FIXTURE/msgpackr-extract/build/Release/extract.node" 62
 make_elf_stub "$PRUNE_FIXTURE/koffi/build/koffi/musl_arm64/koffi.node" 183
+make_elf_stub "$PRUNE_FIXTURE/koffi/build/koffi/linux_arm64/koffi.node" 183
+make_elf_stub "$PRUNE_FIXTURE/@opentui/core-linux-arm64/libopentui.so" 183
+make_elf_stub "$PRUNE_FIXTURE/@opentui/core-linux-arm64-musl/libopentui.so" 183
+make_elf_stub "$PRUNE_FIXTURE/@mariozechner/clipboard-linux-arm64-gnu/clipboard.linux-arm64-gnu.node" 183
+make_elf_stub "$PRUNE_FIXTURE/@mariozechner/clipboard-linux-arm64-musl/clipboard.linux-arm64-musl.node" 183
+make_macho_stub "$PRUNE_FIXTURE/@reflink/reflink-darwin-arm64/reflink.darwin-arm64.node"
+make_pe_stub "$PRUNE_FIXTURE/@reflink/reflink-win32-x64-msvc/reflink.win32-x64-msvc.node"
+# Negative control for the magic whitelist: a .node that is not a binary at all
+# must survive, because "not ELF" alone would also match text files.
+mkdir -p "$PRUNE_FIXTURE/text-pkg"
+printf 'module.exports = {}\n' >"$PRUNE_FIXTURE/text-pkg/shim.node"
 cp "$ROOT_DIR/Scripts/retry.sh" "$PRUNE_FIXTURE/"
 sed '$d' "$FETCH_SCRIPT" >"$PRUNE_FIXTURE/lib.sh"
 (
@@ -198,13 +222,27 @@ sed '$d' "$FETCH_SCRIPT" >"$PRUNE_FIXTURE/lib.sh"
   NODE_LIB_DIR="$PRUNE_FIXTURE"
   prune_foreign_platform_builds arm64 >/dev/null
 ) || { echo "prune_foreign_platform_builds arm64 failed on the fixture"; exit 1; }
-[ -e "$PRUNE_FIXTURE/msgpackr-extract/build/Release/extract.node" ] && {
-  echo "prune_foreign_platform_builds kept an x86-64 native module in an arm64 build"
-  exit 1
-}
-[ -e "$PRUNE_FIXTURE/koffi/build/koffi/musl_arm64/koffi.node" ] || {
-  echo "prune_foreign_platform_builds deleted the target-arch native module"
-  exit 1
-}
+for pruned in \
+  'msgpackr-extract/build/Release/extract.node' \
+  'koffi/build/koffi/linux_arm64/koffi.node' \
+  '@opentui/core-linux-arm64/libopentui.so' \
+  '@mariozechner/clipboard-linux-arm64-gnu/clipboard.linux-arm64-gnu.node' \
+  '@reflink/reflink-darwin-arm64/reflink.darwin-arm64.node' \
+  '@reflink/reflink-win32-x64-msvc/reflink.win32-x64-msvc.node'; do
+  if [ -e "$PRUNE_FIXTURE/$pruned" ]; then
+    echo "prune_foreign_platform_builds kept an unloadable native: $pruned"
+    exit 1
+  fi
+done
+for needed in \
+  'koffi/build/koffi/musl_arm64/koffi.node' \
+  '@opentui/core-linux-arm64-musl/libopentui.so' \
+  '@mariozechner/clipboard-linux-arm64-musl/clipboard.linux-arm64-musl.node' \
+  'text-pkg/shim.node'; do
+  if [ ! -e "$PRUNE_FIXTURE/$needed" ]; then
+    echo "prune_foreign_platform_builds deleted something the device needs: $needed"
+    exit 1
+  fi
+done
 
 echo "node runtime and agent preload guard test passed"

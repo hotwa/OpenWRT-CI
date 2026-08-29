@@ -227,6 +227,23 @@ elf_machine_id() {
 	echo $((lo + hi * 256))
 }
 
+# 只认已知的非 ELF 幻数（PE、Mach-O 64 两种字节序、fat 通用二进制），而不是
+# "不是 ELF 就算外来文件"：以后真出现以 .node 结尾的文本桩时，后者会把它误删。
+# shellcheck disable=SC2310 # set -e is deliberately relaxed inside this predicate helper
+foreign_os_binary() {
+	local binary="$1" b0 b1 b2 b3
+	[ -f "$binary" ] || return 1
+	b0="$(elf_header_byte "$binary" 0)"
+	b1="$(elf_header_byte "$binary" 1)"
+	b2="$(elf_header_byte "$binary" 2)"
+	b3="$(elf_header_byte "$binary" 3)"
+	case "$b0:$b1:$b2:$b3" in
+		77:90:*:*) return 0 ;;
+		207:250:237:254|254:237:250:207|202:254:186:190|190:186:254:202) return 0 ;;
+	esac
+	return 1
+}
+
 # opencode-ai 的 postinstall 在构建 runner 上按 runner 架构把二进制复制成
 # bin/opencode.exe，交叉安装时会把 x86-64/glibc 程序烧进 ARM64 固件；平台包
 # 目录只在安装期使用，运行入口始终是 opencode-ai/bin/opencode.exe。
@@ -319,15 +336,23 @@ prune_agent_runtime_deadweight() {
 	rm -f -- "$hermes_dir/.hermes-agent-runtime.json"
 }
 
-# koffi 与 @mariozechner/clipboard 会把全平台预编译产物一起发布，设备只会加载本机
-# 架构那一份，其余（含被 npm 交叉安装漏进来的嵌套副本）都是纯体积。
+# 交叉安装（npm ci --os=linux --cpu=<arch> --libc=musl）会把两类设备上永远加载不了
+# 的二进制留在树里，纯粹是体积：
+#   1. 非 Linux 平台的预编译产物。pi-tui 与 pnpm 自带的 @reflink 把全平台 prebuild
+#      直接打进自己的 tarball，npm 没有可选平台包可以跳过。
+#   2. glibc 版预编译产物。npm 的 libc 字段只做提示，不按 --libc 过滤可选依赖，所以
+#      koffi 的 linux_<arch>、napi-rs 的 *-linux-<arch>-gnu 和 opentui 无后缀的
+#      core-linux-<arch> 都会和 musl 版一起装进来；设备的 node 是 musl 静态链接，
+#      这些带 DT_NEEDED libc.so.6 的文件 dlopen 必然失败。
+# 对应的 musl 版本（musl_<arch>、*-musl、core-linux-<arch>-musl）全部保留。
 prune_foreign_platform_builds() {
 	local npm_arch="$1"
-	local keep_a keep_b expected_machine koffi_dir variant module module_machine dropped
+	local expected_machine keep_triplet koffi_dir variant gnu_dir
+	local module module_machine dropped
 
 	case "$npm_arch" in
-		arm64) keep_a="linux_arm64"; keep_b="musl_arm64"; expected_machine=183 ;;
-		x64) keep_a="linux_x64"; keep_b="musl_x64"; expected_machine=62 ;;
+		arm64) expected_machine=183; keep_triplet="musl_arm64" ;;
+		x64) expected_machine=62; keep_triplet="musl_x64" ;;
 		*)
 			echo "ERROR: unsupported npm target $npm_arch" >&2
 			return 1
@@ -337,7 +362,7 @@ prune_foreign_platform_builds() {
 	for koffi_dir in "$NODE_LIB_DIR"/koffi/build/koffi/*; do
 		[ -d "$koffi_dir" ] || continue
 		case "$(basename "$koffi_dir")" in
-			"$keep_a"|"$keep_b") continue ;;
+			"$keep_triplet") continue ;;
 			*)
 				rm -rf -- "$koffi_dir"
 				log_info "Pruned koffi build $(basename "$koffi_dir")."
@@ -348,27 +373,40 @@ prune_foreign_platform_builds() {
 	variant=""
 	while IFS= read -r variant; do
 		case "$(basename "$variant")" in
-			"clipboard-linux-${npm_arch}-gnu"|"clipboard-linux-${npm_arch}-musl") continue ;;
+			"clipboard-linux-${npm_arch}-musl") continue ;;
 		esac
 		rm -rf -- "$variant"
 		log_info "Pruned $(basename "$variant")."
 	done < <(find "$NODE_LIB_DIR" \( -type d -name 'clipboard-darwin-*' \
 		-o -type d -name 'clipboard-win32-*' -o -type d -name 'clipboard-linux-*' \) -prune -print)
 
+	# 按命名约定清掉其余 glibc 包目录，嵌套副本一并覆盖。
+	gnu_dir=""
+	while IFS= read -r gnu_dir; do
+		[ -n "$gnu_dir" ] || continue
+		rm -rf -- "$gnu_dir"
+		log_info "Pruned glibc build $(basename "$gnu_dir")."
+	done < <(find "$NODE_LIB_DIR" -type d \
+		\( -name "*-linux-${npm_arch}-gnu" -o -name "core-linux-${npm_arch}" \) \
+		-prune -print)
+
 	# node-pre-gyp 风格的包（msgpackr-extract）把构建机的预编译产物直接放进主包
 	# tarball 的 build/Release，没有可选平台包可以让 npm 交叉安装跳过，上面按目录名
-	# 的规则也看不到它。设备加载不了异架构 .node（ENOEXEC），对应架构的 musl 预编译
-	# 由 @msgpackr-extract/*-linux-<arch> 平台包提供，所以这份只会导致编译中断。
+	# 的规则也看不到它。所以按文件头逐个判定：不是目标架构的 ELF，或者是 Mach-O/PE，
+	# 设备都只会得到 ENOEXEC，留着没有任何作用。
 	dropped=0
 	while IFS= read -r module; do
 		[ -n "$module" ] || continue
 		module_machine="$(elf_machine_id "$module" || true)"
-		[ -n "$module_machine" ] || continue
-		[ "$module_machine" != "$expected_machine" ] || continue
+		if [ -z "$module_machine" ]; then
+			foreign_os_binary "$module" || continue
+		else
+			[ "$module_machine" != "$expected_machine" ] || continue
+		fi
 		rm -f -- "$module"
 		dropped=$((dropped + 1))
-	done < <(find "$NODE_LIB_DIR" -type f -name '*.node' -size +8k -print)
-	[ "$dropped" -eq 0 ] || log_info "Pruned ${dropped} foreign-arch native module(s)."
+	done < <(find "$NODE_LIB_DIR" -type f -name '*.node' -print)
+	[ "$dropped" -eq 0 ] || log_info "Pruned ${dropped} unloadable native module(s)."
 }
 
 # Only files that Node or Python would actually load are probed; scanning the
