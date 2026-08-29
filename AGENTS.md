@@ -111,7 +111,13 @@ Trigger: dispatch `RE-SS-01-BUILD` (or any caller workflow) with
    `ssh runner@100.64.0.x "touch /tmp/continue-ci"`
    and re-trigger the build.
 
+LAN jump path: use `ssh root@192.168.11.1`, then `tailscale status`,
+`tailscale ping 100.64.0.x`, and `ssh runner@100.64.0.x`. Headscale ACLs must
+permit the OpenWrt admin node to reach `tag:ci-debug` as `runner`. The old
+Actions run cannot be resumed; manual held-runner verification must be
+followed by a fresh Action run. See `docs/ci-debug-gate.md` for the full SOP.
+
 Secrets (GitHub repo `hotwa/OpenWRT-CI`): `HEADSCALE_CI_AUTHKEY`
-(reusable preauthkey `tag:ci-debug`, no expiration), `HEADSCALE_URL`
+(reusable ephemeral preauthkey `tag:ci-debug`, no expiration), `HEADSCALE_URL`
 (`https://headscale.jmsu.top`). DERP map is single-region WuHan (900);
 US-hosted runners reach it over DERP relay, expect ~150 ms.

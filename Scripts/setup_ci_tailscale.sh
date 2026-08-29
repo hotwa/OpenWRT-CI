@@ -2,12 +2,19 @@
 # CI Debug Gate - Tailscale setup (GitHub Actions runner)
 # Requires env: HEADSCALE_AUTHKEY (hskey-auth-...), HEADSCALE_LOGIN (https://...)
 # Outputs env file entries: CI_TAILNET_IP, CI_TAILNET_OCTET
+# If CI_DEBUG_ENV_FILE is set, it receives shell-safe assignments for the
+# current caller to source. GITHUB_ENV remains populated for later steps.
 # Idempotent-ish: re-runs just re-up; on failure returns nonzero so the
 # debug gate can degrade gracefully.
 set -uo pipefail
 
 : "${HEADSCALE_AUTHKEY:?HEADSCALE_AUTHKEY is required}"
 : "${HEADSCALE_LOGIN:?HEADSCALE_LOGIN is required}"
+
+# Keep this initialized even when tailscale is already installed. Hosted
+# runners may be reused, and set -u must not depend on the install branch.
+if command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else SUDO=""; fi
+CI_DEBUG_ENV_FILE="${CI_DEBUG_ENV_FILE:-${RUNNER_TEMP:-/tmp}/ci-debug-env}"
 
 if ! command -v tailscale >/dev/null 2>&1; then
   # NOTE: do NOT use https://tailscale.com/install.sh here. This CI's hermes
@@ -25,7 +32,6 @@ if ! command -v tailscale >/dev/null 2>&1; then
   [ -n "$DEB_URL" ] || { echo "ERROR: no tailscale deb available"; exit 1; }
   curl -fsSL "$DEB_URL" -o "$RUNNER_TEMP/tailscale.deb"
   [ -s "$RUNNER_TEMP/tailscale.deb" ] || { echo "ERROR: tailscale deb download empty"; exit 1; }
-  if command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else SUDO=""; fi
   $SUDO dpkg -i "$RUNNER_TEMP/tailscale.deb" || $SUDO apt -f -yqq install
 fi
 
@@ -52,15 +58,16 @@ if ! kill -0 "$TS_PID" 2>/dev/null; then
   exit 1
 fi
 
-# Register as an ephemeral node; hostname doubles as MagicDNS label
+# Register a short-lived debug node; lifecycle/ephemeral cleanup is owned by
+# the Headscale preauth key policy because tailscale 1.94.2 has no
+# documented `tailscale up --ephemeral` flag.
 HOSTNAME_LABEL="ci-debug-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 if ! $SUDO tailscale up \
     --login-server="$HEADSCALE_LOGIN" \
-    --authkey="$HEADSCALE_AUTHKEY" \
+    --auth-key="$HEADSCALE_AUTHKEY" \
     --hostname="$HOSTNAME_LABEL" \
     --advertise-tags=tag:ci-debug \
     --ssh \
-    --ephemeral \
     --accept-routes=false \
     --accept-dns=false \
     --timeout=120s; then
@@ -78,12 +85,25 @@ if [ -z "$TS_IP" ]; then
 fi
 TS_OCTET="${TS_IP##*.}"
 
+if [ -n "${GITHUB_ENV:-}" ]; then
+  {
+    printf 'CI_TAILNET_IP=%s\n' "$TS_IP"
+    printf 'CI_TAILNET_OCTET=%s\n' "$TS_OCTET"
+    printf 'CI_TSCALE_PID=%s\n' "$TS_PID"
+    printf 'CI_TSCALE_HOSTNAME=%s\n' "$HOSTNAME_LABEL"
+  } >> "$GITHUB_ENV"
+fi
+
+# GITHUB_ENV is intentionally not used for same-step communication: GitHub
+# exposes it only to subsequent steps. `%q` makes these assignments safe to
+# source in the current bash process.
+mkdir -p "$(dirname "$CI_DEBUG_ENV_FILE")"
 {
-  echo "CI_TAILNET_IP=$TS_IP"
-  echo "CI_TAILNET_OCTET=$TS_OCTET"
-  echo "CI_TSCALE_PID=$TS_PID"
-  echo "CI_TSCALE_HOSTNAME=$HOSTNAME_LABEL"
-} >> "$GITHUB_ENV"
+  printf 'CI_TAILNET_IP=%q\n' "$TS_IP"
+  printf 'CI_TAILNET_OCTET=%q\n' "$TS_OCTET"
+  printf 'CI_TSCALE_PID=%q\n' "$TS_PID"
+  printf 'CI_TSCALE_HOSTNAME=%q\n' "$HOSTNAME_LABEL"
+} > "$CI_DEBUG_ENV_FILE"
 
 echo "Enrolled: $HOSTNAME_LABEL / $TS_IP (ssh user: runner)"
 echo "DERP/netcheck evidence:"

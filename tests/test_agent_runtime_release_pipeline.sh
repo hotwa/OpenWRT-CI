@@ -58,6 +58,30 @@ if (!Number.isInteger(m.runtime_contract.node_abi) || !Array.isArray(m.runtime_c
 if (m.components['hermes-core'] !== '0.20.6' || m.hermes_core.component !== 'hermes-core') process.exit(4);
 NODE
 
+mkdir -p "$WORK/firmware/files/opt/node/bin" "$WORK/firmware/files/opt/agent-runtime" \
+  "$WORK/firmware/files/etc/agent-runtime" "$WORK/firmware/files/opt/uv" \
+  "$WORK/firmware/files/usr/local/bin"
+cp "$WORK/generation/node/bin/node" "$WORK/firmware/files/opt/node/bin/node"
+cp "$WORK/generation/node-version" "$WORK/firmware/files/etc/agent-runtime/node-version"
+cp "$WORK/generation/hermes-core.json" "$WORK/firmware/files/opt/agent-runtime/hermes-core.json"
+cp -a "$WORK/generation/uv/." "$WORK/firmware/files/opt/uv/"
+cp "$WORK/generation/bin/multica" "$WORK/firmware/files/usr/local/bin/multica"
+chmod 755 "$WORK/firmware/files/opt/node/bin/node" "$WORK/firmware/files/usr/local/bin/multica"
+GITHUB_WORKSPACE="$ROOT_DIR" AGENT_RUNTIME_RELEASE=42 bash "$FINALIZE" \
+  "$WORK/firmware/files" >/dev/null
+FINALIZED="$WORK/firmware/files/opt/agent-runtime/manifest.json"
+node - "$FINALIZED" <<'NODE'
+const m = require(process.argv[2]);
+for (const k of ['schema_version', 'runtime_release', 'architecture', 'libc', 'runtime_contract', 'components', 'hermes_core', 'vendored_extensions', 'critical_elf_sha256']) if (!(k in m)) process.exit(1);
+if (m.schema_version !== 1 || m.runtime_release !== 42 || m.architecture !== 'arm64' || m.libc !== 'musl') process.exit(2);
+if (m.runtime_contract.node_version !== '24.20.0' || m.runtime_contract.node_abi !== 137) process.exit(3);
+if (m.components['pi-plan-mode'] !== '0.4.8' || m.hermes_core.component !== 'hermes-core') process.exit(4);
+const provenance = m.vendored_extensions['pi-plan-mode'];
+if (!provenance.source_sha256 || typeof provenance.source_sha256 !== 'object') process.exit(5);
+if (!/^[a-f0-9]{64}$/.test(provenance.source_sha256['package.json'])) process.exit(6);
+if (!/^[a-f0-9]{64}$/.test(m.critical_elf_sha256['node/bin/node'])) process.exit(7);
+NODE
+
 cp -a "$WORK/generation" "$WORK/generation-x64"
 sed -i 's/"architecture":"arm64"/"architecture":"x64"/' "$WORK/generation-x64/hermes-core.json"
 bash "$PACKAGE" --source "$WORK/generation-x64" --output "$WORK/release" --arch x64 --runtime-release 42 >/dev/null

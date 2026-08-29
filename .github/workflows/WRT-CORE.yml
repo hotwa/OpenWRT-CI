@@ -891,10 +891,21 @@ jobs:
             echo "WARN: HEADSCALE_CI_AUTHKEY / HEADSCALE_URL secrets missing; skipping Tailscale debug gate"
             exit 0
           fi
+          DEBUG_ENV_FILE="${RUNNER_TEMP}/ci-debug-env"
+          rm -f "$DEBUG_ENV_FILE"
+          export CI_DEBUG_ENV_FILE="$DEBUG_ENV_FILE"
           if ! "$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"; then
             echo "WARN: Tailscale debug gate setup failed; continuing pipeline without remote SSH"
             exit 0
           fi
+          if [ ! -s "$DEBUG_ENV_FILE" ]; then
+            echo "WARN: Tailscale setup produced no same-step environment file; continuing pipeline without remote SSH"
+            exit 0
+          fi
+          # GITHUB_ENV only applies to later steps; source the explicit file
+          # emitted by setup_ci_tailscale.sh for this step.
+          # shellcheck disable=SC1090
+          source "$DEBUG_ENV_FILE"
           echo "========================================================================"
           echo "RUNNER HELD FOR REMOTE DEBUGGING (up to 90 minutes)"
           echo "Agent login (tag:ssh-admin side, any tailnet host):"
@@ -916,9 +927,11 @@ jobs:
             echo "continue-ci detected; releasing runner"
           fi
           rm -f /tmp/continue-ci
-          # Stop the debug tailscaled we started (system instance was
-          # stopped+disabled in setup_ci_tailscale.sh, so any live tailscaled
-          # here is ours); avoids a stale socket/state for later steps.
-          sudo pkill -x tailscaled 2>/dev/null || true
+          # Stop only the process started by this gate. The preauth key owns
+          # the node's ephemeral lifecycle; this removes the local runner
+          # process and temporary state even after timeout or manual release.
+          if [ -n "${CI_TSCALE_PID:-}" ]; then
+            sudo kill "$CI_TSCALE_PID" 2>/dev/null || true
+          fi
           sudo rm -f /run/tailscaled-tmp.state 2>/dev/null || true
           echo "CI resumed"

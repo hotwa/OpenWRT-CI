@@ -40,7 +40,7 @@ const e = process.env;
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const deps = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/package.json'))).dependencies;
 const core = JSON.parse(fs.readFileSync(e.HERMES));
-const pi = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json'));
+const pi = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json')));
 const nodeVersion = fs.readFileSync(e.NODE_VERSION_FILE, 'utf8').trim();
 const multicaScript = fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/fetch_multica_runtime.sh'), 'utf8');
 const multica = multicaScript.match(/^MULTICA_VERSION="\$\{MULTICA_VERSION:-([0-9.]+)\}"/m)?.[1];
