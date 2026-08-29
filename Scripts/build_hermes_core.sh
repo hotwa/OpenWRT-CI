@@ -268,7 +268,7 @@ target_exec "$VENV_DIR/bin/hermes" --version >/dev/null
 # their consumers, but remove only the manifest-verified Hermes 3.11 asset.
 mirror_row="$(awk -F '\t' -v series="$python_series" '$1 == series { print; exit }' "$MIRROR_DIR/manifest.txt")"
 [ -n "$mirror_row" ] || die "Hermes Python mirror row disappeared during Core build"
-IFS='\t' read -r mirror_series mirror_build mirror_asset mirror_sha <<EOF
+IFS=$'\t' read -r mirror_series mirror_build mirror_asset mirror_sha <<EOF
 $mirror_row
 EOF
 [[ "$mirror_build" =~ ^[0-9]+$ ]] || die "invalid Hermes Python mirror build id"
