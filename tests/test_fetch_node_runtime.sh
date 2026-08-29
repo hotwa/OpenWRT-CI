@@ -8,6 +8,7 @@ PROFILE_NODE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
 PROFILE_UPDATE="$ROOT_DIR/files/etc/profile.d/30-agent-update-check.sh"
 AGENT_MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 AGENT_LOCK="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"
+HERMES_CORE_BUILDER="$ROOT_DIR/Scripts/build_hermes_core.sh"
 
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$FETCH_SCRIPT" ] || { echo "missing fetch_node_runtime.sh"; exit 1; }
@@ -15,6 +16,7 @@ AGENT_LOCK="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"
 [ -f "$PROFILE_UPDATE" ] || { echo "missing 30-agent-update-check.sh"; exit 1; }
 [ -f "$AGENT_MANIFEST" ] || { echo "missing node-agent-runtime/package.json"; exit 1; }
 [ -f "$AGENT_LOCK" ] || { echo "missing node-agent-runtime/package-lock.json"; exit 1; }
+[ -f "$HERMES_CORE_BUILDER" ] || { echo "missing build_hermes_core.sh"; exit 1; }
 
 grep -q '\$GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not run fetch_node_runtime.sh"
@@ -50,6 +52,16 @@ grep -q 'npm ci' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+grep -q -- '--ignore-scripts' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh must skip host hermes-agent postinstall"
+  exit 1
+}
+
+grep -q 'build_hermes_core.sh' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not build the offline Hermes Core"
+  exit 1
+}
+
 grep -q 'fix_opencode_entrypoint' "$FETCH_SCRIPT" || {
   echo "fetch_node_runtime.sh does not replace the host-arch opencode entrypoint"
   exit 1
@@ -76,10 +88,7 @@ grep -q 'prune_agent_runtime_deadweight' "$FETCH_SCRIPT" || {
 }
 
 for deadweight in \
-  'runtime/hermes-agent/tests' \
-  'runtime/hermes-agent/website' \
-  'runtime/hermes-agent/venv' \
-  'runtime/python' \
+  '"$hermes_dir/runtime"' \
   '.uv_bin' \
   '.hermes-agent-runtime.json'; do
   grep -q "$deadweight" "$FETCH_SCRIPT" || {
@@ -131,7 +140,6 @@ for pkg in \
   "@earendil-works/pi-coding-agent" \
   "@aaronkyriesenbach/pi-package-manager" \
   "btw-pi" \
-  "pi-plan-mode" \
   "pi-web-search" \
   "pi-wechat-assistant" \
   "@tarquinen/opencode-dcp" \
@@ -144,6 +152,15 @@ for pkg in \
     exit 1
   }
 done
+
+grep -q 'install_vendored_pi_extensions' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not install the reviewed pi-plan-mode vendor"
+  exit 1
+}
+grep -q '/tmp/agent-runtime-pi-plan-mode.ts' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not register the vendored pi-plan-mode extension"
+  exit 1
+}
 
 for bin in node npm npx pnpm opencode pi hermes; do
   grep -q "$bin" "$FETCH_SCRIPT" || {
@@ -158,14 +175,18 @@ grep -q '/opt/node/bin' "$PROFILE_NODE" || {
 }
 
 grep -q '/data/node/bin' "$PROFILE_NODE" || {
-  echo "20-node-agent.sh does not let /data installs shadow the read-only baked runtime"
+  echo "20-node-agent.sh does not resolve the active runtime generation compatibility link"
   exit 1
 }
 
-grep -q 'npm i -g --prefix /data/node' "$PROFILE_UPDATE" || {
-  echo "30-agent-update-check.sh does not advertise the writable-prefix upgrade command"
+grep -q 'agent-runtime upgrade' "$PROFILE_UPDATE" || {
+  echo "30-agent-update-check.sh does not advertise signed generation upgrades"
   exit 1
 }
+if grep -q 'npm i -g --prefix /data/node\|hermes update' "$PROFILE_UPDATE"; then
+  echo "30-agent-update-check.sh still advertises in-place mutation of an immutable generation"
+  exit 1
+fi
 
 if grep -q '/opt/node/bin/opencode --version' "$PROFILE_UPDATE"; then
   echo "30-agent-update-check.sh reports the baked version instead of the PATH-resolved one"

@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2026 VIKINGYFY
-
-#应用层组件自动跟随上游最新版：opencode、pi、hermes 及其插件、pnpm、Multica。
-#运行时底座（Node.js、uv、离线 CPython 镜像、OpenWrt 源码 commit、内核）不由本工作流改动，
-#只能人工按 docs/agent-runtime-version-policy.md 修改。
+# The app layer follows upstream only after both musl generations have passed
+# their probes. Devices never resolve npm or Hermes "latest" themselves.
 name: Agent-Runtime-Bump
 
 on:
-  #每日检查一次上游新版本：UTC 19:00 = 北京时间 03:00
   schedule:
-    - cron: 0 19 * * *
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '只报告可升级项，不提交改动'
+        description: 'Report resolvable upstream changes without modifying, building or publishing'
+        required: false
+        type: boolean
+        default: false
+      force_release:
+        description: 'Build and publish the current verified pins even when no version changed'
         required: false
         type: boolean
         default: false
@@ -26,13 +27,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bump:
-    name: Bump app-layer agent runtime
+  bump-and-release:
+    name: Verify and publish app-layer runtime
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 100
     env:
       DRY_RUN: ${{ inputs.dry_run }}
       GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,61 +42,217 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          node-version: 24.20.0
+          check-latest: false
 
-      # apply 先重写 manifest/lock/Multica pin，再在同一进程内跑完全部硬门槛：
-      # 两个固件 CPU 的 musl 交叉安装、hermes 托管 CPython 与离线镜像系列比对、仓库守卫套件。
-      # 任一门槛失败即以非零退出，后续提交步骤不会执行。
+      - name: Install release tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake git qemu-user qemu-user-static
+          usign_commit=c4c72b1b07945ee192361dc751291a7c98d6adcd
+          git init "$RUNNER_TEMP/usign-src"
+          git -C "$RUNNER_TEMP/usign-src" remote add origin https://git.openwrt.org/project/usign.git
+          git -C "$RUNNER_TEMP/usign-src" fetch --depth=1 origin "$usign_commit"
+          git -C "$RUNNER_TEMP/usign-src" checkout --detach "$usign_commit"
+          [ "$(git -C "$RUNNER_TEMP/usign-src" rev-parse HEAD)" = "$usign_commit" ]
+          cmake -S "$RUNNER_TEMP/usign-src" -B "$RUNNER_TEMP/usign-build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/usign-build" --parallel
+          sudo install -m 0755 "$RUNNER_TEMP/usign-build/usign" /usr/local/bin/usign
+          command -v usign
+          docker run --rm --platform linux/arm64 alpine:3.20 uname -m | grep -qx aarch64
+
+      - name: Require signing material for a publishable run
+        if: inputs.dry_run != true
+        env:
+          AGENT_RUNTIME_USIGN_SECRET_KEY: ${{ secrets.AGENT_RUNTIME_USIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$AGENT_RUNTIME_USIGN_SECRET_KEY" ] || {
+            echo "ERROR: AGENT_RUNTIME_USIGN_SECRET_KEY is required for a non-dry-run release" >&2
+            exit 1
+          }
+          [ -s files/etc/agent-runtime/usign.pub ] || {
+            echo "ERROR: files/etc/agent-runtime/usign.pub must contain the matching public key" >&2
+            exit 1
+          }
+          [ "$GITHUB_REF_NAME" = main ] || {
+            echo 'ERROR: a non-dry-run runtime release must run from main' >&2
+            exit 1
+          }
+
       - name: Resolve and apply app-layer bumps
         run: |
           set -euo pipefail
-          if [ "${DRY_RUN}" = "true" ]; then
-            mode=plan
-          else
-            mode=apply
-          fi
+          if [ "$DRY_RUN" = "true" ]; then mode=plan; else mode=apply; fi
           bash Scripts/bump_agent_runtime.sh "$mode" 2>&1 | tee "$RUNNER_TEMP/bump.log"
+
+      - name: Detect a verified update
+        id: changes
+        run: |
+          set -euo pipefail
+          paths=(Scripts/node-agent-runtime Scripts/fetch_multica_runtime.sh)
+          if [ "${{ inputs.force_release }}" = "true" ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo 'Forced release of the current verified pins.'
+            exit 0
+          fi
+          if git diff --quiet -- "${paths[@]}"; then
+            input_sha="$(node - <<'NODE'
+const crypto=require('node:crypto'), fs=require('node:fs');
+const files=['Scripts/node-agent-runtime/package.json','Scripts/node-agent-runtime/package-lock.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/plan-mode.ts','Scripts/node-agent-runtime/runtime-release','Scripts/fetch_multica_runtime.sh'];
+const h=crypto.createHash('sha256'); for (const f of files) h.update(fs.readFileSync(f)); console.log(h.digest('hex'));
+NODE
+)"
+            channel='https://github.com/hotwa/OpenWRT-CI/releases/download/agent-runtime-stable'
+            mkdir -p "$RUNNER_TEMP/channel-check"
+            if ! curl -fsSL "$channel/index.json" -o "$RUNNER_TEMP/channel-check/index.json" || \
+               ! curl -fsSL "$channel/index.json.sig" -o "$RUNNER_TEMP/channel-check/index.json.sig" || \
+               ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/index.json" -x "$RUNNER_TEMP/channel-check/index.json.sig"; then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
+              echo 'Stable signed channel is missing or invalid; rebuilding it.'
+              exit 0
+            fi
+            if ! node - "$RUNNER_TEMP/channel-check/index.json" <<'NODE' >"$RUNNER_TEMP/channel-check/assets.tsv"
+const index = require(process.argv[2]);
+if (index.schema_version !== 1 || index.release_tag !== 'agent-runtime-stable' ||
+    !Number.isSafeInteger(index.runtime_release) || index.runtime_release < 1) process.exit(1);
+for (const arch of ['arm64', 'x64']) {
+  const release = index.releases?.[arch];
+  const prefix = `agent-runtime-${index.runtime_release}-${arch}-musl`;
+  if (!release || release.runtime_release !== index.runtime_release || release.libc !== 'musl' ||
+      release.manifest !== `${prefix}.manifest.json` ||
+      release.manifest_signature !== `${prefix}.manifest.json.sig` ||
+      release.bundle !== `${prefix}.tar.gz`) process.exit(1);
+  console.log(`${arch}\t${release.manifest}\t${release.bundle}`);
+}
+NODE
+            then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
+              echo 'Stable signed channel index is incomplete; rebuilding it.'
+              exit 0
+            fi
+            stable_ok=true
+            while IFS=$'\t' read -r arch manifest bundle; do
+              if ! curl -fsSL "$channel/$manifest" -o "$RUNNER_TEMP/channel-check/$manifest" || \
+                 ! curl -fsSL "$channel/$manifest.sig" -o "$RUNNER_TEMP/channel-check/$manifest.sig" || \
+                 ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/$manifest" -x "$RUNNER_TEMP/channel-check/$manifest.sig" || \
+                 ! curl -fsIL "$channel/$bundle" -o /dev/null || \
+                 [ "$(node -e "const m=require(process.argv[1]);process.stdout.write(m.input_sha256||'')" "$RUNNER_TEMP/channel-check/$manifest")" != "$input_sha" ]; then
+                stable_ok=false
+                break
+              fi
+            done < "$RUNNER_TEMP/channel-check/assets.tsv"
+            if [ "$stable_ok" != true ]; then
+              echo 'changed=true' >> "$GITHUB_OUTPUT"
+              echo 'Stable channel is incomplete or does not represent the current verified inputs; rebuilding it.'
+              exit 0
+            fi
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'No newer pins and the stable signed channel matches the current inputs.'
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build arm64 musl generation
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          command -v qemu-aarch64
+          runtime_release="$(sed -n '1p' Scripts/node-agent-runtime/runtime-release)"
+          echo "RUNTIME_RELEASE=$runtime_release" >> "$GITHUB_ENV"
+          AGENT_RUNTIME_RELEASE="$runtime_release" HERMES_TARGET_RUNNER=qemu-aarch64 bash Scripts/build_agent_runtime_generation.sh --arch arm64 --output "$RUNNER_TEMP/generation/arm64"
+          bash Scripts/package_agent_runtime_bundle.sh --arch arm64 --source "$RUNNER_TEMP/generation/arm64" --output "$RUNNER_TEMP/release" --runtime-release "$runtime_release"
+
+      - name: Build x64 musl generation
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          AGENT_RUNTIME_RELEASE="$RUNTIME_RELEASE" bash Scripts/build_agent_runtime_generation.sh --arch x64 --output "$RUNNER_TEMP/generation/x64"
+          bash Scripts/package_agent_runtime_bundle.sh --arch x64 --source "$RUNNER_TEMP/generation/x64" --output "$RUNNER_TEMP/release" --runtime-release "$RUNTIME_RELEASE"
+
+      - name: Probe complete musl generations
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          for arch in arm64 x64; do
+            case "$arch" in arm64) platform=linux/arm64 ;; x64) platform=linux/amd64 ;; esac
+            docker run --rm --platform "$platform" -v "$RUNNER_TEMP/generation/$arch:/generation:ro" alpine:3.20 /bin/sh -ec '
+              export PATH=/generation/node/bin:/generation/bin:$PATH
+              node -p "process.versions.modules"
+              opencode --version
+              pi --version
+              hermes --version
+              multica --version
+              cd /generation/node/lib/node_modules
+              node -e "require(\"@tarquinen/opencode-dcp\")"
+              test -e /generation/node/lib/node_modules/hermes-agent
+            '
+          done
+
+      - name: Verify manifests and write signed index input
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          bash Scripts/write_agent_runtime_index.sh --directory "$RUNNER_TEMP/release" --tag agent-runtime-stable
+
+      - name: Run repository and release pipeline guards
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          bash tests/test_agent_runtime_policy.sh
+          bash tests/test_agent_runtime_release_pipeline.sh
+
+      - name: Sign index and manifests
+        if: steps.changes.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          AGENT_RUNTIME_USIGN_SECRET_KEY: ${{ secrets.AGENT_RUNTIME_USIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/agent-runtime-usign.key"
+          umask 077
+          printf '%s\n' "$AGENT_RUNTIME_USIGN_SECRET_KEY" > "$key"
+          trap 'rm -f -- "$key"' EXIT HUP INT TERM
+          for manifest in "$RUNNER_TEMP"/release/*.manifest.json; do
+            bash Scripts/sign_agent_runtime_metadata.sh --key "$key" --public-key files/etc/agent-runtime/usign.pub --manifest "$manifest" --index "$RUNNER_TEMP/release/index.json"
+          done
+
+      - name: Commit verified pins before publishing
+        if: steps.changes.outputs.changed == 'true' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- Scripts/node-agent-runtime Scripts/fetch_multica_runtime.sh
+          if git diff --cached --quiet; then
+            echo 'No pin changes to commit; stable channel was repaired from committed inputs.'
+            exit 0
+          fi
+          {
+            echo 'chore(agent-runtime): publish verified app-layer generation'
+            echo
+            grep -E '^[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+-> ' "$RUNNER_TEMP/bump.log" || true
+          } > "$RUNNER_TEMP/commit-message.txt"
+          git commit -F "$RUNNER_TEMP/commit-message.txt"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+
+      - name: Publish signed complete stack release
+        if: steps.changes.outputs.changed == 'true' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          # The pinned inputs are already on main.  If this stable-tag upload
+          # stops partway through, the next run detects the incomplete signed
+          # channel and repairs it from those committed inputs.
+          bash Scripts/publish_agent_runtime_release.sh --repository "$GITHUB_REPOSITORY" --tag agent-runtime-stable --directory "$RUNNER_TEMP/release"
 
       - name: Write job summary
         if: always()
         run: |
           set -euo pipefail
           {
-            echo "## Agent runtime bump"
+            echo '## Agent runtime bump and release'
             echo
-            echo '```'
-            if [ -f "$RUNNER_TEMP/bump.log" ]; then
-              cat "$RUNNER_TEMP/bump.log"
-            else
-              echo "(no bump output captured)"
-            fi
+            echo '```text'
+            [ -f "$RUNNER_TEMP/bump.log" ] && cat "$RUNNER_TEMP/bump.log" || echo '(no bump output captured)'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Commit and push
-        run: |
-          set -euo pipefail
-          if [ "${DRY_RUN}" = "true" ]; then
-            echo "Dry run: nothing was committed."
-            exit 0
-          fi
-          paths=(
-            Scripts/node-agent-runtime/package.json
-            Scripts/node-agent-runtime/package-lock.json
-            Scripts/fetch_multica_runtime.sh
-          )
-          if git diff --quiet -- "${paths[@]}"; then
-            echo "Already on the newest verified releases; nothing to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "${paths[@]}"
-          {
-            echo "chore(agent-runtime): follow latest app-layer releases"
-            echo
-            grep -E '^[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+[[:space:]]+-> ' \
-              "$RUNNER_TEMP/bump.log" || true
-          } > "$RUNNER_TEMP/commit-message.txt"
-          git commit -F "$RUNNER_TEMP/commit-message.txt"
-          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"

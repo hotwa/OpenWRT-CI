@@ -14,6 +14,8 @@ NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
+PI_PLAN_MODE_VENDOR_DIR="$AGENT_RUNTIME_MANIFEST_DIR/vendor/pi-plan-mode"
+HERMES_CORE_BUILDER="$SCRIPT_DIR/build_hermes_core.sh"
 
 # Default Node.js target version (Node 24 LTS line)
 NODE_DEFAULT_VERSION="24.20.0"
@@ -158,7 +160,7 @@ preinstall_cli_agents_and_extensions() (
 	local node_arch="$1"
 	local npm_arch staging_dir bin
 
-	log_info "Installing OpenCode, Pi CLI, Hermes and extensions from package-lock.json..."
+	log_info "Installing OpenCode, Pi CLI, Hermes bridge and extensions from package-lock.json..."
 	command -v npm >/dev/null 2>&1 || {
 		echo "ERROR: host npm is required for the locked agent runtime install" >&2
 		return 1
@@ -185,7 +187,7 @@ preinstall_cli_agents_and_extensions() (
 	npm_config_platform="linux" \
 	npm_config_libc="musl" \
 		npm ci --prefix "$staging_dir" --omit=dev --no-audit --no-fund \
-			--os=linux --cpu="$npm_arch" --libc=musl
+			--ignore-scripts --os=linux --cpu="$npm_arch" --libc=musl
 
 	[ -d "$staging_dir/node_modules" ] || {
 		echo "ERROR: npm ci completed without producing node_modules" >&2
@@ -193,9 +195,18 @@ preinstall_cli_agents_and_extensions() (
 	}
 	cp -a "$staging_dir/node_modules/." "$NODE_LIB_DIR/"
 
-	fix_opencode_entrypoint "$npm_arch"
+	# hermes-agent's upstream postinstall clones source, downloads its own uv and
+	# asks uv for every optional extra. It would build for the CI host, not the target,
+	# and makes first boot depend on WAN.  The audited Core-only builder below is
+	# the sole producer of its runtime.
 	prune_agent_runtime_deadweight
+	fix_opencode_entrypoint "$npm_arch"
 	prune_foreign_platform_builds "$npm_arch"
+	[ -f "$HERMES_CORE_BUILDER" ] || {
+		echo "ERROR: Hermes Core builder is missing: $HERMES_CORE_BUILDER" >&2
+		return 1
+	}
+	bash "$HERMES_CORE_BUILDER" "$TARGET_FILES" "$node_arch"
 	verify_agent_runtime_arch "$npm_arch"
 	write_agent_runtime_policy
 
@@ -307,20 +318,16 @@ fix_opencode_entrypoint() {
 	log_info "opencode entrypoint now uses the ${npm_arch} musl binary (${interp})."
 }
 
-# hermes-agent 的 npm 桥接包在 postinstall 里为“安装机”准备整套独立 Python 运行
-# 时。CI runner 是 x86_64/glibc，所以 runtime/python、venv 和 .uv_bin 全是宿主机
-# 架构的二进制，venv 的 shebang 还指向安装结束时已被删除的 mktemp 目录。设备上是
-# arm64/musl，这约 160MB 永远跑不起来，只能整体剔除，由 /etc/init.d/hermes-runtime
-# 在设备上用原生 uv 重新生成。
+# `npm ci --ignore-scripts` deliberately leaves Hermes without a runtime.  Start
+# from a clean package on every build so a cached workspace cannot accidentally
+# retain host/glibc postinstall output; build_hermes_core.sh then adds only the
+# locked upstream Core and a target-musl venv using the firmware's uv/Python.
 prune_agent_runtime_deadweight() {
 	local hermes_dir="$NODE_LIB_DIR/hermes-agent"
 	local path
 
 	for path in \
-		"$hermes_dir/runtime/hermes-agent/tests" \
-		"$hermes_dir/runtime/hermes-agent/website" \
-		"$hermes_dir/runtime/hermes-agent/venv" \
-		"$hermes_dir/runtime/python" \
+		"$hermes_dir/runtime" \
 		"$hermes_dir/.uv_bin"
 	do
 		if [ -e "$path" ]; then
@@ -331,8 +338,8 @@ prune_agent_runtime_deadweight() {
 		fi
 	done
 
-	# A marker left over from the runner would make a later 'npm rebuild
-	# hermes-agent' believe the baked runtime already matches the device.
+	# A host-created marker must never make the local health coordinator believe
+	# that an unverified runtime is usable.
 	rm -f -- "$hermes_dir/.hermes-agent-runtime.json"
 }
 
@@ -442,7 +449,7 @@ verify_agent_runtime_arch() {
 # The device-side provisioner must install exactly the audited npm release, so
 # the pinned version is recorded at build time instead of floating on device.
 write_agent_runtime_policy() {
-	local hermes_version hermes_python_series mirror_manifest
+	local hermes_version hermes_python_series core_manifest core_python_series
 	local policy_dir="$TARGET_FILES/etc/agent-runtime"
 	local hermes_package_json="$NODE_LIB_DIR/hermes-agent/package.json"
 
@@ -464,14 +471,14 @@ write_agent_runtime_policy() {
 		return 1
 	}
 
-	mirror_manifest="$TARGET_FILES/opt/uv/python-mirror/manifest.txt"
-	[ -r "$mirror_manifest" ] || {
-		echo "ERROR: $mirror_manifest is missing; run fetch_uv_runtime.sh before fetch_node_runtime.sh" >&2
+	core_manifest="$TARGET_FILES/opt/agent-runtime/hermes-core.json"
+	[ -s "$core_manifest" ] || {
+		echo "ERROR: Hermes Core builder did not write $core_manifest" >&2
 		return 1
 	}
-	awk -F'\t' -v series="$hermes_python_series" '$1 == series { found = 1 } END { exit !found }' \
-		"$mirror_manifest" || {
-		echo "ERROR: hermes-agent $hermes_version provisions managed Python $hermes_python_series, but the offline mirror does not carry that series; add it to PYTHON_SERIES in Scripts/fetch_uv_runtime.sh" >&2
+	core_python_series="$(sed -n 's/^[[:space:]]*"python_series": *"\([^"]*\)".*/\1/p' "$core_manifest" | head -n1)"
+	[ "$core_python_series" = "$hermes_python_series" ] || {
+		echo "ERROR: Hermes Core metadata Python $core_python_series does not match hermes-agent $hermes_python_series" >&2
 		return 1
 	}
 
@@ -481,8 +488,11 @@ write_agent_runtime_policy() {
 HERMES_NPM_PACKAGE=hermes-agent
 HERMES_NPM_VERSION=$hermes_version
 HERMES_PYTHON_SERIES=$hermes_python_series
+HERMES_RUNTIME_MODE=core-offline
+HERMES_CORE_ROOT=/opt/node/lib/node_modules/hermes-agent/runtime/hermes-agent
+HERMES_CORE_MANIFEST=/opt/agent-runtime/hermes-core.json
 EOF
-	log_info "Recorded hermes-agent $hermes_version (managed Python $hermes_python_series) for device-side provisioning."
+	log_info "Recorded offline Hermes Core $hermes_version (managed Python $hermes_python_series)."
 }
 
 setup_symlinks() {
@@ -496,6 +506,21 @@ setup_symlinks() {
 	done
 }
 
+install_vendored_pi_extensions() {
+	local target="$NODE_LIB_DIR/pi-plan-mode"
+
+	[ -s "$PI_PLAN_MODE_VENDOR_DIR/plan-mode.ts" ] && \
+		[ -s "$PI_PLAN_MODE_VENDOR_DIR/provenance.json" ] && \
+		[ -s "$PI_PLAN_MODE_VENDOR_DIR/LICENSE" ] || {
+		echo "ERROR: reviewed pi-plan-mode vendor source is incomplete" >&2
+		return 1
+	}
+	rm -rf -- "$target"
+	cp -a "$PI_PLAN_MODE_VENDOR_DIR" "$target"
+	[ -s "$target/plan-mode.ts" ] || return 1
+	log_info "Installed reviewed vendored pi-plan-mode extension."
+}
+
 configure_pi_extensions() {
 	log_info "Writing default Pi extensions configuration..."
 
@@ -504,9 +529,11 @@ configure_pi_extensions() {
   "packages": [
     "@aaronkyriesenbach/pi-package-manager",
     "btw-pi",
-    "pi-plan-mode",
     "pi-web-search",
     "pi-wechat-assistant"
+  ],
+  "extensions": [
+    "/tmp/agent-runtime-pi-plan-mode.ts"
   ],
   "autoUpdate": false
 }
@@ -516,18 +543,23 @@ EOF
 main() {
 	prepare_directories
 
-	local node_arch
+	local node_arch installed_node_version
 	node_arch="$(map_node_arch)"
+	installed_node_version="$NODE_VERSION"
 
 	if ! download_node_tarball "$node_arch" "$NODE_VERSION"; then
 		log_info "Trying fallback Node.js version ${NODE_FALLBACK_VERSION}..."
+		installed_node_version="$NODE_FALLBACK_VERSION"
 		download_node_tarball "$node_arch" "$NODE_FALLBACK_VERSION" || {
 			echo "ERROR: unable to install a checksummed Node.js runtime" >&2
 			exit 1
 		}
 	fi
+	mkdir -p "$TARGET_FILES/etc/agent-runtime"
+	printf '%s\n' "$installed_node_version" >"$TARGET_FILES/etc/agent-runtime/node-version"
 
 	preinstall_cli_agents_and_extensions "$node_arch"
+	install_vendored_pi_extensions
 	setup_symlinks
 	configure_pi_extensions
 

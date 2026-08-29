@@ -52,7 +52,9 @@ derive_device_name() {
 
 resolve_program() {
 	local candidate
-	for candidate in "$DEFAULT_PROG" /usr/bin/multica; do
+	# A signed active generation wins. /usr/local remains the immutable firmware
+	# fallback for images that predate agent-runtime.
+	for candidate in /data/agent-runtime/current/bin/multica /data/agent-runtime/current/node/bin/multica "$DEFAULT_PROG" /usr/bin/multica; do
 		if [ -f "$candidate" ] && [ -x "$candidate" ]; then
 			printf '%s' "$candidate"
 			return 0
@@ -218,7 +220,8 @@ EOF
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
-		PATH="/data/node/bin:/opt/node/bin:/usr/bin:/bin" \
+		PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin" \
+		OPENTUI_LIBC=musl \
 		MULTICA_SERVER_URL="$server_url" \
 		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
 		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \

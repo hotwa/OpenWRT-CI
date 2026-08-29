@@ -1,127 +1,99 @@
 #!/bin/sh
-# Provisions the hermes-agent Python runtime on the device.
-#
-# The npm bridge builds its isolated CPython/venv for whatever machine runs
-# postinstall, so the copy baked into the read-only /opt/node squashfs is the
-# build runner's x86_64/glibc runtime and can never execute on this device.
-# Installing the same pinned npm release into the writable /data prefix lets
-# npm, uv and PyPI resolve a native aarch64/x86_64 musl runtime instead, and
-# PATH gives that install precedence over the baked one.
-
+# Coordinate and verify the immutable, offline Hermes Core runtime.
+# No npm/uv/git/curl is invoked here: new devices must work with no WAN and an
+# empty /data. Signed runtime generations are installed by agent-runtime.
 set -eu
 
-# Services started through procd do not load /etc/profile.d, so name the
-# baked Node.js runtime explicitly.
-PATH="/opt/node/bin:/data/node/bin:/usr/bin:/bin"
+PATH="/opt/node/bin:/usr/bin:/bin"
 export PATH
 
 POLICY_FILE="${HERMES_RUNTIME_POLICY:-/etc/agent-runtime/agent-update.env}"
-DATA_ROOT="${HERMES_DATA_ROOT:-/data}"
-PREFIX="$DATA_ROOT/node"
-PKG_ROOT="$PREFIX/lib/node_modules/hermes-agent"
-VENV_DIR="$PKG_ROOT/runtime/hermes-agent/venv"
-IMPORT_PROBE='import hermes_cli.main'
-RUNTIME_ENV="/tmp/uv-env.sh"
-LOG_FILE="${HERMES_RUNTIME_LOG:-$DATA_ROOT/hermes-runtime.log}"
-WAN_ATTEMPTS="${HERMES_WAN_ATTEMPTS:-30}"
-WAN_INTERVAL="${HERMES_WAN_INTERVAL:-10}"
-RETRIES="${HERMES_PROVISION_RETRIES:-3}"
-RETRY_INTERVAL="${HERMES_PROVISION_RETRY_INTERVAL:-60}"
+CORE_MANIFEST="${HERMES_CORE_MANIFEST:-/opt/agent-runtime/hermes-core.json}"
+BASELINE_ROOT="/opt/node/lib/node_modules/hermes-agent/runtime/hermes-agent"
+RUNTIME_ROOT="${HERMES_RUNTIME_ROOT:-}"
+AGENT_RUNTIME_ROOT="${HERMES_AGENT_RUNTIME_ROOT:-/data/agent-runtime}"
+STATE_FILE="${HERMES_RUNTIME_STATE:-/tmp/hermes-runtime.status}"
+LOG_FILE="${HERMES_RUNTIME_LOG:-/tmp/hermes-runtime.log}"
 
 log() {
 	printf '%s hermes-runtime: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG_FILE"
 }
 
-wait_for_default_route() {
-	local attempt=0
-
-	while [ "$attempt" -lt "$WAN_ATTEMPTS" ]; do
-		if ip route get 1.1.1.1 >/dev/null 2>&1 || ip route | grep -q '^default '; then
-			return 0
-		fi
-		attempt=$((attempt + 1))
-		sleep "$WAN_INTERVAL"
-	done
-
-	return 1
-}
-
-ready() {
-	[ -x "$VENV_DIR/bin/hermes" ] || return 1
-	timeout 120 "$VENV_DIR/bin/python" -c "$IMPORT_PROBE" >/dev/null 2>&1 || return 1
-	return 0
+write_state() {
+	# /tmp is available before /data. A runtime manager can override this after
+	# it has validated its own operation directory.
+	( umask 077; printf '%s\n' "$1" >"${STATE_FILE}.new.$$" && mv -f "${STATE_FILE}.new.$$" "$STATE_FILE" ) || true
 }
 
 read_policy() {
-	[ -r "$POLICY_FILE" ] || {
-		log "missing policy file $POLICY_FILE"
-		return 1
-	}
+	[ -r "$POLICY_FILE" ] || return 1
 	# shellcheck disable=SC1090
 	. "$POLICY_FILE"
-	[ -n "${HERMES_NPM_PACKAGE:-}" ] || return 1
-	case "${HERMES_NPM_VERSION:-}" in
-		[0-9]*.[0-9]*.[0-9]*) return 0 ;;
-	esac
-	return 1
+	[ "${HERMES_RUNTIME_MODE:-}" = "core-offline" ] || return 1
+	case "${HERMES_NPM_VERSION:-}" in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
+	case "${HERMES_PYTHON_SERIES:-}" in 3.[0-9]*) ;; *) return 1 ;; esac
 }
 
-provision_once() {
-	local npm_bin
+manifest_value() {
+	key="$1"
+	[ -r "$CORE_MANIFEST" ] || return 1
+	# Builder-produced string values only; never evaluate metadata as shell.
+	sed -n "s/^[[:space:]]*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/p" "$CORE_MANIFEST" | sed -n '1p'
+}
 
-	npm_bin="$(command -v npm 2>/dev/null || true)"
-	[ -n "$npm_bin" ] || {
-		log "npm is not available on PATH"
-		return 1
-	}
-
-	# /tmp/uv-env.sh carries the /data caches plus the writable global prefix.
-	if [ -r "$RUNTIME_ENV" ]; then
-		# shellcheck disable=SC1090
-		. "$RUNTIME_ENV"
+resolve_runtime_root() {
+	if [ -n "$RUNTIME_ROOT" ]; then
+		case "$RUNTIME_ROOT" in /opt/*|/data/agent-runtime/generations/*) printf '%s\n' "$RUNTIME_ROOT"; return 0 ;; *) return 1 ;; esac
 	fi
-	if [ -r /etc/profile.d/uv.sh ]; then
-		# shellcheck disable=SC1090
-		. /etc/profile.d/uv.sh
+	# agent-runtime owns this link and changes it atomically. Never follow a
+	# link escaping its generations directory; a damaged /data simply falls
+	# through to the immutable /opt baseline.
+	if [ -L "$AGENT_RUNTIME_ROOT/current" ]; then
+		active_target="$(readlink "$AGENT_RUNTIME_ROOT/current" 2>/dev/null || true)"
+		case "$active_target" in
+			generations/*) active_root="$AGENT_RUNTIME_ROOT/$active_target" ;;
+			"$AGENT_RUNTIME_ROOT"/generations/*) active_root="$active_target" ;;
+			*) active_root="" ;;
+		esac
+		if [ -n "${active_root:-}" ] && [ -d "$active_root/node/lib/node_modules/hermes-agent/runtime/hermes-agent" ]; then
+			printf '%s\n' "$active_root/node/lib/node_modules/hermes-agent/runtime/hermes-agent"
+			return 0
+		fi
 	fi
-	PATH="/opt/node/bin:/data/node/bin:/usr/bin:/bin"
-	export PATH
+	root_from_manifest="$(manifest_value core_root || true)"
+	case "$root_from_manifest" in /opt/*) printf '%s\n' "$root_from_manifest"; return 0 ;; esac
+	printf '%s\n' "$BASELINE_ROOT"
+}
 
-	mkdir -p "$PREFIX"
-	HOME=/root GIT_TERMINAL_PROMPT=0 NPM_CONFIG_PREFIX="$PREFIX" \
-		npm_config_prefix="$PREFIX" \
-		"$npm_bin" install -g --prefix "$PREFIX" --no-audit --no-fund \
-		--loglevel=warn "$HERMES_NPM_PACKAGE@$HERMES_NPM_VERSION" >>"$LOG_FILE" 2>&1
+safe_runtime_root() {
+	case "$1" in
+		/opt/node/lib/node_modules/hermes-agent/runtime/hermes-agent|/data/agent-runtime/generations/*/node/lib/node_modules/hermes-agent/runtime/hermes-agent) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+ready() {
+	root="$1"
+	python="$root/venv/bin/python"
+	hermes="$root/venv/bin/hermes"
+	[ -d "$root" ] && [ ! -L "$root" ] || return 1
+	[ -f "$root/uv.lock" ] || return 1
+	[ -x "$python" ] && [ -x "$hermes" ] || return 1
+	timeout 90 "$python" -c 'import hermes_cli.main' >/dev/null 2>&1 || return 1
+	timeout 90 "$hermes" --version >/dev/null 2>&1 || return 1
 }
 
 main() {
-	local attempt=1
-
-	if ready; then
+	read_policy || { log "offline Core policy is missing or invalid"; write_state 'failed policy'; return 1; }
+	root="$(resolve_runtime_root)" || { log "refusing an unsafe Hermes runtime root"; write_state 'failed unsafe-root'; return 1; }
+	safe_runtime_root "$root" || { log "runtime root is outside baseline/active generation: $root"; write_state 'failed unsafe-root'; return 1; }
+	if ready "$root"; then
+		log "offline Hermes Core healthy at $root"
+		write_state "ok $root"
 		return 0
 	fi
-
-	wait_for_default_route || {
-		log "no default route after $WAN_ATTEMPTS attempts; will retry on the next boot"
-		return 1
-	}
-	read_policy || {
-		log "refusing to provision; the pinned hermes-agent policy is unusable"
-		return 1
-	}
-
-	log "provisioning $HERMES_NPM_PACKAGE@$HERMES_NPM_VERSION into $PREFIX"
-	while [ "$attempt" -le "$RETRIES" ]; do
-		if provision_once && ready; then
-			log "hermes runtime is ready at $VENV_DIR"
-			return 0
-		fi
-		log "attempt $attempt/$RETRIES did not produce a usable runtime"
-		attempt=$((attempt + 1))
-		[ "$attempt" -gt "$RETRIES" ] || sleep "$RETRY_INTERVAL"
-	done
-
-	log "giving up; re-run '/etc/init.d/hermes-runtime restart' once the WAN is healthy"
+	log "offline Hermes Core health check failed at $root; no network provisioning will be attempted"
+	write_state "failed health $root"
 	return 1
 }
 

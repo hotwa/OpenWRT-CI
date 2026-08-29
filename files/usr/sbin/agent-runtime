@@ -1,0 +1,754 @@
+#!/bin/sh
+# Immutable, signed agent runtime generation manager.
+# This intentionally accepts no package, URL, path or release arguments.
+
+set -u
+
+DATA_ROOT="${AGENT_RUNTIME_DATA_ROOT:-/data}"
+ROOT="${AGENT_RUNTIME_ROOT:-$DATA_ROOT/agent-runtime}"
+GENERATIONS="$ROOT/generations"
+STAGING="$ROOT/.staging"
+QUARANTINE="$ROOT/quarantine"
+OPERATIONS="$ROOT/operations"
+BASELINE="${AGENT_RUNTIME_BASELINE:-/opt/agent-runtime}"
+PUBLIC_KEY="${AGENT_RUNTIME_PUBLIC_KEY:-/etc/agent-runtime/usign.pub}"
+RELEASE_URL_FILE="${AGENT_RUNTIME_RELEASE_URL_FILE:-/etc/agent-runtime/release-url}"
+MOUNTS_FILE="${AGENT_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
+LOCK_FILE="${AGENT_RUNTIME_LOCK_FILE:-/var/lock/agent-runtime.lock}"
+# Status is readable without /data, but check results must not be persisted in
+# world-writable /tmp.  The runtime root is mode 0700 after ensure_layout().
+LATEST_STATE="${AGENT_RUNTIME_LATEST_STATE:-$ROOT/latest-release}"
+JSON=0
+ACTION=""
+OPERATION_ID=""
+OP_LOG=""
+
+EX_OK=0
+EX_USAGE=2
+EX_BUSY=3
+EX_NO_DATA=4
+EX_SIGNATURE=5
+EX_INCOMPATIBLE=6
+EX_SPACE=7
+EX_HEALTH=8
+EX_DOWNLOAD=9
+EX_NO_UPDATE=10
+
+usage() {
+	printf '%s\n' "usage: agent-runtime {status|check|upgrade|rollback|list|verify|reconcile|gc} [--json]"
+}
+
+cleanup_operation_staging() {
+	local path name
+	[ -n "$OPERATION_ID" ] && [ -d "$STAGING" ] || return 0
+	for path in "$STAGING/download-$OPERATION_ID" "$STAGING"/*."$OPERATION_ID"; do
+		[ -e "$path" ] || continue
+		name="${path#"$STAGING"/}"
+		[ "$path" = "$STAGING/$name" ] && safe_release "$name" && rm -rf "$path"
+	done
+}
+
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\r/\\r/g; s/\n/\\n/g'
+}
+
+emit() {
+	# $1 ok, $2 symbolic code, $3 message, $4 numeric exit status, $5 JSON data
+	local ok="$1" code="$2" message="$3" status="$4" data operation_json=null
+	data="${5-}"
+	[ -n "$data" ] || data='{}'
+	[ -n "$OPERATION_ID" ] && operation_json="\"$(json_escape "$OPERATION_ID")\""
+	if [ "$JSON" -eq 1 ]; then
+		printf '{"ok":%s,"code":"%s","message":"%s","operation_id":%s,"data":%s}\n' \
+			"$ok" "$code" "$(json_escape "$message")" \
+			"$operation_json" "$data"
+	else
+		printf '%s: %s\n' "$code" "$message"
+	fi
+	cleanup_operation_staging
+	exit "$status"
+}
+
+log() {
+	logger -t agent-runtime -- "$*" 2>/dev/null || true
+	[ -n "$OP_LOG" ] && printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)" "$*" >>"$OP_LOG" 2>/dev/null || true
+}
+
+data_ready() {
+	local probe="$DATA_ROOT/.agent-runtime-write-probe.$$"
+	awk -v target="$DATA_ROOT" '$2 == target { found=1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null || return 1
+	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
+	( umask 077; : >"$probe" ) 2>/dev/null || return 1
+	rm -f "$probe"
+}
+
+ensure_layout() {
+	data_ready || return 1
+	# Do not follow a pre-existing link for any privileged runtime directory.
+	for path in "$ROOT" "$GENERATIONS" "$STAGING" "$QUARANTINE" "$OPERATIONS"; do
+		[ ! -e "$path" ] || { [ -d "$path" ] && [ ! -L "$path" ]; } || return 1
+	done
+	mkdir -p "$GENERATIONS" "$STAGING" "$QUARANTINE" "$OPERATIONS" || return 1
+	for path in "$ROOT" "$GENERATIONS" "$STAGING" "$QUARANTINE" "$OPERATIONS"; do
+		[ -d "$path" ] && [ ! -L "$path" ] || return 1
+	done
+	chmod 0700 "$ROOT" "$GENERATIONS" "$STAGING" "$QUARANTINE" "$OPERATIONS" 2>/dev/null || true
+}
+
+machine_arch() {
+	case "$(uname -m 2>/dev/null || true)" in
+		aarch64|arm64) printf '%s' arm64 ;;
+		x86_64|amd64) printf '%s' x64 ;;
+		*) printf '%s' unknown ;;
+	esac
+}
+
+json_value() {
+	# jsonfilter is part of the OpenWrt base.  Keep field names fixed here; no
+	# user input is interpolated into its expression.
+	local file="$1" key="$2" expression
+	[ -f "$file" ] && [ ! -L "$file" ] || return 1
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	case "$key" in
+		runtime_release) expression='@.runtime_release' ;;
+		arch) expression='@.arch' ;;
+		architecture) expression='@.architecture' ;;
+		libc) expression='@.libc' ;;
+		node_abi) expression='@.runtime_contract.node_abi' ;;
+		minimum_space_bytes) expression='@.minimum_space_bytes' ;;
+		bundle_filename) expression='@.bundle.filename' ;;
+		bundle_sha256) expression='@.bundle.sha256' ;;
+		critical_node) expression='@.critical_elf_sha256["node/bin/node"]' ;;
+		critical_multica) expression='@.critical_elf_sha256["bin/multica"]' ;;
+		*) return 1 ;;
+	esac
+	jsonfilter -i "$file" -e "$expression" 2>/dev/null | sed -n '1p'
+}
+
+json_object() {
+	local file="$1" key="$2" expression value
+	[ -f "$file" ] && [ ! -L "$file" ] || return 1
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	case "$key" in
+		components) expression='@.components' ;;
+		runtime_contract) expression='@.runtime_contract' ;;
+		*) return 1 ;;
+	esac
+	value="$(jsonfilter -i "$file" -e "$expression" 2>/dev/null)"
+	[ -n "$value" ] || return 1
+	printf '%s' "$value"
+}
+
+manifest_release() {
+	json_value "$1/manifest.json" runtime_release
+}
+
+safe_release() {
+	case "$1" in
+		''|*[!A-Za-z0-9._-]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+safe_relative_file() {
+	case "$1" in
+		''|/*|*'..'*|*'//'*) return 1 ;;
+		*[!A-Za-z0-9._/-]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+safe_generation_path() {
+	# Accept precisely one direct child of $GENERATIONS, never a prefix match
+	# such as generations/release/other or generations/release-escape.
+	local path="$1" name
+	case "$path" in "$GENERATIONS"/*) name="${path#"$GENERATIONS"/}" ;; *) return 1 ;; esac
+	[ "$path" = "$GENERATIONS/$name" ] && safe_release "$name"
+}
+
+baseline_link_matches() {
+	# Firmware finalization intentionally wires the immutable baseline to the
+	# separately staged /opt/node, /opt/uv and Multica prefixes.  Accept only
+	# those exact links; downloaded generations must always contain real top
+	# level directories.
+	local link="$1" expected="$2" resolved wanted
+	[ -L "$link" ] && [ "$(readlink "$link" 2>/dev/null || true)" = "$expected" ] || return 1
+	resolved="$(readlink -f "$link" 2>/dev/null || true)"
+	case "$expected" in
+		/*) wanted="$(readlink -f "$expected" 2>/dev/null || true)" ;;
+		*) wanted="$(readlink -f "$(dirname "$link")/$expected" 2>/dev/null || true)" ;;
+	esac
+	[ -n "$resolved" ] && [ "$resolved" = "$wanted" ]
+}
+
+runtime_node_dir() {
+	local runtime="$1" path="$1/node"
+	if [ -L "$path" ]; then
+		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" ../node || return 1
+		path="$(readlink -f "$path" 2>/dev/null || true)"
+	fi
+	[ -d "$path" ] && [ ! -L "$path" ] || return 1
+	printf '%s' "$path"
+}
+
+runtime_uv_dir() {
+	local runtime="$1" path="$1/uv"
+	if [ -L "$path" ]; then
+		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" ../uv || return 1
+		path="$(readlink -f "$path" 2>/dev/null || true)"
+	fi
+	[ -d "$path" ] && [ ! -L "$path" ] || return 1
+	printf '%s' "$path"
+}
+
+runtime_multica_path() {
+	local runtime="$1" path="$1/bin/multica"
+	if [ -L "$path" ]; then
+		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" /usr/local/bin/multica || return 1
+		path="$(readlink -f "$path" 2>/dev/null || true)"
+	fi
+	[ -x "$path" ] && [ ! -L "$path" ] || return 1
+	printf '%s' "$path"
+}
+
+manifest_compatible() {
+	local runtime="$1" manifest arch libc abi baseline_abi baseline_node
+	manifest="$runtime/manifest.json"
+	[ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
+	arch="$(json_value "$manifest" arch 2>/dev/null || json_value "$manifest" architecture 2>/dev/null || true)"
+	libc="$(json_value "$manifest" libc 2>/dev/null || true)"
+	[ "$arch" = "$(machine_arch)" ] && [ "$libc" = musl ] || return 1
+	abi="$(json_value "$manifest" node_abi 2>/dev/null || true)"
+	case "$abi" in ''|*[!0-9]*) return 1 ;; esac
+	baseline_node="$(runtime_node_dir "$BASELINE" 2>/dev/null || true)"
+	if [ -n "$baseline_node" ] && [ -x "$baseline_node/bin/node" ]; then
+		baseline_abi="$($baseline_node/bin/node -p 'process.versions.modules' 2>/dev/null || true)"
+		[ "$abi" = "$baseline_abi" ] || return 1
+	fi
+	return 0
+}
+
+runtime_path_from_link() {
+	local link="$1" target name
+	[ -L "$link" ] || return 1
+	target="$(readlink "$link" 2>/dev/null || true)"
+	[ -n "$target" ] || return 1
+	case "$target" in
+		"$BASELINE") printf '%s' "$BASELINE" ;;
+		generations/*)
+			name="${target#generations/}"
+			[ "$target" = "generations/$name" ] && safe_release "$name" || return 1
+			printf '%s' "$GENERATIONS/$name"
+			;;
+		"$GENERATIONS"/*)
+			safe_generation_path "$target" || return 1
+			printf '%s' "$target"
+			;;
+		*) return 1 ;;
+	esac
+}
+
+current_runtime() {
+	local runtime
+	runtime="$(runtime_path_from_link "$ROOT/current" 2>/dev/null || true)"
+	if [ -n "$runtime" ] && [ -d "$runtime" ] && { [ "$runtime" = "$BASELINE" ] || { [ ! -L "$runtime" ] && safe_generation_path "$runtime"; }; }; then
+		printf '%s' "$runtime"
+	else
+		printf '%s' "$BASELINE"
+	fi
+}
+
+link_atomically() {
+	# $1 link, $2 target; target is always an internally computed absolute or
+	# relative path, never a command-line value.
+	local link="$1" target="$2" temporary="${1}.new.$$"
+	[ ! -e "$link" ] || [ -L "$link" ] || return 1
+	rm -f "$temporary" 2>/dev/null || return 1
+	ln -s "$target" "$temporary" || return 1
+	mv -f "$temporary" "$link"
+}
+
+publish_node_link() {
+	local runtime="$1" temporary="$DATA_ROOT/.node.new.$$" node_dir
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] || return 1
+	rm -f "$temporary" 2>/dev/null || return 1
+	ln -s "$node_dir" "$temporary" || return 1
+	# Never overwrite an un-migrated real /data/node directory.
+	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || return 1
+	mv -f "$temporary" "$DATA_ROOT/node"
+}
+
+publish_pi_extension_link() {
+	local runtime="$1" node_dir source link="/tmp/agent-runtime-pi-plan-mode.ts" temporary="${link}.new.$$"
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] || return 1
+	source="$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts"
+	[ -s "$source" ] && [ ! -L "$source" ] || return 1
+	[ ! -e "$link" ] || [ -L "$link" ] || return 1
+	rm -f "$temporary" 2>/dev/null || return 1
+	ln -s "$source" "$temporary" || return 1
+	mv -f "$temporary" "$link"
+}
+
+set_current() {
+	local runtime="$1" target old_target old_runtime node_dir
+	case "$runtime" in
+		"$GENERATIONS"/*)
+			safe_generation_path "$runtime" || return 1
+			target="generations/${runtime#$GENERATIONS/}"
+			;;
+		"$BASELINE") target="$BASELINE" ;;
+		*) return 1 ;;
+	esac
+	# Prepare every dependency before changing current.  This avoids leaving the
+	# manager on a new generation when /data/node or the Pi extension cannot be
+	# published.  The three renames are individually atomic; a later failure is
+	# restored to the old links below.
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] && [ -s "$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts" ] || return 1
+	old_runtime="$(current_runtime)"
+	case "$old_runtime" in
+		"$BASELINE") old_target="$BASELINE" ;;
+		"$GENERATIONS"/*) safe_generation_path "$old_runtime" || return 1; old_target="generations/${old_runtime#$GENERATIONS/}" ;;
+		*) return 1 ;;
+	esac
+	publish_node_link "$runtime" || return 1
+	if ! publish_pi_extension_link "$runtime"; then
+		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
+		return 1
+	fi
+	if ! link_atomically "$ROOT/current" "$target"; then
+		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
+		publish_pi_extension_link "$old_runtime" >/dev/null 2>&1 || true
+		return 1
+	fi
+	# Previous is advisory only; it is derived from the already validated old
+	# runtime rather than copying an arbitrary current-link target.
+	link_atomically "$ROOT/previous" "$old_target" || log 'activated runtime but could not update previous link'
+}
+
+quarantine_runtime() {
+	local runtime="$1" name
+	safe_generation_path "$runtime" || return 1
+	name="${runtime##*/}"
+	safe_release "$name" || name="invalid"
+	mv "$runtime" "$QUARANTINE/${name}.$(date +%s 2>/dev/null || echo $$)" || return 1
+	log "quarantined incompatible generation $name"
+}
+
+runtime_health() {
+	local runtime="$1" command uv hermes_python node_dir uv_dir multica
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
+	multica="$(runtime_multica_path "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -n "$multica" ] && [ -x "$node_dir/bin/node" ] || return 1
+	# Hermes is delivered as Core only. Its metadata pins the local managed
+	# Python contract and must travel with every immutable generation.
+	[ -f "$runtime/hermes-core.json" ] && [ ! -L "$runtime/hermes-core.json" ] || return 1
+	hermes_python="$node_dir/lib/node_modules/hermes-agent/runtime/hermes-agent/venv/bin/python"
+	[ -x "$hermes_python" ] && timeout 90 "$hermes_python" -c 'import hermes_cli.main' >/dev/null 2>&1 || return 1
+	uv="$uv_dir/uv"
+	[ -x "$uv" ] || uv="$uv_dir/bin/uv"
+	[ -x "$uv" ] && "$uv" --version >/dev/null 2>&1 || return 1
+	PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+		"$node_dir/bin/node" -p 'process.versions.modules' >/dev/null 2>&1 || return 1
+	for command in opencode pi hermes multica; do
+		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+			command -v "$command" >/dev/null 2>&1 || return 1
+		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+			"$command" --version >/dev/null 2>&1 || return 1
+	done
+	return 0
+}
+
+legacy_compatible() {
+	local legacy="$1" baseline_node legacy_arch baseline_arch legacy_abi baseline_abi command
+	legacy_node="$legacy/bin/node"
+	baseline_node="$BASELINE/node/bin/node"
+	[ -x "$legacy_node" ] && [ -x "$baseline_node" ] || return 1
+	legacy_arch="$($legacy_node -p 'process.arch' 2>/dev/null || true)"
+	baseline_arch="$($baseline_node -p 'process.arch' 2>/dev/null || true)"
+	legacy_abi="$($legacy_node -p 'process.versions.modules' 2>/dev/null || true)"
+	baseline_abi="$($baseline_node -p 'process.versions.modules' 2>/dev/null || true)"
+	[ "$legacy_arch" = "$baseline_arch" ] && [ "$legacy_abi" = "$baseline_abi" ] || return 1
+	for command in opencode pi hermes; do
+		PATH="$legacy/bin:/usr/local/bin:/usr/bin:/bin" "$command" --version >/dev/null 2>&1 || return 1
+	done
+	/usr/local/bin/multica --version >/dev/null 2>&1 || return 1
+	return 0
+}
+
+migrate_legacy_node() {
+	local legacy="$DATA_ROOT/node" release destination
+	[ -d "$legacy" ] && [ ! -L "$legacy" ] || return 0
+	[ -e "$ROOT/.legacy-node-migrated" ] && return 0
+	if legacy_compatible "$legacy" && [ -f "$BASELINE/manifest.json" ]; then
+		release="legacy-$(date +%s 2>/dev/null || echo $$)"
+		destination="$GENERATIONS/$release"
+		mkdir -p "$destination" || return 1
+		mv "$legacy" "$destination/node" || return 1
+		cp "$BASELINE/manifest.json" "$destination/manifest.json" || return 1
+		# A legacy prefix has no immutable bundle.  It is deliberately marked as
+		# imported and is replaced by the next signed full-stack release.
+		printf '%s\n' 'legacy-imported=1' >"$destination/.legacy-imported"
+		set_current "$destination" || return 1
+		log "migrated compatible legacy /data/node into $release"
+	else
+		mv "$legacy" "$QUARANTINE/node-legacy-$(date +%s 2>/dev/null || echo $$)" || return 1
+		log "quarantined incompatible legacy /data/node"
+	fi
+	: >"$ROOT/.legacy-node-migrated"
+}
+
+release_number() {
+	local release
+	release="$(manifest_release "$1" 2>/dev/null || true)"
+	case "$release" in *[!0-9]*|'') printf '%s' -1 ;; *) printf '%s' "$release" ;; esac
+}
+
+reconcile_runtime() {
+	local current baseline_release current_release current_num baseline_num
+	if ! data_ready; then
+		publish_pi_extension_link "$BASELINE" || return 1
+		log '/data unavailable; using firmware baseline without publishing mutable links'
+		return 0
+	fi
+	ensure_layout || return 1
+	[ -d "$BASELINE" ] && manifest_compatible "$BASELINE" || {
+		log 'firmware baseline is missing or incompatible'
+		return 1
+	}
+	migrate_legacy_node || return 1
+	current="$(current_runtime)"
+	if [ "$current" != "$BASELINE" ] && ! manifest_compatible "$current"; then
+		quarantine_runtime "$current" || return 1
+		current="$BASELINE"
+	fi
+	baseline_release="$(release_number "$BASELINE")"
+	current_release="$(release_number "$current")"
+	baseline_num="$baseline_release"
+	current_num="$current_release"
+	# newer-compatible-wins; on equality prefer the freshly baked baseline.
+	if [ "$current" = "$BASELINE" ] || [ "$baseline_num" -ge "$current_num" ]; then
+		set_current "$BASELINE" || return 1
+		log "selected firmware baseline release $baseline_num"
+	else
+		publish_node_link "$current" || return 1
+		publish_pi_extension_link "$current" || return 1
+		log "retained newer compatible data release $current_num"
+	fi
+	return 0
+}
+
+begin_operation() {
+	OPERATION_ID="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date +%s)-$$"
+	[ -d "$OPERATIONS" ] || return 0
+	OP_LOG="$OPERATIONS/$OPERATION_ID.log"
+	( umask 077; : >"$OP_LOG" ) 2>/dev/null || OP_LOG=""
+}
+
+sha256_file() {
+	command -v sha256sum >/dev/null 2>&1 || return 1
+	sha256sum "$1" 2>/dev/null | awk '{print $1}'
+}
+
+verify_signature() {
+	local file="$1" signature="$2"
+	[ -r "$PUBLIC_KEY" ] && [ -f "$PUBLIC_KEY" ] && [ ! -L "$PUBLIC_KEY" ] || return 1
+	command -v usign >/dev/null 2>&1 || return 1
+	usign -V -p "$PUBLIC_KEY" -m "$file" -x "$signature" >/dev/null 2>&1
+}
+
+fetch_file() {
+	local url="$1" destination="$2"
+	case "$url" in https://*|http://*) ;; *) return 1 ;; esac
+	if command -v uclient-fetch >/dev/null 2>&1; then
+		uclient-fetch -q -O "$destination" "$url"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O "$destination" "$url"
+	else
+		return 1
+	fi
+}
+
+release_base_url() {
+	local value
+	[ -r "$RELEASE_URL_FILE" ] || return 1
+	value="$(sed -n '1p' "$RELEASE_URL_FILE" 2>/dev/null | tr -d '[:space:]')"
+	case "$value" in https://*) printf '%s' "${value%/}" ;; *) return 1 ;; esac
+}
+
+index_value() {
+	# Accept the two fixed index layouts emitted by CI during the v1 transition.
+	# `releases.<arch>` is the canonical layout; `latest.<arch>` maintains
+	# compatibility with early signed bundles.  There is no caller input.
+	local index="$1" field="$2" arch="$(machine_arch)" value
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	value="$(jsonfilter -i "$index" -e "@.releases.$arch.$field" 2>/dev/null | sed -n '1p')"
+	[ -n "$value" ] || value="$(jsonfilter -i "$index" -e "@.latest.$arch.$field" 2>/dev/null | sed -n '1p')"
+	printf '%s' "$value"
+}
+
+free_kb() {
+	df -Pk "$DATA_ROOT" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+archive_is_safe() {
+	local archive="$1" entry
+	tar -tzf "$archive" >/dev/null 2>&1 || return 1
+	tar -tzf "$archive" 2>/dev/null | while IFS= read -r entry; do
+		case "$entry" in ''|/*|*'..'*|*'//'*) exit 1 ;; esac
+	done
+}
+
+links_are_safe() {
+	local root="$1" link resolved
+	find "$root" -type l -print 2>/dev/null | while IFS= read -r link; do
+		resolved="$(readlink -f "$link" 2>/dev/null || true)"
+		case "$resolved" in "$root"|"$root"/*) ;; *) exit 1 ;; esac
+	done
+}
+
+archive_has_no_special_files() {
+	# Hard links are rejected too: unlike symbolic links they are invisible to
+	# links_are_safe(), and a crafted target must never escape extraction root.
+	tar -tvzf "$1" 2>/dev/null | awk '$1 ~ /^[bchp]/ { bad=1 } END { exit bad }'
+}
+
+verify_critical_hashes() {
+	local runtime="$1" manifest="$1/manifest.json" key path expected actual
+	for key in critical_node critical_multica; do
+		case "$key" in
+			critical_node) path='node/bin/node' ;;
+			critical_multica) path='bin/multica' ;;
+		esac
+		expected="$(json_value "$manifest" "$key" 2>/dev/null || true)"
+		[ -n "$expected" ] || return 1
+		printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$' || return 1
+		actual="$(sha256_file "$runtime/$path" 2>/dev/null || true)"
+		[ "$actual" = "$expected" ] || return 1
+	done
+}
+
+restart_and_check() {
+	local runtime="$1" multica_enabled attempt=0
+	multica_enabled="$(uci -q get multica.main.enabled 2>/dev/null || echo 0)"
+	if [ -x /etc/init.d/multica ]; then
+		/etc/init.d/multica restart >/dev/null 2>&1 || [ "$multica_enabled" != 1 ] || return 1
+		if [ "$multica_enabled" = 1 ]; then
+			/etc/init.d/multica running >/dev/null 2>&1 || return 1
+		fi
+	fi
+	if [ -x /etc/init.d/hermes-runtime ]; then
+		rm -f /tmp/hermes-runtime.status
+		/etc/init.d/hermes-runtime restart >/dev/null 2>&1 || return 1
+		while [ "$attempt" -lt 15 ]; do
+			grep -q '^ok ' /tmp/hermes-runtime.status 2>/dev/null && break
+			attempt=$((attempt + 1)); sleep 1
+		done
+		grep -q '^ok ' /tmp/hermes-runtime.status 2>/dev/null || return 1
+	fi
+	runtime_health "$runtime"
+}
+
+rollback_to_previous() {
+	local previous runtime original original_healthy=0
+	original="$(current_runtime)"
+	runtime_health "$original" && original_healthy=1
+	previous="$(runtime_path_from_link "$ROOT/previous" 2>/dev/null || true)"
+	if [ -n "$previous" ] && [ -d "$previous" ] && manifest_compatible "$previous"; then
+		set_current "$previous" || return 1
+	else
+		set_current "$BASELINE" || return 1
+	fi
+	runtime="$(current_runtime)"
+	if restart_and_check "$runtime"; then return 0; fi
+	if [ "$original_healthy" -eq 1 ] && manifest_compatible "$original"; then
+		set_current "$original" && restart_and_check "$original" && return 1
+	fi
+	set_current "$BASELINE" && restart_and_check "$BASELINE"
+	return 1
+}
+
+do_upgrade() {
+	local base download index index_sig manifest manifest_sig bundle expected release minimum required_kb available stage target current
+	data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"
+	ensure_layout || emit false no_data 'cannot initialize /data runtime storage' "$EX_NO_DATA"
+	begin_operation
+	reconcile_runtime || emit false incompatible 'no compatible firmware baseline' "$EX_INCOMPATIBLE"
+	base="$(release_base_url)" || emit false download_failed 'no fixed signed release URL is configured' "$EX_DOWNLOAD"
+	download="$STAGING/download-$OPERATION_ID"
+	mkdir -p "$download" || emit false no_data 'cannot create staging download directory' "$EX_NO_DATA"
+	index="$download/index.json"; index_sig="$download/index.json.sig"
+	fetch_file "$base/index.json" "$index.part" && mv "$index.part" "$index" || emit false download_failed 'cannot download release index' "$EX_DOWNLOAD"
+	fetch_file "$base/index.json.sig" "$index_sig.part" && mv "$index_sig.part" "$index_sig" || emit false download_failed 'cannot download release index signature' "$EX_DOWNLOAD"
+	verify_signature "$index" "$index_sig" || emit false signature_failed 'release index signature verification failed' "$EX_SIGNATURE"
+	manifest="$(index_value "$index" manifest)"; manifest_sig="$(index_value "$index" manifest_signature)"; bundle="$(index_value "$index" bundle)"
+	[ -n "$manifest_sig" ] || manifest_sig="$manifest.sig"
+	safe_relative_file "$manifest" && safe_relative_file "$manifest_sig" && safe_relative_file "$bundle" || emit false incompatible 'release index contains an unsafe artifact path' "$EX_INCOMPATIBLE"
+	fetch_file "$base/$manifest" "$download/manifest.json.part" && mv "$download/manifest.json.part" "$download/manifest.json" || emit false download_failed 'cannot download runtime manifest' "$EX_DOWNLOAD"
+	fetch_file "$base/$manifest_sig" "$download/manifest.json.sig.part" && mv "$download/manifest.json.sig.part" "$download/manifest.json.sig" || emit false download_failed 'cannot download runtime manifest signature' "$EX_DOWNLOAD"
+	verify_signature "$download/manifest.json" "$download/manifest.json.sig" || emit false signature_failed 'runtime manifest signature verification failed' "$EX_SIGNATURE"
+	manifest_compatible "$download" || emit false incompatible 'runtime manifest is not compatible with this device' "$EX_INCOMPATIBLE"
+	release="$(manifest_release "$download")"; safe_release "$release" || emit false incompatible 'runtime manifest has an unsafe release identifier' "$EX_INCOMPATIBLE"
+	current="$(current_runtime)"
+	[ "$(release_number "$download")" -gt "$(release_number "$current")" ] || emit false no_update 'no newer compatible runtime release is available' "$EX_NO_UPDATE"
+	minimum="$(json_value "$download/manifest.json" minimum_space_bytes 2>/dev/null || echo 0)"
+	case "$minimum" in *[!0-9]*|'') minimum=0 ;; esac
+	required_kb=$(( (minimum + 1023) / 1024 ))
+	available="$(free_kb)"; case "$available" in *[!0-9]*|'') available=0 ;; esac
+	[ "$available" -ge "$required_kb" ] || emit false insufficient_space 'insufficient free space for runtime generation' "$EX_SPACE"
+	fetch_file "$base/$bundle" "$download/bundle.part" && mv "$download/bundle.part" "$download/bundle.tar.gz" || emit false download_failed 'cannot download runtime bundle' "$EX_DOWNLOAD"
+	expected="$(json_value "$download/manifest.json" bundle_sha256 2>/dev/null || true)"
+	printf '%s' "$expected" | grep -Eq '^[0-9a-fA-F]{64}$' || emit false incompatible 'runtime manifest does not contain a bundle SHA256' "$EX_INCOMPATIBLE"
+	[ "$(sha256_file "$download/bundle.tar.gz" 2>/dev/null || true)" = "$expected" ] || emit false signature_failed 'runtime bundle SHA256 verification failed' "$EX_SIGNATURE"
+	archive_is_safe "$download/bundle.tar.gz" || emit false incompatible 'runtime archive contains unsafe paths' "$EX_INCOMPATIBLE"
+	archive_has_no_special_files "$download/bundle.tar.gz" || emit false incompatible 'runtime archive contains device or FIFO entries' "$EX_INCOMPATIBLE"
+	stage="$STAGING/$release.$OPERATION_ID"; mkdir -p "$stage" || emit false no_data 'cannot create generation staging directory' "$EX_NO_DATA"
+	tar -xzf "$download/bundle.tar.gz" -C "$stage" || emit false incompatible 'cannot extract runtime archive' "$EX_INCOMPATIBLE"
+	links_are_safe "$stage" || emit false incompatible 'runtime archive contains unsafe symbolic links' "$EX_INCOMPATIBLE"
+	# The payload intentionally excludes its manifest to avoid a self-hash
+	# cycle.  Only the detached, verified copy is installed into the generation.
+	[ ! -e "$stage/manifest.json" ] || emit false incompatible 'runtime archive must not contain a manifest' "$EX_INCOMPATIBLE"
+	cp "$download/manifest.json" "$stage/manifest.json" || emit false no_data 'cannot install verified runtime manifest' "$EX_NO_DATA"
+	manifest_compatible "$stage" && verify_critical_hashes "$stage" && runtime_health "$stage" || emit false health_failed 'staged runtime health probe failed' "$EX_HEALTH"
+	target="$GENERATIONS/$release"
+	[ ! -e "$target" ] || emit false incompatible 'runtime release already exists locally' "$EX_INCOMPATIBLE"
+	mv "$stage" "$target" || emit false no_data 'cannot publish staged runtime generation' "$EX_NO_DATA"
+	set_current "$target" || emit false no_data 'cannot atomically activate runtime generation' "$EX_NO_DATA"
+	if restart_and_check "$target"; then
+		log "activated signed runtime release $release"
+		emit true ok "activated runtime release $release" "$EX_OK" "{\"release\":\"$(json_escape "$release")\"}"
+	fi
+	log "post-switch health check failed; rolling back"
+	rollback_to_previous >/dev/null 2>&1 || true
+	emit false health_failed 'new runtime failed post-switch health check and was rolled back' "$EX_HEALTH"
+}
+
+do_status() {
+	local current previous manifest active_release baseline_release latest_release data generations arch libc abi components contract space health
+	current="$(current_runtime)"; previous="$(runtime_path_from_link "$ROOT/previous" 2>/dev/null || true)"
+	manifest="$current/manifest.json"
+	active_release="$(manifest_release "$current" 2>/dev/null || echo unknown)"
+	baseline_release="$(manifest_release "$BASELINE" 2>/dev/null || echo unknown)"
+	latest_release="$(sed -n '1p' "$LATEST_STATE" 2>/dev/null || true)"
+	case "$latest_release" in *[!0-9]*|'') latest_release=unknown ;; esac
+	arch="$(json_value "$manifest" architecture 2>/dev/null || echo unknown)"
+	libc="$(json_value "$manifest" libc 2>/dev/null || echo unknown)"
+	abi="$(json_value "$manifest" node_abi 2>/dev/null || echo unknown)"
+	components="$(json_object "$manifest" components 2>/dev/null || echo '{}')"
+	contract="$(json_object "$manifest" runtime_contract 2>/dev/null || echo '{}')"
+	space="$(free_kb 2>/dev/null || echo 0)"; case "$space" in *[!0-9]*|'') space=0 ;; esac
+	health=false; manifest_compatible "$current" && runtime_health "$current" && health=true
+	data=false; data_ready && data=true
+	generations=0; [ -d "$GENERATIONS" ] && generations="$(find "$GENERATIONS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+	printf '{"data_ready":%s,"active":"%s","active_release":"%s","baseline":"%s","baseline_release":"%s","previous":"%s","generations":%s,"architecture":"%s","libc":"%s","node_abi":"%s","components":%s,"contract":%s,"free_space_kb":%s,"health":%s,"latest_release":"%s"}' \
+		"$data" "$(json_escape "$current")" "$(json_escape "$active_release")" "$(json_escape "$BASELINE")" "$(json_escape "$baseline_release")" "$(json_escape "$previous")" "$generations" "$(json_escape "$arch")" "$(json_escape "$libc")" "$(json_escape "$abi")" "$components" "$contract" "$space" "$health" "$(json_escape "$latest_release")"
+}
+
+do_list() {
+	local first=1 item release
+	printf '{"generations":['
+	if [ -d "$GENERATIONS" ]; then
+		for item in "$GENERATIONS"/*; do
+			[ -d "$item" ] || continue
+			release="$(manifest_release "$item" 2>/dev/null || echo unknown)"
+			[ "$first" -eq 1 ] || printf ','
+			printf '{"name":"%s","release":"%s"}' "$(json_escape "${item##*/}")" "$(json_escape "$release")"
+			first=0
+		done
+	fi
+	printf ']}'
+}
+
+do_gc() {
+	local current previous item count=0
+	data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"
+	ensure_layout || emit false no_data 'cannot initialize runtime storage' "$EX_NO_DATA"
+	begin_operation
+	current="$(current_runtime)"; previous="$(runtime_path_from_link "$ROOT/previous" 2>/dev/null || true)"
+	for item in "$GENERATIONS"/*; do
+		[ -d "$item" ] && [ ! -L "$item" ] && safe_generation_path "$item" || continue
+		[ "$item" = "$current" ] || [ "$item" = "$previous" ] || {
+			rm -rf "$item"; count=$((count + 1))
+		}
+	done
+	for item in "$STAGING"/*; do
+		[ -e "$item" ] || continue
+		name="${item#"$STAGING"/}"
+		[ "$item" = "$STAGING/$name" ] && safe_release "$name" || continue
+		rm -rf "$item"; count=$((count + 1))
+	done
+	emit true ok "removed $count obsolete runtime generations" "$EX_OK" "{\"removed\":$count}"
+}
+
+acquire_lock() {
+	command -v flock >/dev/null 2>&1 || return 1
+	exec 9>"$LOCK_FILE" || return 1
+	flock -n 9
+}
+
+case "$#" in
+	1) ;;
+	2) [ "$2" = --json ] && JSON=1 || { usage; exit "$EX_USAGE"; } ;;
+	*) usage; exit "$EX_USAGE" ;;
+esac
+case "${1:-}" in status|check|upgrade|rollback|list|verify|reconcile|gc) ;; *) usage; exit "$EX_USAGE" ;; esac
+
+# `check` must never download or activate a bundle.  Keep its index verification
+# path separate from upgrade after common CLI parsing.
+if [ "${1:-}" = check ]; then
+	acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+	shift
+	data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"
+	ensure_layout || emit false no_data 'cannot initialize runtime storage' "$EX_NO_DATA"
+	begin_operation
+	reconcile_runtime || emit false incompatible 'no compatible firmware baseline' "$EX_INCOMPATIBLE"
+	base="$(release_base_url)" || emit false download_failed 'no fixed signed release URL is configured' "$EX_DOWNLOAD"
+	idx="$STAGING/check-$OPERATION_ID"; mkdir -p "$idx" || emit false no_data 'cannot create check staging directory' "$EX_NO_DATA"
+	fetch_file "$base/index.json" "$idx/index.json" && fetch_file "$base/index.json.sig" "$idx/index.json.sig" || emit false download_failed 'cannot download release index' "$EX_DOWNLOAD"
+	verify_signature "$idx/index.json" "$idx/index.json.sig" || emit false signature_failed 'release index signature verification failed' "$EX_SIGNATURE"
+	remote_manifest="$(index_value "$idx/index.json" manifest)"; safe_relative_file "$remote_manifest" || emit false incompatible 'release index contains an unsafe manifest path' "$EX_INCOMPATIBLE"
+	fetch_file "$base/$remote_manifest" "$idx/manifest.json" || emit false download_failed 'cannot download runtime manifest' "$EX_DOWNLOAD"
+	remote_sig="$(index_value "$idx/index.json" manifest_signature)"; [ -n "$remote_sig" ] || remote_sig="$remote_manifest.sig"; safe_relative_file "$remote_sig" || emit false incompatible 'release index contains an unsafe manifest signature path' "$EX_INCOMPATIBLE"
+	fetch_file "$base/$remote_sig" "$idx/manifest.json.sig" || emit false download_failed 'cannot download runtime manifest signature' "$EX_DOWNLOAD"
+	verify_signature "$idx/manifest.json" "$idx/manifest.json.sig" || emit false signature_failed 'runtime manifest signature verification failed' "$EX_SIGNATURE"
+	manifest_compatible "$idx" || emit false incompatible 'latest runtime is not compatible with this device' "$EX_INCOMPATIBLE"
+	manifest_release "$idx" >"$LATEST_STATE.new.$$" && mv -f "$LATEST_STATE.new.$$" "$LATEST_STATE"
+	current="$(current_runtime)"
+	if [ "$(release_number "$idx")" -gt "$(release_number "$current")" ]; then
+		emit true ok 'new compatible runtime release is available' "$EX_OK" "{\"current_release\":\"$(json_escape "$(manifest_release "$current" 2>/dev/null || echo unknown)")\",\"latest_release\":\"$(json_escape "$(manifest_release "$idx")")\"}"
+	fi
+	emit true no_update 'installed runtime is current' "$EX_OK" '{}'
+fi
+
+# Normal command dispatch.  Write operations take one global non-blocking lock.
+case "${1:-}" in
+	check|upgrade|rollback|reconcile|gc)
+		acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+		;;
+esac
+
+case "${1:-}" in
+	status) emit true ok 'runtime status' "$EX_OK" "$(do_status)" ;;
+	list) emit true ok 'runtime generations' "$EX_OK" "$(do_list)" ;;
+	verify)
+		runtime="$(current_runtime)"
+		manifest_compatible "$runtime" && runtime_health "$runtime" || emit false health_failed 'active runtime verification failed' "$EX_HEALTH"
+		emit true ok 'active runtime verified' "$EX_OK" "$(do_status)"
+		;;
+	reconcile)
+		begin_operation
+		reconcile_runtime || emit false incompatible 'runtime reconcile failed' "$EX_INCOMPATIBLE"
+		emit true ok 'runtime reconciled' "$EX_OK" "$(do_status)"
+		;;
+	rollback)
+		data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"; ensure_layout || emit false no_data 'cannot initialize runtime storage' "$EX_NO_DATA"; begin_operation
+		rollback_to_previous || emit false health_failed 'runtime rollback failed health verification' "$EX_HEALTH"
+		emit true ok 'runtime rolled back' "$EX_OK" "$(do_status)"
+		;;
+	upgrade) do_upgrade ;;
+	gc) do_gc ;;
+	*) usage; exit "$EX_USAGE" ;;
+esac

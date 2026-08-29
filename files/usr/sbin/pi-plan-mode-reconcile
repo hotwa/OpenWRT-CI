@@ -1,0 +1,28 @@
+#!/bin/sh
+# Keep preserved Pi settings pointed at the active immutable generation.
+set -eu
+SETTINGS_DIR="${PI_SETTINGS_DIR:-/root/.pi/agent}"
+SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+EXTENSION_PATH="/tmp/agent-runtime-pi-plan-mode.ts"
+NODE_BIN="/opt/node/bin/node"
+[ -x "$NODE_BIN" ] || exit 0
+mkdir -p "$SETTINGS_DIR"
+"$NODE_BIN" - "$SETTINGS_FILE" "$EXTENSION_PATH" <<'NODE'
+const fs = require('node:fs'), path = require('node:path');
+const [settingsPath, extensionPath] = process.argv.slice(2);
+let settings = {};
+if (fs.existsSync(settingsPath)) {
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); }
+  catch (e) { throw new Error(`refusing to overwrite invalid Pi settings: ${e.message}`); }
+}
+if (!settings || Array.isArray(settings) || typeof settings !== 'object') throw new Error('Pi settings must be an object');
+if (!Array.isArray(settings.packages ?? [])) throw new Error('Pi settings packages must be an array');
+settings.packages = (settings.packages ?? []).filter(v => v !== 'pi-plan-mode' && !(v && typeof v === 'object' && v.source === 'pi-plan-mode'));
+if (!Array.isArray(settings.extensions ?? [])) throw new Error('Pi settings extensions must be an array');
+settings.extensions = (settings.extensions ?? []).filter(v => v !== '/opt/node/lib/node_modules/pi-plan-mode/plan-mode.ts' && v !== '/data/node/lib/node_modules/pi-plan-mode/plan-mode.ts');
+if (!settings.extensions.includes(extensionPath)) settings.extensions.push(extensionPath);
+const mode = fs.existsSync(settingsPath) ? fs.statSync(settingsPath).mode & 0o777 : 0o600;
+const tmp = path.join(path.dirname(settingsPath), `.settings.json.pi-plan-mode.${process.pid}`);
+try { fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`, {mode}); fs.chmodSync(tmp, mode); fs.renameSync(tmp, settingsPath); }
+finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+NODE

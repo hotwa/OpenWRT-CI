@@ -21,7 +21,10 @@ set -euo pipefail
 ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PACKAGE_JSON="$MANIFEST_DIR/package.json"
-PACKAGE_LOCK="$MANIFEST_DIR/package-lock.json"
+PACKAGE_LOCK="${AGENT_RUNTIME_PACKAGE_LOCK:-$MANIFEST_DIR/package-lock.json}"
+RUNTIME_RELEASE_FILE="${AGENT_RUNTIME_RELEASE_FILE:-$MANIFEST_DIR/runtime-release}"
+PI_PLAN_VENDOR_SCRIPT="$ROOT_DIR/Scripts/refresh_pi_plan_mode_vendor.sh"
+PI_PLAN_PROVENANCE="$MANIFEST_DIR/vendor/pi-plan-mode/provenance.json"
 MULTICA_SCRIPT="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
 UV_SCRIPT="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 GUARD_DIR="$ROOT_DIR/tests"
@@ -105,6 +108,29 @@ multica_current_version() {
 	sed -n 's/^MULTICA_VERSION="${MULTICA_VERSION:-\([^"]*\)}"$/\1/p' "$MULTICA_SCRIPT"
 }
 
+pi_plan_vendor_current() {
+	node -e '
+		const metadata = require(process.argv[1]);
+		if (!/^\d+\.\d+\.\d+$/.test(metadata.version || "") ||
+			!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(metadata.npm?.integrity || "")) process.exit(3);
+		process.stdout.write(`${metadata.version}\t${metadata.npm.integrity}`);
+	' "$PI_PLAN_PROVENANCE" 2>/dev/null || return 1
+}
+
+pi_plan_vendor_latest() {
+	npm view pi-plan-mode version dist.integrity --json |
+		node -e '
+			let input = "";
+			process.stdin.on("data", (chunk) => { input += chunk; });
+			process.stdin.on("end", () => {
+				const metadata = JSON.parse(input);
+				if (!/^\d+\.\d+\.\d+$/.test(metadata.version || "") ||
+					!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(metadata.dist?.integrity || "")) process.exit(3);
+				process.stdout.write(`${metadata.version}\t${metadata.dist.integrity}`);
+			});
+		' || return 1
+}
+
 multica_latest_version() {
 	local tag
 
@@ -130,7 +156,7 @@ set_multica_version() {
 
 # Emits "name<TAB>current<TAB>latest" for everything that has moved.
 resolve_plan() {
-	local name current latest lines=""
+	local name current latest lines="" vendor_current vendor_latest vendor_current_version vendor_current_integrity vendor_latest_version vendor_latest_integrity
 
 	while IFS= read -r name; do
 		[ -n "$name" ] || continue
@@ -150,6 +176,15 @@ resolve_plan() {
 		lines="${lines}multica-cli	${current}	${latest}
 "
 
+	vendor_current="$(pi_plan_vendor_current)" || die "unable to read vendored pi-plan-mode provenance"
+	vendor_latest="$(pi_plan_vendor_latest)" || die "unable to resolve latest pi-plan-mode metadata"
+	IFS=$'\t' read -r vendor_current_version vendor_current_integrity <<<"$vendor_current"
+	IFS=$'\t' read -r vendor_latest_version vendor_latest_integrity <<<"$vendor_latest"
+	[ "$vendor_current_version" = "$vendor_latest_version" ] && \
+		[ "$vendor_current_integrity" = "$vendor_latest_integrity" ] ||
+		lines="${lines}pi-plan-mode-vendor	${vendor_current_version}	${vendor_latest_version}
+"
+
 	printf '%s' "$lines"
 }
 
@@ -163,6 +198,11 @@ apply_plan() {
 			log_info "Multica ${current} -> ${latest}"
 			continue
 		fi
+		if [ "$name" = "pi-plan-mode-vendor" ]; then
+			"$PI_PLAN_VENDOR_SCRIPT" apply "$latest"
+			log_info "vendored pi-plan-mode ${current} -> ${latest}"
+			continue
+		fi
 		set_manifest_version "$name" "$latest"
 		[ "$(manifest_version "$name")" = "$latest" ] ||
 			die "failed to record ${name}@${latest} in $PACKAGE_JSON"
@@ -170,9 +210,67 @@ apply_plan() {
 	done <<<"$plan"
 
 	log_info "Re-resolving the locked agent runtime..."
-	npm install --package-lock-only --no-audit --no-fund --silent \
+	# pi-wechat-assistant advertises an obsolete optional Pi peer alongside the
+	# maintained scope.  Never let npm synthesize that legacy tree while
+	# re-resolving this lock; the supported peer is already explicitly pinned.
+	npm install --package-lock-only --legacy-peer-deps --no-audit --no-fund --silent \
 		--prefix "$MANIFEST_DIR" >/dev/null
 	[ -s "$PACKAGE_LOCK" ] || die "$PACKAGE_LOCK is empty after re-resolution"
+	sanitize_legacy_pi_optional_peer
+}
+
+# pi-wechat-assistant publishes two *optional* peers: the maintained
+# @earendil-works scope and the obsolete @mariozechner scope.  npm records
+# both in package-lock even though the latter is not installed.  Keep the
+# lock free of the retired scope without weakening peer resolution generally:
+# refuse any occurrence except that exact optional metadata, then remove it.
+sanitize_legacy_pi_optional_peer() {
+	node - "$PACKAGE_LOCK" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const legacyNames = new Set([
+  '@mariozechner/pi-coding-agent',
+  '@mariozechner/pi-ai',
+  '@mariozechner/pi-tui',
+]);
+const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+const packages = lock.packages;
+if (!packages || typeof packages !== 'object') throw new Error('package-lock has no packages map');
+const containsLegacyPiScope = value => {
+  if (typeof value === 'string') return [...legacyNames].some(name => value.includes(name));
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value).some(([key, item]) =>
+    [...legacyNames].some(name => key.includes(name)) || containsLegacyPiScope(item));
+};
+for (const [name, entry] of Object.entries(packages)) {
+  if (name === 'node_modules/pi-wechat-assistant') continue;
+  if (containsLegacyPiScope(name) || containsLegacyPiScope(entry)) {
+    throw new Error(`legacy Pi scope appeared outside pi-wechat-assistant optional peer metadata: ${name}`);
+  }
+}
+const wechat = packages['node_modules/pi-wechat-assistant'];
+if (!wechat || typeof wechat !== 'object') throw new Error('missing pi-wechat-assistant lock entry');
+const peer = wechat.peerDependencies || {};
+const peerMeta = wechat.peerDependenciesMeta || {};
+const knownLegacyPeer = '@mariozechner/pi-coding-agent';
+for (const legacy of legacyNames) {
+  if (legacy === knownLegacyPeer) continue;
+  if (legacy in peer || legacy in peerMeta || containsLegacyPiScope(wechat.dependencies?.[legacy]) || containsLegacyPiScope(wechat.optionalDependencies?.[legacy])) {
+    throw new Error(`unsupported legacy Pi scope in pi-wechat-assistant lock metadata: ${legacy}`);
+  }
+}
+if (knownLegacyPeer in peer || knownLegacyPeer in peerMeta) {
+  if (peer[knownLegacyPeer] !== '*' || peerMeta[knownLegacyPeer]?.optional !== true) {
+    throw new Error('legacy Pi scope is not the expected optional pi-wechat-assistant peer');
+  }
+  delete peer[knownLegacyPeer];
+  delete peerMeta[knownLegacyPeer];
+  if (Object.keys(peer).length) wechat.peerDependencies = peer; else delete wechat.peerDependencies;
+  if (Object.keys(peerMeta).length) wechat.peerDependenciesMeta = peerMeta; else delete wechat.peerDependenciesMeta;
+}
+if (containsLegacyPiScope(lock)) throw new Error('failed to remove retired Pi scope from package-lock');
+fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
+NODE
 }
 
 python_series_mirror() {
@@ -190,7 +288,7 @@ verify_target_cpu() {
 
 	npm_config_arch="$cpu" npm_config_platform=linux npm_config_libc=musl \
 		npm ci --prefix "$work_dir" --omit=dev --no-audit --no-fund \
-			--ignore-scripts --os=linux --cpu="$cpu" --libc=musl --silent \
+			--legacy-peer-deps --ignore-scripts --os=linux --cpu="$cpu" --libc=musl --silent \
 			>"$work_dir/npm-ci.log" 2>&1 || {
 			tail -n 30 "$work_dir/npm-ci.log" >&2 || true
 			die "npm ci could not install the re-resolved lock for linux-${cpu}-musl"
@@ -232,6 +330,19 @@ run_guard_suite() {
 	log_info "Repository guard suite passed."
 }
 
+advance_runtime_release() {
+	local current next
+	current="$(sed -n '1p' "$RUNTIME_RELEASE_FILE" 2>/dev/null || true)"
+	[[ "$current" =~ ^[1-9][0-9]*$ ]] || die "invalid runtime release counter in $RUNTIME_RELEASE_FILE"
+	# This counter is a release sequence, not a timestamp.  In particular it
+	# must not be derived from a router's wall clock: an old firmware clock must
+	# never make a valid signed update appear to move backwards.
+	[ "$current" -lt 9007199254740991 ] || die "runtime release counter exceeds JSON safe integer range"
+	next=$((current + 1))
+	printf '%s\n' "$next" >"$RUNTIME_RELEASE_FILE"
+	log_info "Advanced runtime release $current -> $next."
+}
+
 main() {
 	local mode="${1:-plan}" plan
 
@@ -243,10 +354,15 @@ main() {
 	require_tools
 	[ -f "$PACKAGE_JSON" ] && [ -f "$PACKAGE_LOCK" ] ||
 		die "locked agent runtime manifest is incomplete"
+	[ -f "$PI_PLAN_VENDOR_SCRIPT" ] && [ -f "$PI_PLAN_PROVENANCE" ] ||
+		die "vendored pi-plan-mode refresh chain is incomplete"
 	[ -f "$MULTICA_SCRIPT" ] && [ -f "$UV_SCRIPT" ] ||
 		die "runtime fetch scripts are missing"
 
 	plan="$(resolve_plan)"
+	# Validate the upstream archive and the narrowly reviewed PR #9 scope patch
+	# even when its version has not moved; registry substitutions fail closed.
+	"$PI_PLAN_VENDOR_SCRIPT" plan
 	if [ -z "$plan" ]; then
 		log_info "already on the newest app-layer releases"
 		return 0
@@ -266,6 +382,7 @@ main() {
 			verify_target_cpu arm64
 			verify_target_cpu x64
 			run_guard_suite
+			advance_runtime_release
 			log_info "applied and verified; ready to commit"
 			;;
 	esac

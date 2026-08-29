@@ -1,36 +1,17 @@
 #!/bin/sh /etc/rc.common
-# Starts the one-shot hermes-agent runtime provisioner described in
-# /usr/sbin/hermes-runtime-provision.
+# One-shot local Hermes Core health coordinator. The Core is baked into /opt
+# (or selected by agent-runtime), so it must never wait for WAN at boot.
 
 START=96
 STOP=10
 
 PROVISIONER="/usr/sbin/hermes-runtime-provision"
-DATA_ROOT="${HERMES_DATA_ROOT:-/data}"
-MOUNTS_FILE="${HERMES_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
 PID_FILE="/var/run/hermes-runtime-provision.pid"
-
-data_is_ready() {
-	local probe="$DATA_ROOT/.hermes-runtime-write-probe.$$"
-
-	awk -v target="$DATA_ROOT" '$2 == target { found=1 } END { exit !found }' \
-		"$MOUNTS_FILE" 2>/dev/null || return 1
-	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
-	( umask 077; : >"$probe" ) 2>/dev/null || return 1
-	rm -f "$probe"
-	return 0
-}
 
 start() {
 	[ -x "$PROVISIONER" ] || return 0
-	data_is_ready || {
-		echo "hermes-runtime: $DATA_ROOT is not a writable mount; skipping" >&2
-		return 0
-	}
-
-	mkdir -p "$DATA_ROOT"
 	start-stop-daemon -S -b -p "$PID_FILE" -x "$PROVISIONER" ||
-		echo "hermes-runtime: unable to start the provisioner" >&2
+		echo "hermes-runtime: unable to start local health coordinator" >&2
 }
 
 stop() {

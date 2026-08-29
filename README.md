@@ -99,17 +99,19 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 本仓库深度内建了专为边缘路由器定制的 **AI 智能体运行时生态**：
 
-- **CI 构建期秒级预装**（见 `Scripts/fetch_node_runtime.sh` 与 `Scripts/fetch_uv_runtime.sh`）：
-  - **Node.js 24 LTS**（针对 `linux-arm64-musl` / `linux-x64-musl` 的静态构建，零编译开销秒级注入）；
-  - **Python 3.12 运行时 + `uv` 极速包管理器**；
+- **固件基线与签名 generation**（见 `Scripts/fetch_node_runtime.sh`、`Scripts/fetch_uv_runtime.sh` 和 `agent-runtime`）：
+  - **Node.js 24 LTS**（针对 `linux-arm64-musl` / `linux-x64-musl` 的静态构建）；
+  - pinned `uv` 与离线 CPython 3.11/3.12/3.13 构建镜像；Hermes Core 使用 3.11 后会移除重复 archive，最终只保留 Core venv 的那一份解释器；
   - **`pnpm` / `npm` / `npx` / `corepack`** 全局包管理；
   - **OpenCode CLI**（`opencode-ai`）及 `@tarquinen/opencode-dcp`、`@mohak34/opencode-notifier`、`opencode-conductor-plugin` 扩展；
   - **Pi Coding Agent**（`@earendil-works/pi-coding-agent`）及 `@aaronkyriesenbach/pi-package-manager`、`btw-pi`、`pi-plan-mode`、`pi-web-search`、`pi-wechat-assistant` 扩展；
-  - **Nous Research Hermes Agent**（`hermes-agent`，支持自主进化与多平台消息网关）；
+  - **Nous Research Hermes Agent**（`hermes-agent` 的 locked、Core-only 离线运行时；首启只做本地健康检查，不联网 provision）；
   - **OpenClaw**（`luci-app-openclaw`，提供 LuCI 界面管理、微信/TG 网关通道与 wrtbak 云备份集成）。
 - **环境直通与 SSH 智能提醒**：
-  - `/etc/profile.d/20-node-agent.sh` 自动将运行时注入全局 `$PATH`；
-  - `/etc/profile.d/30-agent-update-check.sh` 在 SSH 登录时非阻塞展示 Agent 状态看板并提供升级指引。
+  - `/etc/profile.d/20-node-agent.sh` 优先解析 Runtime Manager 选定的 generation；`/data/node` 仅是指向该 generation 的兼容链接，不是可写 npm/pnpm 前缀；
+  - `/etc/profile.d/30-agent-update-check.sh` 在 SSH 登录时非阻塞展示 Agent 状态，并引导使用 `agent-runtime upgrade`、verify 或 rollback；设备不执行 `npm install @latest`、`pnpm update` 或 `hermes update`。
+
+应用层 pin 由 `Agent-Runtime-Bump.yml` 在每小时 UTC 第 0 分钟检查。只有 arm64/x64 musl 完整 generation 均通过 CI probe、仓库守卫、签名及发布后，新的 pin 才会进入 `main`；设备下载并验签完整 generation 后原子切换。这个流程不是任何型号的真机门禁：固件推广仍须完成相应设备的独立刷写、启动、网络与回退验证。详见 `docs/agent-runtime-version-policy.md` 与 `docs/agent-runtime-release.md`。
 
 # Tailscale / Headscale 全局开箱即用策略
 
@@ -133,4 +135,3 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 3. `luci-app-nikki`、`luci-app-openclaw` 与 `luci-app-wrtbak` 插件及护栏测试；
 4. 京东云 `re-cs-02`, `re-cs-01`, `re-ss-01`, `re-cs-07` 设备适配与 Athena LED 双包规则；
 5. `CPE-5G` 双构建及 mwan3 链路规则。
-

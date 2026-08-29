@@ -11,6 +11,7 @@ UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 MULTICA_FETCH="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
 CORE_WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 PACKAGE_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
+RUNTIME_RELEASE_FILE="$ROOT_DIR/Scripts/node-agent-runtime/runtime-release"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -20,9 +21,10 @@ fail() {
 }
 
 for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH" \
-  "$UV_FETCH" "$MULTICA_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON"; do
+  "$UV_FETCH" "$MULTICA_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON" "$RUNTIME_RELEASE_FILE"; do
   [ -f "$path" ] || fail "missing $path"
 done
+grep -Eq '^[1-9][0-9]*$' "$RUNTIME_RELEASE_FILE" || fail "invalid runtime release counter"
 
 bash -n "$BUMP_SCRIPT" || fail "bump_agent_runtime.sh does not parse"
 
@@ -39,6 +41,7 @@ run_as_lib() {
     # shellcheck disable=SC1090
     source "$WORK_DIR/lib.sh"
     [ -z "${TEST_PACKAGE_JSON:-}" ] || PACKAGE_JSON="$TEST_PACKAGE_JSON"
+    [ -z "${TEST_PACKAGE_LOCK:-}" ] || PACKAGE_LOCK="$TEST_PACKAGE_LOCK"
     "$@"
   )
 }
@@ -70,9 +73,17 @@ fi
 # Commit/push must come after the gates, and only for the floating layer.
 BUMP_STEP_LINE="$(grep -n 'bump_agent_runtime.sh' "$WORKFLOW" | head -n1 | cut -d: -f1)"
 PUSH_STEP_LINE="$(grep -n 'git push' "$WORKFLOW" | head -n1 | cut -d: -f1)"
+SIGN_STEP_LINE="$(grep -n 'Sign index and manifests' "$WORKFLOW" | head -n1 | cut -d: -f1)"
+PUBLISH_STEP_LINE="$(grep -n 'Publish signed complete stack release' "$WORKFLOW" | head -n1 | cut -d: -f1)"
 [ -n "$PUSH_STEP_LINE" ] || fail "workflow never pushes"
 [ "$BUMP_STEP_LINE" -lt "$PUSH_STEP_LINE" ] ||
   fail "workflow pushes before the bump engine has verified anything"
+[ -n "$SIGN_STEP_LINE" ] && [ -n "$PUBLISH_STEP_LINE" ] ||
+  fail "workflow lost signing or stable publication"
+[ "$SIGN_STEP_LINE" -lt "$PUSH_STEP_LINE" ] && [ "$PUSH_STEP_LINE" -lt "$PUBLISH_STEP_LINE" ] ||
+  fail "workflow must sign, commit/push, then publish the stable channel"
+grep -q 'incomplete signed' "$WORKFLOW" ||
+  fail "workflow does not document stable-channel recovery after a partial publish"
 for base in fetch_node_runtime.sh fetch_uv_runtime.sh; do
   if grep -q "$base" "$WORKFLOW"; then
     fail "Agent-Runtime-Bump.yml must not touch the pinned runtime base ($base)"
@@ -95,17 +106,17 @@ if grep -F 'UV_SCRIPT' "$BUMP_SCRIPT" | grep -Eq 'sed -i|install |cp |>>'; then
   fail "bump engine writes the pinned uv/CPython base"
 fi
 
-# --- build-time interlock: hermes' managed Python must exist in the mirror ---
+# --- build-time interlock: the baked Hermes Core must match its bridge ---
 grep -q '"pythonVersion"' "$NODE_FETCH" ||
   fail "fetch_node_runtime.sh no longer reads hermes-agent's managed pythonVersion"
-grep -q 'opt/uv/python-mirror/manifest.txt' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh does not check the offline CPython mirror manifest"
+grep -q 'opt/agent-runtime/hermes-core.json' "$NODE_FETCH" ||
+  fail "fetch_node_runtime.sh does not check the offline Hermes Core metadata"
 grep -q 'HERMES_PYTHON_SERIES=' "$NODE_FETCH" ||
   fail "fetch_node_runtime.sh does not publish HERMES_PYTHON_SERIES"
-grep -Eq 'PYTHON_SERIES in Scripts/fetch_uv_runtime\.sh' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh does not name PYTHON_SERIES in its failure hint"
+grep -q 'Core metadata Python' "$NODE_FETCH" ||
+  fail "fetch_node_runtime.sh does not verify the Hermes Core Python contract"
 
-# The interlock reads a manifest the uv step writes, so the call order is load-bearing.
+# uv must still precede Node: Hermes Core expands its fixed Python from that mirror.
 UV_LINE="$(grep -n 'Scripts/fetch_uv_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
 NODE_LINE="$(grep -n 'Scripts/fetch_node_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
 MULTICA_LINE="$(grep -n 'Scripts/fetch_multica_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
@@ -177,6 +188,58 @@ node -e '
   fail "set_manifest_version dropped the trailing newline"
 [ "$(tr -cd '\r' <"$WORK_DIR/package.json" | wc -c)" = "0" ] ||
   fail "set_manifest_version wrote CRLF line endings into package.json"
+
+# npm records pi-wechat-assistant's obsolete optional peer even though the
+# maintained Pi scope is pinned.  The sanitizer may remove exactly that
+# metadata, and it must fail closed for every other legacy occurrence.
+node - "$WORK_DIR/legacy-peer.lock" <<'NODE'
+const fs = require('node:fs');
+fs.writeFileSync(process.argv[2], JSON.stringify({
+  lockfileVersion: 3,
+  packages: {
+    '': {},
+    'node_modules/pi-wechat-assistant': {
+      peerDependencies: {
+        '@earendil-works/pi-coding-agent': '*',
+        '@mariozechner/pi-coding-agent': '*'
+      },
+      peerDependenciesMeta: {
+        '@earendil-works/pi-coding-agent': { optional: true },
+        '@mariozechner/pi-coding-agent': { optional: true }
+      }
+    }
+  }
+}, null, 2) + '\n');
+NODE
+TEST_PACKAGE_LOCK="$WORK_DIR/legacy-peer.lock" run_as_lib sanitize_legacy_pi_optional_peer ||
+  fail "legacy Pi optional-peer sanitizer rejected the expected pi-wechat metadata"
+if grep -q '@mariozechner/pi-coding-agent' "$WORK_DIR/legacy-peer.lock"; then
+  fail "legacy Pi optional-peer sanitizer left the retired scope in the lock"
+fi
+node - "$WORK_DIR/unexpected-legacy.lock" <<'NODE'
+const fs = require('node:fs');
+fs.writeFileSync(process.argv[2], JSON.stringify({ packages: {
+  'node_modules/pi-wechat-assistant': {},
+  'node_modules/unexpected': { peerDependencies: { '@mariozechner/pi-coding-agent': '*' } }
+} }) + '\n');
+NODE
+if TEST_PACKAGE_LOCK="$WORK_DIR/unexpected-legacy.lock" run_as_lib sanitize_legacy_pi_optional_peer >"$WORK_DIR/unexpected-legacy.log" 2>&1; then
+  fail "legacy Pi optional-peer sanitizer accepted an unexpected lock occurrence"
+fi
+if grep -q '@mariozechner/pi-coding-agent' "$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"; then
+  fail "package-lock must not retain the retired Pi scope"
+fi
+
+# runtime_release is a strict sequence.  It must not use a wall clock that an
+# old router firmware could report behind an already-installed generation.
+printf '41\n' >"$WORK_DIR/runtime-release"
+AGENT_RUNTIME_RELEASE_FILE="$WORK_DIR/runtime-release" run_as_lib advance_runtime_release >/dev/null ||
+  fail "runtime release counter did not advance"
+[ "$(cat "$WORK_DIR/runtime-release")" = "42" ] ||
+  fail "runtime release counter is not strictly sequential"
+if grep -q 'date -u' "$BUMP_SCRIPT"; then
+  fail "runtime release counter must not derive monotonicity from wall-clock time"
+fi
 
 # The policy is only real if both documents point at the same enforcement.
 grep -q 'agent-runtime-version-policy.md' "$AGENTS_DOC" ||

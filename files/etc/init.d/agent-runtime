@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+# Reconcile after uv-storage (90) and before Multica (95) / Hermes (96).
+START=91
+STOP=10
+
+start() {
+	[ -x /usr/sbin/pi-plan-mode-reconcile ] && /usr/sbin/pi-plan-mode-reconcile >/dev/null 2>&1 || true
+	/usr/sbin/agent-runtime reconcile --json >/tmp/agent-runtime-reconcile.json 2>&1 || {
+		logger -t agent-runtime 'boot reconcile failed; firmware baseline remains selected where possible'
+		return 0
+	}
+}
+
+restart() {
+	start
+}

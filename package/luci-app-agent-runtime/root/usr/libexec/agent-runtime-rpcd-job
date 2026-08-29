@@ -1,0 +1,35 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# A deliberately closed background-job launcher for luci-app-agent-runtime.
+
+set -eu
+
+action="${1:-}"
+case "$action" in
+	check|upgrade|rollback|verify|gc) ;;
+	*) exit 64 ;;
+esac
+
+job_root='/tmp/agent-runtime-rpcd-jobs'
+umask 077
+mkdir -p "$job_root"
+job_dir="$(mktemp -d "$job_root/job.XXXXXX")" || exit 1
+job_id="${job_dir##*/}"
+
+printf '%s\n' 'queued' >"$job_dir/state"
+printf '%s\n' "$job_id"
+
+(
+	printf '%s\n' 'running' >"$job_dir/state"
+	set +e
+	/usr/sbin/agent-runtime "$action" --json >"$job_dir/raw" 2>&1
+	rc=$?
+	set -e
+	# The web UI can only ever read this capped final result, never raw output.
+	/usr/bin/tail -c 16384 "$job_dir/raw" >"$job_dir/result" 2>/dev/null || :
+	rm -f "$job_dir/raw"
+	printf '%s\n' "$rc" >"$job_dir/exit_code"
+	printf '%s\n' 'completed' >"$job_dir/state"
+) >/dev/null 2>&1 &
+
+exit 0

@@ -466,6 +466,7 @@ jobs:
           GITHUB_TOKEN="${{ github.token }}" $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/

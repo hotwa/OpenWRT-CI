@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "version": "0.4.8",
+  "license": {
+    "spdx": "MIT",
+    "notice": "Upstream package metadata declares MIT. The 0.4.8 npm archive contains no LICENSE file; this vendored copy preserves the canonical MIT text.",
+    "sha256": "5bc925184086723b3c5880e0b5b220cabeed6acfade7bed8f87d29af1e25c88d"
+  },
+  "upstream": {
+    "repository": "qmx/pi-plan-mode",
+    "release_commit": "16c6ab1ca3fffeb57bc616731509da3c80fe2926",
+    "commit": "8bf61ebb34647c1d22848fb951a2234965693cef",
+    "pull_request": 9,
+    "pull_url": "https://github.com/qmx/pi-plan-mode/pull/9",
+    "scope_migration": "PR #9 only replaces @mariozechner/pi-coding-agent and @mariozechner/pi-ai with @earendil-works equivalents, and widens the Pi peer range as reviewed in that PR."
+  },
+  "npm": {
+    "tarball": "https://registry.npmjs.org/pi-plan-mode/-/pi-plan-mode-0.4.8.tgz",
+    "integrity": "sha512-UZ5mrHNiGgx69cgK01OWR5TzcYFsKiJQg4ERtz3a5wzUtElyR468Lci4JqxkDgbc1dYPUr58Q+YnIj9aEoRiUQ==",
+    "sha256": "c0e9b0a28681d5b47d6ca54df3c9cf0be785c6bda555539e1bc17d1c78269305"
+  },
+  "source_layout": [
+    "package.json",
+    "README.md",
+    "plan-mode.ts"
+  ],
+  "source_sha256": {
+    "package.json": "745c05ba1a8ff9a3ed2e684d1ce532330b9cdba76872993db0164c2b70727f3a",
+    "README.md": "4cacfeb93b06d833c50c3efb86a77f3fdbcb5bbffc04cfc547da751bdf3b927b",
+    "plan-mode.ts": "0fa4a5f99827aaefe84632932a1fe0a68550b339f38add6ee53234f80112917b"
+  }
+}

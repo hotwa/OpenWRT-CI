@@ -29,14 +29,12 @@ write_runtime_env() {
 		"$DATA_ROOT/uv/python-cache" \
 		"$DATA_ROOT/pnpm/store" \
 		"$DATA_ROOT/npm/cache" \
-		"$DATA_ROOT/node/bin" \
 		"$DATA_ROOT/cache" || return 1
 	chmod 0700 \
 		"$DATA_ROOT/uv_cache" \
 		"$DATA_ROOT/uv" \
 		"$DATA_ROOT/pnpm" \
 		"$DATA_ROOT/npm" \
-		"$DATA_ROOT/node" \
 		"$DATA_ROOT/cache" 2>/dev/null || true
 
 	( umask 077; cat >"$temporary" <<EOF
@@ -48,8 +46,8 @@ export UV_PYTHON_CACHE_DIR=$DATA_ROOT/uv/python-cache
 export PNPM_STORE_DIR=$DATA_ROOT/pnpm/store
 export NPM_CONFIG_CACHE=$DATA_ROOT/npm/cache
 export npm_config_cache=$DATA_ROOT/npm/cache
-# The baked /opt/node tree is squashfs read-only, so global installs and
-# upgrades have to land on /data and shadow it through PATH.
+# /data/node is a compatibility symlink managed by agent-runtime (START=91).
+# It points at the active immutable generation; direct npm writes are refused.
 export NPM_CONFIG_PREFIX=$DATA_ROOT/node
 export npm_config_prefix=$DATA_ROOT/node
 export PNPM_HOME=$DATA_ROOT/node/bin

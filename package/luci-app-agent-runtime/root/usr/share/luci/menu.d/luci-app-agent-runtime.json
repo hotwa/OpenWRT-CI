@@ -1,0 +1,13 @@
+{
+	"admin/system/agent-runtime": {
+		"title": "Agent 运行环境",
+		"order": 75,
+		"action": {
+			"type": "view",
+			"path": "agent-runtime/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-agent-runtime" ]
+		}
+	}
+}

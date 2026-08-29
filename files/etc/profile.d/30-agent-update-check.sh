@@ -21,8 +21,8 @@ print_agent_status() {
 	printf "\033[1;36m│\033[0m  • Pi CLI:   %-48s \033[1;36m│\033[0m\n" "$pi_v"
 	printf "\033[1;36m│\033[0m  • Hermes:   %-48s \033[1;36m│\033[0m\n" "$hm_v"
 	printf "\033[1;36m│\033[0m                                                              \033[1;36m│\033[0m\n"
-	printf "\033[1;36m│\033[0m  💡 Upgrade: \033[1;33mnpm i -g --prefix /data/node <package>@latest\033[0m     \033[1;36m│\033[0m\n"
-	printf "\033[1;36m│\033[0m  💡 Hermes rolling update: \033[1;33mhermes update\033[0m                     \033[1;36m│\033[0m\n"
+	printf "\033[1;36m│\033[0m  💡 Signed stack upgrade: \033[1;33magent-runtime upgrade\033[0m             \033[1;36m│\033[0m\n"
+	printf "\033[1;36m│\033[0m  💡 Verify / rollback: \033[1;33magent-runtime verify | rollback\033[0m      \033[1;36m│\033[0m\n"
 	printf "\033[1;36m└──────────────────────────────────────────────────────────────┘\033[0m\n\n"
 }
 

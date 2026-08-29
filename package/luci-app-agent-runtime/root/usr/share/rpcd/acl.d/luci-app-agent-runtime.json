@@ -1,0 +1,15 @@
+{
+	"luci-app-agent-runtime": {
+		"description": "Grant access to the signed Agent Runtime manager",
+		"read": {
+			"ubus": {
+				"agent-runtime": [ "status", "list", "job_status", "operation_log" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"agent-runtime": [ "check", "upgrade", "rollback", "verify", "gc" ]
+			}
+		}
+	}
+}

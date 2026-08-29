@@ -8,18 +8,18 @@
 ## Edge AI Agent ecosystem and runtime (Multica / OpenCode / Pi / Hermes)
 
 - **Primary Workflow**: Multica orchestration + OpenCode / Pi CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
-- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and `Scripts/fetch_uv_runtime.sh` (`uv` + the offline CPython 3.11/3.12/3.13 mirror) in `WRT-CORE.yml`.
+- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static), `Scripts/fetch_uv_runtime.sh` (`uv` + the offline CPython 3.11/3.12/3.13 build mirror), `Scripts/build_hermes_core.sh`, and baseline finalization in `WRT-CORE.yml`.
 - Preserve pre-installed CLI tools and extensions:
   - `opencode-ai` (`opencode` CLI) + `@tarquinen/opencode-dcp`, `@mohak34/opencode-notifier`, `opencode-conductor-plugin`
   - `@earendil-works/pi-coding-agent` (`pi` CLI) + `@aaronkyriesenbach/pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-wechat-assistant`
   - Nous Research `hermes-agent` (`hermes` CLI)
   - `luci-app-openclaw` (WeChat/TG gateway and LuCI manager)
-- Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner).
+- Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner and signed-generation guidance).
 - Keep `homeproxy`, `daed`, and `dae` pruned from `Config/GENERAL.txt` in favor of Nikki to prevent multi-proxy conflicts and save rootfs space.
-- Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. Layered policy: the app layer (opencode, pi, hermes, their extensions, pnpm, Multica) auto-follows upstream latest via `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`, which commits straight to `main` only after the arm64/x64 musl cross-install, hermes managed-CPython, and repository guard gates all pass.
+- Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. Layered policy: the app layer (opencode, pi, hermes, their extensions, pnpm, Multica) is checked hourly by `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`; it commits to `main` only after complete arm64/x64 musl generations have passed probes, repository guards, and signed release publication. Do not treat those CI probes as a device gate.
 - Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION`, `UV_VERSION` and its SHA256s, `PYTHON_RELEASE_TAG`, `PYTHON_SERIES`, and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
-- Do not remove CPython 3.11 from `PYTHON_SERIES` or drop the build-time check in `write_agent_runtime_policy()`; `hermes-agent`'s postinstall requests managed Python 3.11 through `UV_NO_CONFIG`, so it can only resolve from the local `file:///opt/uv/python-mirror`. Keep the `WRT-CORE.yml` order uv → node → multica; the node step reads the mirror manifest the uv step writes.
-- Global npm/pnpm installs on device must target `/data/node`, never `/opt` (read-only squashfs). `/etc/profile.d/20-node-agent.sh` shadows `/opt/node` for shells, and procd services (`multica`, `hermes-runtime`) must set their own `PATH` because procd never loads `profile.d`.
+- Do not remove CPython 3.11 from `PYTHON_SERIES` or drop the bridge/Core Python-series check in `write_agent_runtime_policy()`. Hermes Core uses the locally mirrored 3.11 during its offline build, then removes only that manifest-verified archive so the Core venv is the sole shipped copy; keep the `WRT-CORE.yml` order uv → node → multica.
+- `/data/node` is an `agent-runtime`-managed compatibility symlink to the active signed immutable generation, not a writable global npm/pnpm prefix; do not replace it or run in-place package updates there. `/etc/profile.d/20-node-agent.sh` resolves the active generation for shells, and procd services (`multica`, `hermes-runtime`) must set their own `PATH` because procd never loads `profile.d`. Hermes is a baked Core-only offline runtime: its boot coordinator performs health checks only and must never provision through the network.
 
 ## Tailscale LAN Gateway and Route Acceptance
 
