@@ -177,7 +177,7 @@ target_exec "$UV_BIN" venv --managed-python --python "$python_series-linux-$npm_
 export UV_PYTHON="$VENV_DIR/bin/python"
 export VIRTUAL_ENV="$VENV_DIR"
 log "syncing locked Hermes Core dependencies (no extras)"
-target_exec "$UV_BIN" sync --locked --no-dev --no-install-project --no-editable --no-progress -C "$RUNTIME_DIR"
+target_exec "$UV_BIN" sync --locked --no-dev --no-install-project --no-editable --no-progress --directory "$RUNTIME_DIR"
 
 # The bridge always resolves the runtime below /opt/node.  A data generation
 # can pass HERMES_RUNTIME_ROOT to the local coordinator without changing this
