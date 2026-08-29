@@ -50,6 +50,40 @@ grep -q 'npm ci' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+grep -q 'fix_opencode_entrypoint' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not replace the host-arch opencode entrypoint"
+  exit 1
+}
+
+grep -q 'opencode-linux-arm64-musl' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not select the arm64 musl opencode binary"
+  exit 1
+}
+
+grep -q 'rm -rf "\$NODE_LIB_DIR"/opencode-linux-' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh keeps the install-only opencode platform packages in the rootfs"
+  exit 1
+}
+
+grep -q 'elf_machine_id' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not verify the opencode entrypoint architecture"
+  exit 1
+}
+
+grep -q 'prune_agent_runtime_deadweight' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not prune agent runtime dead weight"
+  exit 1
+}
+
+for deadweight in \
+  'hermes-agent/runtime/hermes-agent/tests' \
+  'hermes-agent/runtime/hermes-agent/website'; do
+  grep -q "$deadweight" "$FETCH_SCRIPT" || {
+    echo "fetch_node_runtime.sh does not prune hermes-agent $deadweight"
+    exit 1
+  }
+done
+
 for pkg in \
   "opencode-ai" \
   "@earendil-works/pi-coding-agent" \

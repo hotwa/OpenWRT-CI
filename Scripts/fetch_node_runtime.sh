@@ -195,6 +195,9 @@ preinstall_cli_agents_and_extensions() (
 	}
 	cp -a "$staging_dir/node_modules/." "$NODE_LIB_DIR/"
 
+	fix_opencode_entrypoint "$npm_arch"
+	prune_agent_runtime_deadweight
+
 	for bin in pnpm opencode pi hermes; do
 		[ -e "$NODE_LIB_DIR/.bin/$bin" ] || {
 			echo "ERROR: locked agent runtime did not install $bin" >&2
@@ -204,6 +207,103 @@ preinstall_cli_agents_and_extensions() (
 	done
 
 )
+
+elf_header_byte() {
+	od -An -j "$2" -N1 -tu1 -- "$1" | tr -dc '0-9'
+}
+
+# shellcheck disable=SC2310 # set -e is deliberately relaxed inside this predicate helper
+elf_machine_id() {
+	local binary="$1" magic class data lo hi
+	[ -f "$binary" ] || return 1
+	magic="$(elf_header_byte "$binary" 0)"
+	class="$(elf_header_byte "$binary" 4)"
+	data="$(elf_header_byte "$binary" 5)"
+	lo="$(elf_header_byte "$binary" 18)"
+	hi="$(elf_header_byte "$binary" 19)"
+	[ "$magic" = "127" ] && [ "$class" = "2" ] && [ "$data" = "1" ] && \
+		[ -n "$lo" ] && [ -n "$hi" ] || return 1
+	echo $((lo + hi * 256))
+}
+
+# opencode-ai 的 postinstall 在构建 runner 上按 runner 架构把二进制复制成
+# bin/opencode.exe，交叉安装时会把 x86-64/glibc 程序烧进 ARM64 固件；平台包
+# 目录只在安装期使用，运行入口始终是 opencode-ai/bin/opencode.exe。
+fix_opencode_entrypoint() {
+	local npm_arch="$1"
+	local target="$NODE_LIB_DIR/opencode-ai/bin/opencode.exe"
+	local candidates pkg source expected_machine
+	local machine interp
+
+	[ -f "$NODE_LIB_DIR/opencode-ai/package.json" ] || {
+		echo "ERROR: opencode-ai is missing from the locked agent runtime" >&2
+		return 1
+	}
+
+	case "$npm_arch" in
+		arm64)
+			candidates="opencode-linux-arm64-musl"
+			expected_machine=183
+			;;
+		x64)
+			candidates="opencode-linux-x64-baseline-musl opencode-linux-x64-musl"
+			expected_machine=62
+			;;
+		*)
+			echo "ERROR: unsupported npm target $npm_arch" >&2
+			return 1
+			;;
+	esac
+
+	source=""
+	for pkg in $candidates; do
+		if [ -f "$NODE_LIB_DIR/$pkg/bin/opencode" ]; then
+			source="$NODE_LIB_DIR/$pkg/bin/opencode"
+			break
+		fi
+	done
+	[ -n "$source" ] || {
+		echo "ERROR: none of the musl opencode packages ($candidates) was installed" >&2
+		return 1
+	}
+
+	rm -f "$target"
+	cp -f "$source" "$target"
+	chmod 0755 "$target"
+	rm -rf "$NODE_LIB_DIR"/opencode-linux-*
+
+	machine="$(elf_machine_id "$target")" || {
+		echo "ERROR: $target is not an ELF64 little-endian executable" >&2
+		return 1
+	}
+	[ "$machine" = "$expected_machine" ] || {
+		echo "ERROR: opencode entrypoint is ELF machine $machine, expected $expected_machine for $npm_arch" >&2
+		return 1
+	}
+	interp="$(head -c 8192 "$target" | grep -a -m1 -oE '/lib[a-z0-9_]*/ld-[A-Za-z0-9._-]+' || true)"
+	echo "$interp" | grep -q musl || {
+		echo "ERROR: opencode entrypoint interpreter is '$interp', expected a musl loader" >&2
+		return 1
+	}
+
+	log_info "opencode entrypoint now uses the ${npm_arch} musl binary (${interp})."
+}
+
+# hermes-agent 发布物内嵌了完整的 monorepo 测试与文档站，设备端既跑不到也用不到。
+prune_agent_runtime_deadweight() {
+	local path
+	for path in \
+		"$NODE_LIB_DIR/hermes-agent/runtime/hermes-agent/tests" \
+		"$NODE_LIB_DIR/hermes-agent/runtime/hermes-agent/website"
+	do
+		if [ -d "$path" ]; then
+			rm -rf "$path"
+			log_info "Pruned ${path#"$NODE_LIB_DIR"/}."
+		else
+			warn "expected prunable directory is missing: $path"
+		fi
+	done
+}
 
 setup_symlinks() {
 	log_info "Configuring binary symlinks..."
