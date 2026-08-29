@@ -3,6 +3,11 @@ name: RE-SS-01 Build Only
 on:
   workflow_dispatch:
     inputs:
+      DEBUG_SSH:
+        description: 'Hold runner with Tailscale SSH for live debugging'
+        required: false
+        type: boolean
+        default: false
       LAN_IP:
         description: 'Router LAN IP (e.g. 192.168.10.1)'
         required: false
@@ -17,6 +22,7 @@ jobs:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-RE-SS-01
       WRT_THEME: argon
       WRT_NAME: RE-SS-01

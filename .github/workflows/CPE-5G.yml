@@ -6,6 +6,11 @@ name: CPE-5G
 on:
   workflow_dispatch:
     inputs:
+      DEBUG_SSH:
+        description: 'Hold runner with Tailscale SSH for live debugging'
+        required: false
+        type: boolean
+        default: false
       BUILD_BASELINE_A:
         description: '故障隔离时额外构建无 CPE/Lucky/Tailscale/wrtbak overlay 的 A 基线；日常保持关闭。'
         default: false
@@ -37,6 +42,7 @@ jobs:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-706-NOWIFI
       WRT_THEME: argon
       WRT_NAME: CPE-706-A
@@ -63,6 +69,7 @@ jobs:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-706-NOWIFI
       WRT_THEME: argon
       WRT_NAME: CPE-5G

@@ -140,8 +140,16 @@ on:
         required: false
         type: number
         default: 360
+      DEBUG_SSH:
+        required: false
+        type: boolean
+        default: false
     secrets:
       HEADSCALE_OPENWRT_AUTHKEY:
+        required: false
+      HEADSCALE_CI_AUTHKEY:
+        required: false
+      HEADSCALE_URL:
         required: false
       MULTICA_TOKEN:
         required: false
@@ -209,6 +217,7 @@ env:
   WRT_DIR: 'wrt'
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}
+  DEBUG_SSH: ${{inputs.DEBUG_SSH}}
   WRT_PRIVATE_BUILD: 'false'
   WRT_PRIVATE_BUILD_REASON: ''
   WRT_ARTIFACT_PRIVACY_SUFFIX: public
@@ -456,6 +465,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Custom Packages and Agent Runtimes
+        id: custom_packages
         run: |
           cd ./wrt/package/
 
@@ -650,6 +660,7 @@ jobs:
           du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
 
       - name: Compile Firmware
+        id: compile_firmware
         if: env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
@@ -853,3 +864,56 @@ jobs:
           for asset in "${assets[@]}"; do
             retry_cmd 5 15 gh release upload -R "$GITHUB_REPOSITORY" "$TAG" "$asset" --clobber
           done
+
+      # ------------------------------------------------------------------
+      # CI Debug Gate: failure of custom_packages/compile_firmware, or
+      # explicit DEBUG_SSH=true, enrolls the runner into the Headless
+      # Tailnet (tag:ci-debug) with Tailscale SSH and holds it for up to
+      # 90 minutes. Release by: touch /tmp/continue-ci
+      # ------------------------------------------------------------------
+      - name: CI Debug Gate (Tailscale SSH)
+        id: ci_debug_gate
+        if: >-
+          always() && (
+            env.DEBUG_SSH == 'true' ||
+            steps.custom_packages.outcome == 'failure' ||
+            steps.compile_firmware.outcome == 'failure'
+          )
+        continue-on-error: true
+        shell: bash
+        env:
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+          HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
+        run: |
+          set -uo pipefail
+          echo "Debug gate triggered: DEBUG_SSH=${DEBUG_SSH:-} custom_packages=${steps.custom_packages.outcome:-} compile_firmware=${steps.compile_firmware.outcome:-}"
+          if [ -z "${HEADSCALE_AUTHKEY:-}" ] || [ -z "${HEADSCALE_LOGIN:-}" ]; then
+            echo "WARN: HEADSCALE_CI_AUTHKEY / HEADSCALE_URL secrets missing; skipping Tailscale debug gate"
+            exit 0
+          fi
+          if ! "$GITHUB_WORKSPACE/Scripts/setup_ci_tailscale.sh"; then
+            echo "WARN: Tailscale debug gate setup failed; continuing pipeline without remote SSH"
+            exit 0
+          fi
+          echo "========================================================================"
+          echo "RUNNER HELD FOR REMOTE DEBUGGING (up to 90 minutes)"
+          echo "Agent login (tag:ssh-admin side, any tailnet host):"
+          echo "  ssh runner@${CI_TAILNET_IP}"
+          echo "  ssh -o User=runner 100.64.0.${CI_TAILNET_OCTET}"
+          echo "Env probe one-liner:"
+          echo "  ssh runner@${CI_TAILNET_IP} 'bash ${GITHUB_WORKSPACE}/Scripts/ci-debug-probe.sh'"
+          echo "Release the runner by running:  touch /tmp/continue-ci"
+          echo "========================================================================"
+          deadline=$(( $(date +%s) + 5400 ))
+          while [ ! -e /tmp/continue-ci ]; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Debug gate timeout (90 min); releasing runner"
+              break
+            fi
+            sleep 15
+          done
+          if [ -e /tmp/continue-ci ]; then
+            echo "continue-ci detected; releasing runner"
+          fi
+          rm -f /tmp/continue-ci
+          echo "CI resumed"

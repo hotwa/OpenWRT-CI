@@ -6,6 +6,11 @@ on:
   #手动编译
   workflow_dispatch:
     inputs:
+      DEBUG_SSH:
+        description: 'Hold runner with Tailscale SSH for live debugging'
+        required: false
+        type: boolean
+        default: false
       PACKAGE:
         description: '手动调整插件包，多个请用\n符号隔开。'
         required: false
@@ -73,6 +78,7 @@ jobs:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets: inherit
     with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       #编译配置
       WRT_CONFIG: ${{matrix.CONFIG}}
       #默认主题
