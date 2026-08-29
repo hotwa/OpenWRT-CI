@@ -15,9 +15,20 @@ for path in "$MANAGER" "$INIT" "$UV_STORAGE" "$MULTICA" "$NODE_PROFILE" "$UPDATE
 done
 [ -e "$RC_LINK" ] || { echo "missing agent-runtime boot enablement"; exit 1; }
 if [ -L "$RC_LINK" ]; then
-  [ "$(readlink "$RC_LINK")" = '../init.d/agent-runtime' ] || exit 1
+  [ "$(readlink "$RC_LINK")" = '../init.d/agent-runtime' ] || {
+    echo "agent-runtime boot enablement link target mismatch: $(readlink "$RC_LINK")"
+    exit 1
+  }
 else
-  [ "$(cat "$RC_LINK")" = '../init.d/agent-runtime' ] || exit 1
+  SYMLINK_MODE="$(git -C "$ROOT_DIR" ls-files -s -- "files/etc/rc.d/S91agent-runtime" | awk '{print $1}')"
+  [ "$SYMLINK_MODE" = "120000" ] || {
+    echo "agent-runtime boot enablement is not recorded as a git symlink"
+    exit 1
+  }
+  [ "$(cat "$RC_LINK")" = '../init.d/agent-runtime' ] || {
+    echo "agent-runtime boot enablement placeholder does not target ../init.d/agent-runtime"
+    exit 1
+  }
 fi
 
 sh -n "$MANAGER"
