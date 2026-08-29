@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# /opt/node is a read-only squashfs tree built for the CI runner, so the hermes
+# Python runtime has to be reinstalled on the writable /data prefix before the
+# 'hermes' command can run. The rc.d link is created here rather than shipped
+# because files/ overlays cannot carry a mode-120000 entry on every host OS.
+if [ -x /etc/init.d/hermes-runtime ]; then
+	/etc/init.d/hermes-runtime enable
+fi
+
+exit 0

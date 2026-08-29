@@ -22,9 +22,10 @@ PYTHON_RELEASE_TAG="20260825"
 PYTHON_RELEASES_API="https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$PYTHON_RELEASE_TAG"
 PYTHON_SHA256SUMS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/$PYTHON_RELEASE_TAG/SHA256SUMS"
 # 每个镜像条目都是已压缩的 install_only tar.gz，直接计入固件体积，所以只保留
-# 会被用到的系列：3.12 是 multica/agent 运行时文档版本，3.13 是 uv 默认解析目标。
-# hermes-agent 的 requires-python 为 >=3.11,<3.14，3.10/3.11 无人请求。
-PYTHON_SERIES=(3.12 3.13)
+# 会被用到的系列：3.11 是 hermes-agent npm postinstall 显式 `--python 3.11`
+# 请求的受管解释器（其 uv 调用带 UV_NO_CONFIG，只能走本地 file:// 镜像）；
+# 3.12 是 multica/agent 运行时文档版本，3.13 是 uv 默认解析目标。3.10 无人请求。
+PYTHON_SERIES=(3.11 3.12 3.13)
 RUNTIME_RELEASES_JSON=""
 RUNTIME_CHECKSUMS_FILE=""
 

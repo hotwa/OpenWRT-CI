@@ -218,6 +218,7 @@ EOF
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
+		PATH="/data/node/bin:/opt/node/bin:/usr/bin:/bin" \
 		MULTICA_SERVER_URL="$server_url" \
 		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
 		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \

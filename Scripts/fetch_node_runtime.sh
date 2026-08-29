@@ -12,7 +12,6 @@ NODE_ROOT_DIR="$TARGET_FILES/opt/node"
 NODE_BIN_DIR="$NODE_ROOT_DIR/bin"
 NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
-PROFILE_DIR="$TARGET_FILES/etc/profile.d"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 
@@ -91,7 +90,6 @@ prepare_directories() {
 		"$NODE_BIN_DIR" \
 		"$NODE_LIB_DIR" \
 		"$SYS_BIN_DIR" \
-		"$PROFILE_DIR" \
 		"$PI_CONFIG_DIR"
 }
 
@@ -197,6 +195,9 @@ preinstall_cli_agents_and_extensions() (
 
 	fix_opencode_entrypoint "$npm_arch"
 	prune_agent_runtime_deadweight
+	prune_foreign_platform_builds "$npm_arch"
+	verify_agent_runtime_arch "$npm_arch"
+	write_agent_runtime_policy
 
 	for bin in pnpm opencode pi hermes; do
 		[ -e "$NODE_LIB_DIR/.bin/$bin" ] || {
@@ -289,20 +290,122 @@ fix_opencode_entrypoint() {
 	log_info "opencode entrypoint now uses the ${npm_arch} musl binary (${interp})."
 }
 
-# hermes-agent 发布物内嵌了完整的 monorepo 测试与文档站，设备端既跑不到也用不到。
+# hermes-agent 的 npm 桥接包在 postinstall 里为“安装机”准备整套独立 Python 运行
+# 时。CI runner 是 x86_64/glibc，所以 runtime/python、venv 和 .uv_bin 全是宿主机
+# 架构的二进制，venv 的 shebang 还指向安装结束时已被删除的 mktemp 目录。设备上是
+# arm64/musl，这约 160MB 永远跑不起来，只能整体剔除，由 /etc/init.d/hermes-runtime
+# 在设备上用原生 uv 重新生成。
 prune_agent_runtime_deadweight() {
+	local hermes_dir="$NODE_LIB_DIR/hermes-agent"
 	local path
+
 	for path in \
-		"$NODE_LIB_DIR/hermes-agent/runtime/hermes-agent/tests" \
-		"$NODE_LIB_DIR/hermes-agent/runtime/hermes-agent/website"
+		"$hermes_dir/runtime/hermes-agent/tests" \
+		"$hermes_dir/runtime/hermes-agent/website" \
+		"$hermes_dir/runtime/hermes-agent/venv" \
+		"$hermes_dir/runtime/python" \
+		"$hermes_dir/.uv_bin"
 	do
-		if [ -d "$path" ]; then
-			rm -rf "$path"
+		if [ -e "$path" ]; then
+			rm -rf -- "$path"
 			log_info "Pruned ${path#"$NODE_LIB_DIR"/}."
 		else
-			warn "expected prunable directory is missing: $path"
+			warn "expected prunable path is missing: $path"
 		fi
 	done
+
+	# A marker left over from the runner would make a later 'npm rebuild
+	# hermes-agent' believe the baked runtime already matches the device.
+	rm -f -- "$hermes_dir/.hermes-agent-runtime.json"
+}
+
+# koffi 与 @mariozechner/clipboard 会把全平台预编译产物一起发布，设备只会加载本机
+# 架构那一份，其余（含被 npm 交叉安装漏进来的嵌套副本）都是纯体积。
+prune_foreign_platform_builds() {
+	local npm_arch="$1"
+	local keep_a keep_b koffi_dir variant
+
+	case "$npm_arch" in
+		arm64) keep_a="linux_arm64"; keep_b="musl_arm64" ;;
+		x64) keep_a="linux_x64"; keep_b="musl_x64" ;;
+		*)
+			echo "ERROR: unsupported npm target $npm_arch" >&2
+			return 1
+			;;
+	esac
+
+	for koffi_dir in "$NODE_LIB_DIR"/koffi/build/koffi/*; do
+		[ -d "$koffi_dir" ] || continue
+		case "$(basename "$koffi_dir")" in
+			"$keep_a"|"$keep_b") continue ;;
+			*)
+				rm -rf -- "$koffi_dir"
+				log_info "Pruned koffi build $(basename "$koffi_dir")."
+				;;
+		esac
+	done
+
+	variant=""
+	while IFS= read -r variant; do
+		case "$(basename "$variant")" in
+			"clipboard-linux-${npm_arch}-gnu"|"clipboard-linux-${npm_arch}-musl") continue ;;
+		esac
+		rm -rf -- "$variant"
+		log_info "Pruned $(basename "$variant")."
+	done < <(find "$NODE_LIB_DIR" \( -type d -name 'clipboard-darwin-*' \
+		-o -type d -name 'clipboard-win32-*' -o -type d -name 'clipboard-linux-*' \) -prune -print)
+}
+
+# Only files that Node or Python would actually load are probed; scanning the
+# whole 2 GB tree byte by byte would dominate the build for no extra signal.
+verify_agent_runtime_arch() {
+	local npm_arch="$1"
+	local expected_machine binary machine
+
+	case "$npm_arch" in
+		arm64) expected_machine=183 ;;
+		x64) expected_machine=62 ;;
+		*)
+			echo "ERROR: unsupported npm target $npm_arch" >&2
+			return 1
+			;;
+	esac
+
+	while IFS= read -r binary; do
+		[ -n "$binary" ] || continue
+		machine="$(elf_machine_id "$binary" || true)"
+		[ -z "$machine" ] || [ "$machine" = "$expected_machine" ] || {
+			echo "ERROR: agent runtime contains a foreign-arch ELF: ${binary#"$NODE_LIB_DIR"/} (ELF machine $machine, target $npm_arch)" >&2
+			return 1
+		}
+	done < <(find "$NODE_LIB_DIR" -type f \
+		\( -name '*.node' -o -name '*.so' -o -name '*.so.*' \
+		   -o -name 'uv' -o -name 'python3.*' -o -name 'opencode*' -o -name 'hermes' \) \
+		-size +8k -print)
+
+	log_info "Verified every loadable agent runtime binary targets ${npm_arch}."
+}
+
+# The device-side provisioner must install exactly the audited npm release, so
+# the pinned version is recorded at build time instead of floating on device.
+write_agent_runtime_policy() {
+	local hermes_version
+	local policy_dir="$TARGET_FILES/etc/agent-runtime"
+
+	hermes_version="$(sed -n 's/^[[:space:]]*"version": *"\([^"]*\)".*/\1/p' \
+		"$NODE_LIB_DIR/hermes-agent/package.json" | head -n1)"
+	[[ "$hermes_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+		echo "ERROR: unable to read the pinned hermes-agent version from the locked runtime" >&2
+		return 1
+	}
+
+	mkdir -p "$policy_dir"
+	cat >"$policy_dir/agent-update.env" <<EOF
+# Generated by Scripts/fetch_node_runtime.sh. Do not edit on device.
+HERMES_NPM_PACKAGE=hermes-agent
+HERMES_NPM_VERSION=$hermes_version
+EOF
+	log_info "Recorded hermes-agent $hermes_version for device-side provisioning."
 }
 
 setup_symlinks() {
@@ -333,61 +436,6 @@ configure_pi_extensions() {
 EOF
 }
 
-configure_profiles() {
-	log_info "Writing profile environment and SSH login check scripts..."
-
-	cat >"$PROFILE_DIR/20-node-agent.sh" <<'EOF'
-export PATH=/opt/node/bin:$PATH
-export PNPM_HOME=/opt/node/bin
-export NODE_PATH=/opt/node/lib/node_modules
-
-# Mutable runtime paths are published only after /data is a verified mountpoint.
-# Services that do not load login profiles must source this file explicitly or
-# pass the same values through procd_set_param env.
-[ -r /tmp/uv-env.sh ] && . /tmp/uv-env.sh
-EOF
-
-	cat >"$PROFILE_DIR/30-agent-update-check.sh" <<'EOF'
-#!/bin/sh
-# Non-blocking SSH login check for OpenCode & Pi agent CLI updates (24h cache)
-[ -t 1 ] || return 0
-[ "$USER" = "root" ] || return 0
-
-CACHE_FILE="/tmp/.agent_update_cache"
-NOW=$(date +%s 2>/dev/null || echo 0)
-CACHE_TTL=86400
-
-print_agent_status() {
-	local node_v oc_v pi_v
-	node_v=$(/opt/node/bin/node -v 2>/dev/null || echo "not installed")
-	oc_v=$(/opt/node/bin/opencode --version 2>/dev/null || echo "installed")
-	pi_v=$(/opt/node/bin/pi --version 2>/dev/null || echo "installed")
-
-	printf "\n\033[1;36m┌──────────────────────────────────────────────────────────────┐\033[0m\n"
-	printf "\033[1;36m│\033[0m \033[1;32m🤖 OpenWrt AI Agent CLI Status (Multica / OpenCode / Pi)\033[0m     \033[1;36m│\033[0m\n"
-	printf "\033[1;36m│\033[0m  • Node.js:  %-48s \033[1;36m│\033[0m\n" "$node_v"
-	printf "\033[1;36m│\033[0m  • OpenCode: %-48s \033[1;36m│\033[0m\n" "$oc_v"
-	printf "\033[1;36m│\033[0m  • Pi CLI:   %-48s \033[1;36m│\033[0m\n" "$pi_v"
-	printf "\033[1;36m│\033[0m                                                              \033[1;36m│\033[0m\n"
-	printf "\033[1;36m│\033[0m  💡 To upgrade all CLI agents: \033[1;33mpnpm update -g --latest\033[0m       \033[1;36m│\033[0m\n"
-	printf "\033[1;36m└──────────────────────────────────────────────────────────────┘\033[0m\n\n"
-}
-
-if [ -f "$CACHE_FILE" ]; then
-	LAST_CHECK=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
-	if [ $((NOW - LAST_CHECK)) -lt "$CACHE_TTL" ]; then
-		print_agent_status
-		return 0
-	fi
-fi
-
-touch "$CACHE_FILE" 2>/dev/null || true
-print_agent_status
-EOF
-
-	chmod 0755 "$PROFILE_DIR/20-node-agent.sh" "$PROFILE_DIR/30-agent-update-check.sh" 2>/dev/null || true
-}
-
 main() {
 	prepare_directories
 
@@ -405,7 +453,6 @@ main() {
 	preinstall_cli_agents_and_extensions "$node_arch"
 	setup_symlinks
 	configure_pi_extensions
-	configure_profiles
 
 	log_info "Checksummed Node.js and locked CLI agent runtime setup complete."
 }

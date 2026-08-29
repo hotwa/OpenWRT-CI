@@ -47,6 +47,10 @@ grep -Fq 'workspace_id is not configured' "$INIT_SCRIPT"
 grep -Fq "max_concurrent_tasks '1'" "$CONFIG_FILE"
 grep -Fq 'runtime_provider '\''pi'\''' "$CONFIG_FILE"
 grep -Fq "procd_open_instance bootstrap" "$INIT_SCRIPT"
+grep -Fq 'PATH="/data/node/bin:/opt/node/bin:/usr/bin:/bin"' "$INIT_SCRIPT" || {
+	echo "the multica daemon must export a PATH that prefers /data/node/bin upgrades over the read-only baked /opt/node/bin"
+	exit 1
+}
 grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
 grep -Fq "matches\" -eq 1" "$BOOTSTRAP_SCRIPT"

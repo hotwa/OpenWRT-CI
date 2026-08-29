@@ -76,13 +76,55 @@ grep -q 'prune_agent_runtime_deadweight' "$FETCH_SCRIPT" || {
 }
 
 for deadweight in \
-  'hermes-agent/runtime/hermes-agent/tests' \
-  'hermes-agent/runtime/hermes-agent/website'; do
+  'runtime/hermes-agent/tests' \
+  'runtime/hermes-agent/website' \
+  'runtime/hermes-agent/venv' \
+  'runtime/python' \
+  '.uv_bin' \
+  '.hermes-agent-runtime.json'; do
   grep -q "$deadweight" "$FETCH_SCRIPT" || {
-    echo "fetch_node_runtime.sh does not prune hermes-agent $deadweight"
+    echo "fetch_node_runtime.sh does not prune the runner-baked hermes path: $deadweight"
     exit 1
   }
 done
+
+grep -q 'prune_foreign_platform_builds' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not prune foreign-arch prebuilt native modules"
+  exit 1
+}
+
+grep -q 'verify_agent_runtime_arch "\$npm_arch"' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not verify the agent runtime architecture before shipping"
+  exit 1
+}
+
+grep -q 'agent-update.env' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not publish the pinned hermes version for device provisioning"
+  exit 1
+}
+
+if grep -q 'cat >"\$PROFILE_DIR' "$FETCH_SCRIPT"; then
+  echo "fetch_node_runtime.sh regenerates profile.d scripts that are already committed under files/"
+  exit 1
+fi
+
+# bash -n does not resolve function names, so a helper deleted while main()
+# still called it would only surface as a 127 in the middle of a build.
+MAIN_CALLS="$(awk '/^main\(\) \{/{inside=1; next} inside && /^\}/{inside=0}
+  inside && $1 ~ /^[A-Za-z_][A-Za-z0-9_]*$/ { print $1 }' "$FETCH_SCRIPT")"
+while IFS= read -r called; do
+  [ -n "$called" ] || continue
+  case "$called" in
+    if|then|else|elif|fi|for|while|until|do|done|case|esac|local|export|set|trap|return|break|continue) continue ;;
+  esac
+  grep -Eq "^[[:space:]]*${called}\(\)[[:space:]]*[({]" "$FETCH_SCRIPT" ||
+    command -v "$called" >/dev/null 2>&1 || {
+    echo "fetch_node_runtime.sh main() calls undefined function: $called"
+    exit 1
+  }
+done <<EOF
+$MAIN_CALLS
+EOF
 
 for pkg in \
   "opencode-ai" \
@@ -115,9 +157,19 @@ grep -q '/opt/node/bin' "$PROFILE_NODE" || {
   exit 1
 }
 
-grep -q 'pnpm update -g --latest' "$PROFILE_UPDATE" || {
-  echo "30-agent-update-check.sh does not instruct pnpm update -g --latest"
+grep -q '/data/node/bin' "$PROFILE_NODE" || {
+  echo "20-node-agent.sh does not let /data installs shadow the read-only baked runtime"
   exit 1
 }
+
+grep -q 'npm i -g --prefix /data/node' "$PROFILE_UPDATE" || {
+  echo "30-agent-update-check.sh does not advertise the writable-prefix upgrade command"
+  exit 1
+}
+
+if grep -q '/opt/node/bin/opencode --version' "$PROFILE_UPDATE"; then
+  echo "30-agent-update-check.sh reports the baked version instead of the PATH-resolved one"
+  exit 1
+fi
 
 echo "node runtime and agent preload guard test passed"

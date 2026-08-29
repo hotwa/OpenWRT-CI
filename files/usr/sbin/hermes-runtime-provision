@@ -1,0 +1,128 @@
+#!/bin/sh
+# Provisions the hermes-agent Python runtime on the device.
+#
+# The npm bridge builds its isolated CPython/venv for whatever machine runs
+# postinstall, so the copy baked into the read-only /opt/node squashfs is the
+# build runner's x86_64/glibc runtime and can never execute on this device.
+# Installing the same pinned npm release into the writable /data prefix lets
+# npm, uv and PyPI resolve a native aarch64/x86_64 musl runtime instead, and
+# PATH gives that install precedence over the baked one.
+
+set -eu
+
+# Services started through procd do not load /etc/profile.d, so name the
+# baked Node.js runtime explicitly.
+PATH="/opt/node/bin:/data/node/bin:/usr/bin:/bin"
+export PATH
+
+POLICY_FILE="${HERMES_RUNTIME_POLICY:-/etc/agent-runtime/agent-update.env}"
+DATA_ROOT="${HERMES_DATA_ROOT:-/data}"
+PREFIX="$DATA_ROOT/node"
+PKG_ROOT="$PREFIX/lib/node_modules/hermes-agent"
+VENV_DIR="$PKG_ROOT/runtime/hermes-agent/venv"
+IMPORT_PROBE='import hermes_cli.main'
+RUNTIME_ENV="/tmp/uv-env.sh"
+LOG_FILE="${HERMES_RUNTIME_LOG:-$DATA_ROOT/hermes-runtime.log}"
+WAN_ATTEMPTS="${HERMES_WAN_ATTEMPTS:-30}"
+WAN_INTERVAL="${HERMES_WAN_INTERVAL:-10}"
+RETRIES="${HERMES_PROVISION_RETRIES:-3}"
+RETRY_INTERVAL="${HERMES_PROVISION_RETRY_INTERVAL:-60}"
+
+log() {
+	printf '%s hermes-runtime: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG_FILE"
+}
+
+wait_for_default_route() {
+	local attempt=0
+
+	while [ "$attempt" -lt "$WAN_ATTEMPTS" ]; do
+		if ip route get 1.1.1.1 >/dev/null 2>&1 || ip route | grep -q '^default '; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		sleep "$WAN_INTERVAL"
+	done
+
+	return 1
+}
+
+ready() {
+	[ -x "$VENV_DIR/bin/hermes" ] || return 1
+	timeout 120 "$VENV_DIR/bin/python" -c "$IMPORT_PROBE" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+read_policy() {
+	[ -r "$POLICY_FILE" ] || {
+		log "missing policy file $POLICY_FILE"
+		return 1
+	}
+	# shellcheck disable=SC1090
+	. "$POLICY_FILE"
+	[ -n "${HERMES_NPM_PACKAGE:-}" ] || return 1
+	case "${HERMES_NPM_VERSION:-}" in
+		[0-9]*.[0-9]*.[0-9]*) return 0 ;;
+	esac
+	return 1
+}
+
+provision_once() {
+	local npm_bin
+
+	npm_bin="$(command -v npm 2>/dev/null || true)"
+	[ -n "$npm_bin" ] || {
+		log "npm is not available on PATH"
+		return 1
+	}
+
+	# /tmp/uv-env.sh carries the /data caches plus the writable global prefix.
+	if [ -r "$RUNTIME_ENV" ]; then
+		# shellcheck disable=SC1090
+		. "$RUNTIME_ENV"
+	fi
+	if [ -r /etc/profile.d/uv.sh ]; then
+		# shellcheck disable=SC1090
+		. /etc/profile.d/uv.sh
+	fi
+	PATH="/opt/node/bin:/data/node/bin:/usr/bin:/bin"
+	export PATH
+
+	mkdir -p "$PREFIX"
+	HOME=/root GIT_TERMINAL_PROMPT=0 NPM_CONFIG_PREFIX="$PREFIX" \
+		npm_config_prefix="$PREFIX" \
+		"$npm_bin" install -g --prefix "$PREFIX" --no-audit --no-fund \
+		--loglevel=warn "$HERMES_NPM_PACKAGE@$HERMES_NPM_VERSION" >>"$LOG_FILE" 2>&1
+}
+
+main() {
+	local attempt=1
+
+	if ready; then
+		return 0
+	fi
+
+	wait_for_default_route || {
+		log "no default route after $WAN_ATTEMPTS attempts; will retry on the next boot"
+		return 1
+	}
+	read_policy || {
+		log "refusing to provision; the pinned hermes-agent policy is unusable"
+		return 1
+	}
+
+	log "provisioning $HERMES_NPM_PACKAGE@$HERMES_NPM_VERSION into $PREFIX"
+	while [ "$attempt" -le "$RETRIES" ]; do
+		if provision_once && ready; then
+			log "hermes runtime is ready at $VENV_DIR"
+			return 0
+		fi
+		log "attempt $attempt/$RETRIES did not produce a usable runtime"
+		attempt=$((attempt + 1))
+		[ "$attempt" -gt "$RETRIES" ] || sleep "$RETRY_INTERVAL"
+	done
+
+	log "giving up; re-run '/etc/init.d/hermes-runtime restart' once the WAN is healthy"
+	return 1
+}
+
+main "$@"
