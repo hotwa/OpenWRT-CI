@@ -323,11 +323,11 @@ prune_agent_runtime_deadweight() {
 # 架构那一份，其余（含被 npm 交叉安装漏进来的嵌套副本）都是纯体积。
 prune_foreign_platform_builds() {
 	local npm_arch="$1"
-	local keep_a keep_b koffi_dir variant
+	local keep_a keep_b expected_machine koffi_dir variant module module_machine dropped
 
 	case "$npm_arch" in
-		arm64) keep_a="linux_arm64"; keep_b="musl_arm64" ;;
-		x64) keep_a="linux_x64"; keep_b="musl_x64" ;;
+		arm64) keep_a="linux_arm64"; keep_b="musl_arm64"; expected_machine=183 ;;
+		x64) keep_a="linux_x64"; keep_b="musl_x64"; expected_machine=62 ;;
 		*)
 			echo "ERROR: unsupported npm target $npm_arch" >&2
 			return 1
@@ -354,6 +354,21 @@ prune_foreign_platform_builds() {
 		log_info "Pruned $(basename "$variant")."
 	done < <(find "$NODE_LIB_DIR" \( -type d -name 'clipboard-darwin-*' \
 		-o -type d -name 'clipboard-win32-*' -o -type d -name 'clipboard-linux-*' \) -prune -print)
+
+	# node-pre-gyp 风格的包（msgpackr-extract）把构建机的预编译产物直接放进主包
+	# tarball 的 build/Release，没有可选平台包可以让 npm 交叉安装跳过，上面按目录名
+	# 的规则也看不到它。设备加载不了异架构 .node（ENOEXEC），对应架构的 musl 预编译
+	# 由 @msgpackr-extract/*-linux-<arch> 平台包提供，所以这份只会导致编译中断。
+	dropped=0
+	while IFS= read -r module; do
+		[ -n "$module" ] || continue
+		module_machine="$(elf_machine_id "$module" || true)"
+		[ -n "$module_machine" ] || continue
+		[ "$module_machine" != "$expected_machine" ] || continue
+		rm -f -- "$module"
+		dropped=$((dropped + 1))
+	done < <(find "$NODE_LIB_DIR" -type f -name '*.node' -size +8k -print)
+	[ "$dropped" -eq 0 ] || log_info "Pruned ${dropped} foreign-arch native module(s)."
 }
 
 # Only files that Node or Python would actually load are probed; scanning the

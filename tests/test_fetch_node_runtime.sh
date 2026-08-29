@@ -172,4 +172,39 @@ if grep -q '/opt/node/bin/opencode --version' "$PROFILE_UPDATE"; then
   exit 1
 fi
 
+# Regression: node-pre-gyp style packages (msgpackr-extract) ship the build
+# host's prebuilt *.node inside their main tarball, so no optional platform
+# package exists for npm to skip and only an ELF machine check removes it. An
+# unpruned x86-64 module aborted every arm64 firmware build.
+PRUNE_FIXTURE="$(mktemp -d)"
+trap 'rm -rf "$PRUNE_FIXTURE"' EXIT
+make_elf_stub() {
+  local path="$1" machine="$2"
+  mkdir -p "$(dirname "$path")"
+  {
+    printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\003\000'
+    printf "\\$(printf '%03o' $((machine & 255)))\\$(printf '%03o' $((machine >> 8)))"
+    head -c 9000 /dev/zero
+  } >"$path"
+}
+make_elf_stub "$PRUNE_FIXTURE/msgpackr-extract/build/Release/extract.node" 62
+make_elf_stub "$PRUNE_FIXTURE/koffi/build/koffi/musl_arm64/koffi.node" 183
+cp "$ROOT_DIR/Scripts/retry.sh" "$PRUNE_FIXTURE/"
+sed '$d' "$FETCH_SCRIPT" >"$PRUNE_FIXTURE/lib.sh"
+(
+  set -euo pipefail
+  # shellcheck disable=SC1090
+  source "$PRUNE_FIXTURE/lib.sh"
+  NODE_LIB_DIR="$PRUNE_FIXTURE"
+  prune_foreign_platform_builds arm64 >/dev/null
+) || { echo "prune_foreign_platform_builds arm64 failed on the fixture"; exit 1; }
+[ -e "$PRUNE_FIXTURE/msgpackr-extract/build/Release/extract.node" ] && {
+  echo "prune_foreign_platform_builds kept an x86-64 native module in an arm64 build"
+  exit 1
+}
+[ -e "$PRUNE_FIXTURE/koffi/build/koffi/musl_arm64/koffi.node" ] || {
+  echo "prune_foreign_platform_builds deleted the target-arch native module"
+  exit 1
+}
+
 echo "node runtime and agent preload guard test passed"
