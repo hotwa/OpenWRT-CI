@@ -84,5 +84,8 @@ state. Only one smoke run is allowed at a time.
 Verified control paths (2026-08-29): run `33262059158` proved direct-IP SSH;
 run `33262670362` proved the full `.hs.jmsu.top` FQDN resolves to
 `100.64.0.31`, authenticates as `runner` through Tailscale policy, finds the
-checked-out probe, and accepts remote `touch /tmp/continue-ci`. Both workflows
-released to `completed success`.
+checked-out probe, and accepts remote `touch /tmp/continue-ci`. Run
+`33262873262` then verified the updated
+setup output itself prints the full FQDN and ready-to-copy SSH/probe commands;
+FQDN login and remote release both succeeded. All three workflows completed
+successfully.

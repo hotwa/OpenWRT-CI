@@ -141,7 +141,7 @@ minutes). It requires `HEADSCALE_CI_AUTHKEY` and `HEADSCALE_URL`, prints the
 `ci-debug-<run_id>-<attempt>` IP/hostname and SSH examples, and releases on
 remote `touch /tmp/continue-ci` or timeout. It is concurrency-limited to one
 smoke runner and cleans `CI_TSCALE_PID` plus temporary state on every exit.
-Smoke runs `33262059158` and `33262670362` verified Win11 ->
+Smoke runs `33262059158`, `33262670362`, and `33262873262` verified Win11 ->
 `root@192.168.11.1` -> held runner and remote `touch /tmp/continue-ci`. Run
 `33262670362` specifically verified that the full
 `ci-debug-....hs.jmsu.top` name resolves to `100.64.0.x` and supports
@@ -150,6 +150,7 @@ agents should debug failures directly on the held Action runner first, using
 the checkout and build state already present there, then commit/push the fix,
 release with `/tmp/continue-ci`, and re-run CI for a recorded clean result.
 The normal firmware gate holds for 90 minutes; the dedicated smoke defaults to
-30 minutes and accepts 1-90 minutes. Remote SSH
+30 minutes and accepts 1-90 minutes. Run `33262873262` verified that current
+setup logs print the full FQDN and its ready-to-copy SSH/probe commands. Remote SSH
 does not inherit `GITHUB_WORKSPACE`, so use the absolute checkout path; the
 probe derives its repository root from its own script location.
