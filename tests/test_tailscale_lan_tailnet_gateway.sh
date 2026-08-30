@@ -125,6 +125,18 @@ grep -q 'firewall.tailscale.forward" "REJECT"' "$GATEWAY_INIT" || {
 }
 
 for expected in \
+	'ensure_dropbear_access' \
+	"dropbear.@dropbear[0]=main" \
+	'for option in Interface DirectInterface _direct' \
+	'dropbear.main.$option' \
+	'/etc/init.d/dropbear ] && /etc/init.d/dropbear restart'; do
+	grep -F "$expected" "$GATEWAY_INIT" >/dev/null || {
+		echo "gateway script does not persist Dropbear tailnet access: $expected"
+		exit 1
+	}
+done
+
+for expected in \
 	"/hs.jmsu.top/100.100.100.100@tailscale0" \
 	"dhcp.@dnsmasq[0].rebind_domain" \
 	"hs.jmsu.top" \
