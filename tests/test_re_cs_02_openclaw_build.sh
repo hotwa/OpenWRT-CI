@@ -36,6 +36,7 @@ grep -Fq 'WRT_BUILD_ONLY: true' "$WORKFLOW"
 grep -Fq 'WRT_SPLIT_DEVICE_ARTIFACTS: false' "$WORKFLOW"
 grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
+grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$WORKFLOW"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$WORKFLOW"
 grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.11.1'\'' }}' "$WORKFLOW"
 if grep -Fq 'WRT_WORD:' "$WORKFLOW"; then

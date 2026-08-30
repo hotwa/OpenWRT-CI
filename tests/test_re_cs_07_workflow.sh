@@ -63,6 +63,7 @@ grep -Fq 'WRT_BRANCH: main' "$DEDICATED"
 grep -Fq 'WRT_BUILD_ONLY: true' "$DEDICATED"
 grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-07' "$DEDICATED"
 grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-07' "$DEDICATED"
+grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$DEDICATED"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$DEDICATED"
 grep -Fq 'WRTBAK_DEVICE_ALIAS: home-re-cs-07' "$DEDICATED"
 
