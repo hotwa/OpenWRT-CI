@@ -13,7 +13,6 @@ CONFIG_PACKAGE_usign=y
 CONFIG_PACKAGE_jsonfilter=y
 CONFIG_PACKAGE_flock=y
 CONFIG_PACKAGE_libstdcpp=y
-CONFIG_PACKAGE_luci-app-nfs=y
 CONFIG_PACKAGE_luci-app-partexp=y
 CONFIG_PACKAGE_luci-app-samba4=y
 CONFIG_PACKAGE_luci-app-tailscale-community=y
@@ -221,10 +220,9 @@ CONFIG_PACKAGE_dmesg=y
 CONFIG_PACKAGE_exfat-fsck=y
 CONFIG_PACKAGE_exfat-mkfs=y
 CONFIG_PACKAGE_fdisk=y
-# Pi uses fd and rg for its built-in find/grep tools.  rg is compiled from the
-# OpenWrt feed; fd is a separately checksum-verified musl binary staged by
-# fetch_node_runtime.sh because the feed does not provide sharkdp/fd.
-CONFIG_PACKAGE_ripgrep=y
+# Pi uses fd and rg for its built-in find/grep tools.  Both are separately
+# checksum-verified musl binaries staged by fetch_node_runtime.sh.  Do not add
+# the OpenWrt ripgrep package here: it pulls the Rust cross-compilation tree.
 CONFIG_PACKAGE_gdisk=y
 CONFIG_PACKAGE_gawk=y
 CONFIG_PACKAGE_git=y
@@ -249,16 +247,12 @@ CONFIG_PACKAGE_nand-utils=y
 CONFIG_PACKAGE_openssh-client=y
 CONFIG_PACKAGE_openssh-keygen=y
 CONFIG_PACKAGE_nvme-cli=y
-CONFIG_PACKAGE_nfs-kernel-server=y
-CONFIG_PACKAGE_nfs-kernel-server-utils=y
-CONFIG_PACKAGE_nfs-utils=y
 CONFIG_PACKAGE_nano=y
 CONFIG_PACKAGE_openssh-sftp-server=y
 CONFIG_PACKAGE_openssl-util=y
 CONFIG_PACKAGE_proto-bonding=y
 CONFIG_PACKAGE_rclone=y
 CONFIG_PACKAGE_rsync=y
-CONFIG_PACKAGE_rpcbind=y
 CONFIG_PACKAGE_sfdisk=y
 CONFIG_PACKAGE_sgdisk=y
 CONFIG_PACKAGE_smartmontools=y

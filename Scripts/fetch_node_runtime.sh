@@ -26,6 +26,8 @@ NODE_MIRROR_UNOFFICIAL="https://unofficial-builds.nodejs.org/download/release"
 NODE_MIRROR_GITHUB="${NODE_GITHUB_MIRROR:-https://github.com/hotwa/luci-app-openclaw/releases/download/node-bins}"
 PI_FD_VERSION="10.5.0"
 PI_FD_RELEASE_BASE_URL="https://github.com/sharkdp/fd/releases/download/v${PI_FD_VERSION}"
+PI_RIPGREP_VERSION="15.2.0"
+PI_RIPGREP_RELEASE_BASE_URL="https://github.com/BurntSushi/ripgrep/releases/download/${PI_RIPGREP_VERSION}"
 
 warn() {
 	echo "WARN: $*" >&2
@@ -135,63 +137,92 @@ pi_fd_asset_sha256() {
 	esac
 }
 
-install_pi_search_tools() (
-	local node_arch="$1" asset expected_hash actual_hash row tmpdir extracted fd_binary file_info
+pi_ripgrep_asset_sha256() {
+	case "$1" in
+		linux-arm64-musl)
+			printf '%s\t%s\n' \
+				"ripgrep-${PI_RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+				"800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915"
+			;;
+		linux-x64-musl)
+			printf '%s\t%s\n' \
+				"ripgrep-${PI_RIPGREP_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+				"33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
 
-	row="$(pi_fd_asset_sha256 "$node_arch")" || {
-		echo "ERROR: no reviewed Pi fd archive for ${node_arch}" >&2
+install_verified_pi_search_binary() (
+	local node_arch="$1" binary_name="$2" version="$3" release_base_url="$4" metadata_function="$5"
+	local asset expected_hash actual_hash row tmpdir binary_file file_info
+
+	row="$("$metadata_function" "$node_arch")" || {
+		echo "ERROR: no reviewed Pi ${binary_name} archive for ${node_arch}" >&2
 		return 1
 	}
 	IFS=$'\t' read -r asset expected_hash <<<"$row"
 	[ -n "$asset" ] && [ -n "$expected_hash" ] || {
-		echo "ERROR: invalid Pi fd release metadata for ${node_arch}" >&2
+		echo "ERROR: invalid Pi ${binary_name} release metadata for ${node_arch}" >&2
 		return 1
 	}
 
 	tmpdir="$(mktemp -d)"
 	trap 'rm -rf "$tmpdir"' EXIT
-	log_info "Downloading checksum-verified Pi fd ${PI_FD_VERSION} for ${node_arch}..."
+	log_info "Downloading checksum-verified Pi ${binary_name} ${version} for ${node_arch}..."
 	retry_cmd 3 10 curl --fail --silent --show-error --location \
 		--proto '=https' --tlsv1.2 \
-		"${PI_FD_RELEASE_BASE_URL}/${asset}" -o "$tmpdir/$asset"
+		"${release_base_url}/${asset}" -o "$tmpdir/$asset"
 
 	actual_hash="$(sha256sum "$tmpdir/$asset" | awk '{print $1}')"
 	[ "$actual_hash" = "$expected_hash" ] || {
-		echo "ERROR: Pi fd ${PI_FD_VERSION}/${node_arch} SHA256 mismatch" >&2
+		echo "ERROR: Pi ${binary_name} ${version}/${node_arch} SHA256 mismatch" >&2
 		return 1
 	}
 
 	if tar -tzf "$tmpdir/$asset" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
-		echo "ERROR: unsafe path in Pi fd archive $asset" >&2
+		echo "ERROR: unsafe path in Pi ${binary_name} archive $asset" >&2
 		return 1
 	fi
 	mkdir -p "$tmpdir/extracted"
 	tar -xzf "$tmpdir/$asset" -C "$tmpdir/extracted" --no-same-owner
-	fd_binary="$(find "$tmpdir/extracted" -type f -name fd -print | sed -n '1p')"
-	[ -n "$fd_binary" ] || {
-		echo "ERROR: verified Pi fd archive has no fd binary" >&2
+	binary_file="$(find "$tmpdir/extracted" -type f -name "$binary_name" -print | sed -n '1p')"
+	[ -n "$binary_file" ] || {
+		echo "ERROR: verified Pi ${binary_name} archive has no ${binary_name} binary" >&2
 		return 1
 	}
-	[ "$(find "$tmpdir/extracted" -type f -name fd -print | wc -l)" -eq 1 ] || {
-		echo "ERROR: verified Pi fd archive has multiple fd binaries" >&2
+	[ "$(find "$tmpdir/extracted" -type f -name "$binary_name" -print | wc -l)" -eq 1 ] || {
+		echo "ERROR: verified Pi ${binary_name} archive has multiple ${binary_name} binaries" >&2
 		return 1
 	}
-	file_info="$(file -b "$fd_binary")"
+	file_info="$(file -b "$binary_file")"
 	case "$node_arch:$file_info" in
 		linux-arm64-musl:*ELF*64-bit*ARM*aarch64*) ;;
 		linux-x64-musl:*ELF*64-bit*x86-64*) ;;
 		*)
-			echo "ERROR: Pi fd archive architecture does not match ${node_arch}: $file_info" >&2
+			echo "ERROR: Pi ${binary_name} archive architecture does not match ${node_arch}: $file_info" >&2
 			return 1
 			;;
 	esac
 	printf '%s' "$file_info" | grep -Eqi '(statically linked|static-pie linked)' || {
-		echo "ERROR: Pi fd binary must be static musl (static or static-pie): $file_info" >&2
+		echo "ERROR: Pi ${binary_name} binary must be static musl (static or static-pie): $file_info" >&2
 		return 1
 	}
 
-	install -Dm0755 "$fd_binary" "$SYS_BIN_DIR/fd"
-	log_info "Installed verified Pi fd ${PI_FD_VERSION} to /usr/bin/fd; ripgrep is supplied by CONFIG_PACKAGE_ripgrep."
+	install -Dm0755 "$binary_file" "$SYS_BIN_DIR/$binary_name"
+	log_info "Installed verified Pi ${binary_name} ${version} to /usr/bin/${binary_name}."
+)
+
+install_pi_search_tools() (
+	local node_arch="$1"
+
+	install_verified_pi_search_binary "$node_arch" fd "$PI_FD_VERSION" \
+		"$PI_FD_RELEASE_BASE_URL" pi_fd_asset_sha256
+	install_verified_pi_search_binary "$node_arch" rg "$PI_RIPGREP_VERSION" \
+		"$PI_RIPGREP_RELEASE_BASE_URL" pi_ripgrep_asset_sha256
+	log_info "Installed checksum-verified Pi fd and rg musl search tools without the OpenWrt Rust package tree."
 )
 
 download_node_tarball() (

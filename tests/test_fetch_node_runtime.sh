@@ -34,8 +34,13 @@ for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
   grep -Fq -- "$term" "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh omits $term"
 done
 
-grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt" || fail "ripgrep is not preinstalled for Pi"
-for term in 'PI_FD_VERSION="10.5.0"' 'fd-v${PI_FD_VERSION}-aarch64-unknown-linux-musl.tar.gz' 'static-pie linked'; do
+if grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt"; then
+  fail "feed ripgrep would pull Rust into every firmware build"
+fi
+for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
+  'fd-v${PI_FD_VERSION}-aarch64-unknown-linux-musl.tar.gz' \
+  'ripgrep-${PI_RIPGREP_VERSION}-aarch64-unknown-linux-musl.tar.gz' \
+  'install_verified_pi_search_binary' 'static-pie linked'; do
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
