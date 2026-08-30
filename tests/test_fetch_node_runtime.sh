@@ -42,6 +42,30 @@ grep -q 'linux-x64-musl' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+grep -q 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt" || {
+  echo "GENERAL.txt does not preinstall ripgrep for Pi"
+  exit 1
+}
+
+grep -q 'install_pi_search_tools "\$node_arch"' "$FETCH_SCRIPT" || {
+  echo "fetch_node_runtime.sh does not preinstall Pi search tools"
+  exit 1
+}
+
+for expected in \
+  'PI_FD_VERSION="10.5.0"' \
+  'fd-v${PI_FD_VERSION}-aarch64-unknown-linux-musl.tar.gz' \
+  'fd-v${PI_FD_VERSION}-x86_64-unknown-linux-musl.tar.gz' \
+  'd76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4' \
+  '761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7' \
+  'static-pie linked' \
+  'CONFIG_PACKAGE_ripgrep'; do
+  grep -Fq "$expected" "$FETCH_SCRIPT" || {
+    echo "fetch_node_runtime.sh missing Pi search-tool guard: $expected"
+    exit 1
+  }
+done
+
 grep -q 'node-agent-runtime' "$FETCH_SCRIPT" || {
   echo "fetch_node_runtime.sh does not reference the node-agent-runtime manifest directory"
   exit 1

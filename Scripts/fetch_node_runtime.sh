@@ -24,6 +24,8 @@ NODE_VERSION="${NODE_VERSION:-$NODE_DEFAULT_VERSION}"
 
 NODE_MIRROR_UNOFFICIAL="https://unofficial-builds.nodejs.org/download/release"
 NODE_MIRROR_GITHUB="${NODE_GITHUB_MIRROR:-https://github.com/hotwa/luci-app-openclaw/releases/download/node-bins}"
+PI_FD_VERSION="10.5.0"
+PI_FD_RELEASE_BASE_URL="https://github.com/sharkdp/fd/releases/download/v${PI_FD_VERSION}"
 
 warn() {
 	echo "WARN: $*" >&2
@@ -114,6 +116,83 @@ node_archive_sha256() {
 			;;
 	esac
 }
+
+pi_fd_asset_sha256() {
+	case "$1" in
+		linux-arm64-musl)
+			printf '%s\t%s\n' \
+				"fd-v${PI_FD_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+				"d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4"
+			;;
+		linux-x64-musl)
+			printf '%s\t%s\n' \
+				"fd-v${PI_FD_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+				"761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+install_pi_search_tools() (
+	local node_arch="$1" asset expected_hash actual_hash row tmpdir extracted fd_binary file_info
+
+	row="$(pi_fd_asset_sha256 "$node_arch")" || {
+		echo "ERROR: no reviewed Pi fd archive for ${node_arch}" >&2
+		return 1
+	}
+	IFS=$'\t' read -r asset expected_hash <<<"$row"
+	[ -n "$asset" ] && [ -n "$expected_hash" ] || {
+		echo "ERROR: invalid Pi fd release metadata for ${node_arch}" >&2
+		return 1
+	}
+
+	tmpdir="$(mktemp -d)"
+	trap 'rm -rf "$tmpdir"' EXIT
+	log_info "Downloading checksum-verified Pi fd ${PI_FD_VERSION} for ${node_arch}..."
+	retry_cmd 3 10 curl --fail --silent --show-error --location \
+		--proto '=https' --tlsv1.2 \
+		"${PI_FD_RELEASE_BASE_URL}/${asset}" -o "$tmpdir/$asset"
+
+	actual_hash="$(sha256sum "$tmpdir/$asset" | awk '{print $1}')"
+	[ "$actual_hash" = "$expected_hash" ] || {
+		echo "ERROR: Pi fd ${PI_FD_VERSION}/${node_arch} SHA256 mismatch" >&2
+		return 1
+	}
+
+	if tar -tzf "$tmpdir/$asset" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+		echo "ERROR: unsafe path in Pi fd archive $asset" >&2
+		return 1
+	fi
+	mkdir -p "$tmpdir/extracted"
+	tar -xzf "$tmpdir/$asset" -C "$tmpdir/extracted" --no-same-owner
+	fd_binary="$(find "$tmpdir/extracted" -type f -name fd -print | sed -n '1p')"
+	[ -n "$fd_binary" ] || {
+		echo "ERROR: verified Pi fd archive has no fd binary" >&2
+		return 1
+	}
+	[ "$(find "$tmpdir/extracted" -type f -name fd -print | wc -l)" -eq 1 ] || {
+		echo "ERROR: verified Pi fd archive has multiple fd binaries" >&2
+		return 1
+	}
+	file_info="$(file -b "$fd_binary")"
+	case "$node_arch:$file_info" in
+		linux-arm64-musl:*ELF*64-bit*ARM*aarch64*) ;;
+		linux-x64-musl:*ELF*64-bit*x86-64*) ;;
+		*)
+			echo "ERROR: Pi fd archive architecture does not match ${node_arch}: $file_info" >&2
+			return 1
+			;;
+	esac
+	printf '%s' "$file_info" | grep -Eqi '(statically linked|static-pie linked)' || {
+		echo "ERROR: Pi fd binary must be static musl (static or static-pie): $file_info" >&2
+		return 1
+	}
+
+	install -Dm0755 "$fd_binary" "$SYS_BIN_DIR/fd"
+	log_info "Installed verified Pi fd ${PI_FD_VERSION} to /usr/bin/fd; ripgrep is supplied by CONFIG_PACKAGE_ripgrep."
+)
 
 download_node_tarball() (
 	local node_arch="$1"
@@ -561,6 +640,7 @@ main() {
 	preinstall_cli_agents_and_extensions "$node_arch"
 	install_vendored_pi_extensions
 	setup_symlinks
+	install_pi_search_tools "$node_arch"
 	configure_pi_extensions
 
 	log_info "Checksummed Node.js and locked CLI agent runtime setup complete."
