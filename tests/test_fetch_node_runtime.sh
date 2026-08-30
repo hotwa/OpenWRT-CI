@@ -28,6 +28,8 @@ grep -Fq 'UV_OFFLINE=1' "$ROOT_DIR/files/usr/sbin/uv-runtime-provision" || fail 
 for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
   'prune_foreign_platform_builds' 'verify_agent_runtime_arch' \
   'install_vendored_pi_extensions' 'install_pi_search_tools' \
+  'PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"' \
+  'install -Dm0644 "$PI_MODEL_CATALOG" "$TARGET_FILES/etc/pi/agent/models.json"' \
   'cmdc' 'command-code' 'commandcode'; do
   grep -Fq -- "$term" "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh omits $term"
 done

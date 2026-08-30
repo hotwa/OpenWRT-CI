@@ -13,6 +13,7 @@ NODE_BIN_DIR="$NODE_ROOT_DIR/bin"
 NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
+PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PI_PLAN_MODE_VENDOR_DIR="$AGENT_RUNTIME_MANIFEST_DIR/vendor/pi-plan-mode"
 
@@ -453,11 +454,15 @@ install_vendored_pi_extensions() {
 configure_pi_extensions() {
 	log_info "Writing default Pi extensions configuration..."
 
-	[ -s "$TARGET_FILES/etc/pi/agent/models.json" ] || {
+	# WRT-CORE packages the Node runtime before it overlays files/ onto the
+	# OpenWrt image tree.  Read the reviewed catalog from the repository, then
+	# stage it explicitly so this installer does not depend on a later copy.
+	[ -s "$PI_MODEL_CATALOG" ] || {
 		echo "ERROR: default Pi model catalog is missing" >&2
 		return 1
 	}
-	cp -f "$TARGET_FILES/etc/pi/agent/models.json" "$PI_CONFIG_DIR/models.json"
+	install -Dm0644 "$PI_MODEL_CATALOG" "$TARGET_FILES/etc/pi/agent/models.json"
+	cp -f "$PI_MODEL_CATALOG" "$PI_CONFIG_DIR/models.json"
 	cat >"$PI_CONFIG_DIR/settings.json" <<'EOF'
 {
   "defaultProvider": "office-sglang",
