@@ -201,7 +201,7 @@ apply_plan() {
 			continue
 		fi
 		if [ "$name" = "pi-plan-mode-vendor" ]; then
-			"$PI_PLAN_VENDOR_SCRIPT" apply "$latest"
+			bash "$PI_PLAN_VENDOR_SCRIPT" apply "$latest"
 			log_info "vendored pi-plan-mode ${current} -> ${latest}"
 			continue
 		fi
@@ -350,7 +350,7 @@ main() {
 	plan="$(resolve_plan)"
 	# Validate the upstream archive and the narrowly reviewed PR #9 scope patch
 	# even when its version has not moved; registry substitutions fail closed.
-	"$PI_PLAN_VENDOR_SCRIPT" plan
+	bash "$PI_PLAN_VENDOR_SCRIPT" plan
 	if [ -z "$plan" ]; then
 		log_info "already on the newest app-layer releases"
 		return 0

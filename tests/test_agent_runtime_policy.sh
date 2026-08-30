@@ -20,6 +20,10 @@ for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH"
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$BUMP_SCRIPT"
+grep -Fq 'bash "$PI_PLAN_VENDOR_SCRIPT" apply "$latest"' "$BUMP_SCRIPT" ||
+  fail "agent bump must invoke the Pi vendor refresher through bash"
+grep -Fq 'bash "$PI_PLAN_VENDOR_SCRIPT" plan' "$BUMP_SCRIPT" ||
+  fail "agent bump must invoke the Pi vendor validation through bash"
 
 for term in 'CommandCode' 'Pi' 'Multica' 'Node.js' 'CPython 3.13'; do
   grep -Fq "$term" "$POLICY_DOC" || fail "policy omits $term"
