@@ -68,15 +68,12 @@ deploying controller policy remain audited operations tasks.
 
 ## 4. Firmware and first-boot flow
 
-At build time, `WRT_IP` derives a `/24` route unless an explicit route is set.
-An explicit build route must be one canonical RFC1918 `/24`-`/30` containing
-`WRT_IP`; default routes, public ranges, aggregates and comma-separated routes
-are rejected.
-
 At runtime, `/usr/sbin/headscale-auto-enroll` reads the active LAN IPv4 address
 and prefix from ubus, with UCI as a fallback. The advertised route must exactly
-equal that active LAN prefix and must remain within `/24`-`/30`. This validation
-runs both for new enrollment and `tailscale set` on an already-enrolled node.
+equal that active LAN prefix and must remain within `/24`-`/30`. `WRT_IP` is a
+build/UI default only: the runtime overwrites a stale preserved
+`advertise_routes` setting with the active prefix before both new enrollment and
+`tailscale set` on an already-enrolled node.
 
 For a `192.168.0.0/16` multi-site plan, assign each router one unique `/24` and
 approve that exact CIDR for that router's site tag. A router must never

@@ -167,6 +167,14 @@ validate_advertise_route() {
 	[ "$route" = "$expected" ]
 }
 
+persist_advertise_route() {
+	local route="$1" current
+	current="$(uci -q get "$CONFIG.$SECTION.advertise_routes" 2>/dev/null || true)"
+	[ "$current" = "$route" ] && return 0
+	uci -q set "$CONFIG.$SECTION.advertise_routes=$route" 2>/dev/null || return 1
+	uci -q commit "$CONFIG" 2>/dev/null
+}
+
 read_actual_lan_cidr() {
 	local status ip prefix netmask
 	if command -v ubus >/dev/null 2>&1 && command -v jsonfilter >/dev/null 2>&1; then
@@ -463,7 +471,7 @@ apply_runtime_preferences() {
 
 main() {
 	local enabled login_server auth_key_file provision_url provision_token_file
-	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes
+	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes configured_advertise_routes
 	local max_attempts retry_interval delete_auth_key_file auth_key hostname
 	local restore_gate_file restore_gate_attempts restore_gate_interval restore_gate_state
 	local lan_state lan_ip lan_prefix derived_route
@@ -490,7 +498,7 @@ main() {
 	ssh_enabled="$(cfg ssh 1)"
 	accept_dns="$(cfg accept_dns 0)"
 	accept_routes="$(cfg accept_routes 1)"
-	advertise_routes="$(cfg advertise_routes '')"
+	configured_advertise_routes="$(cfg advertise_routes '')"
 	lan_state="$(read_actual_lan_cidr)" || {
 		log "refusing route advertisement: LAN must have an active RFC1918 IPv4 prefix between /24 and /30"
 		exit 1
@@ -501,12 +509,16 @@ main() {
 		log "refusing route advertisement: unable to derive the active LAN prefix"
 		exit 1
 	}
-	if [ -z "$advertise_routes" ]; then
-		advertise_routes="$derived_route"
-	elif ! validate_advertise_route "$advertise_routes" "$lan_ip" "$lan_prefix"; then
-		log "refusing advertise_routes=$advertise_routes: it must exactly match active LAN prefix $derived_route"
-		exit 1
+	# WRT_IP is only a build/UI default.  A persisted config can become stale
+	# after a sysupgrade or a LAN renumber, so route advertisement must always
+	# follow the active LAN prefix reported by ubus/UCI at this boot.
+	advertise_routes="$derived_route"
+	if [ -n "$configured_advertise_routes" ] && \
+		[ "$configured_advertise_routes" != "$derived_route" ]; then
+		log "replacing stale advertise_routes=$configured_advertise_routes with active LAN route $derived_route"
 	fi
+	persist_advertise_route "$advertise_routes" || \
+		log "warning: could not persist active LAN route $advertise_routes"
 	max_attempts="$(cfg max_attempts 60)"
 	retry_interval="$(cfg retry_interval 10)"
 	restore_gate_file="$(cfg restore_gate_file /root/wrtbak/firstboot/gate.json)"

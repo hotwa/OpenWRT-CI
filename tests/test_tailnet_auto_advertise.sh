@@ -11,8 +11,10 @@ DOC_FILE="$ROOT_DIR/docs/tailnet-mesh-multi-site.md"
 [ -f "$DOC_FILE" ] || { echo "missing tailnet-mesh-multi-site.md"; exit 1; }
 
 grep -Fq 'HEADSCALE_OPENWRT_ACCEPT_ROUTES="${HEADSCALE_OPENWRT_ACCEPT_ROUTES:-1}"' "$ENROLL_SCRIPT"
-grep -Fq 'derive_lan_subnet' "$ENROLL_SCRIPT"
+grep -Fq "set_config_option advertise_routes ''" "$ENROLL_SCRIPT"
 grep -Fq 'accept_routes="$(cfg accept_routes 1)"' "$ENROLL_BIN"
+grep -Fq 'advertise_routes="$derived_route"' "$ENROLL_BIN"
+grep -Fq 'persist_advertise_route "$advertise_routes"' "$ENROLL_BIN"
 
 HEADSCALE_AUTO_ENROLL_LIBRARY_ONLY=1 . "$ENROLL_BIN"
 
@@ -56,20 +58,12 @@ config enroll 'main'
 	option advertise_routes ''
 EOF
 
-if HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
-	WRT_IP='192.168.11.1' \
-	HEADSCALE_OPENWRT_ADVERTISE_ROUTES='10.0.0.0/8' \
-	"$ENROLL_SCRIPT" "$TMP_DIR" >/dev/null 2>&1; then
-	echo "build helper accepted an overbroad advertise route"
-	exit 1
-fi
-
 HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
 	WRT_IP='192.168.11.1' \
-	HEADSCALE_OPENWRT_ADVERTISE_ROUTES='192.168.11.0/24' \
+	HEADSCALE_OPENWRT_ADVERTISE_ROUTES='10.0.0.0/8' \
 	"$ENROLL_SCRIPT" "$TMP_DIR" >/dev/null
-grep -Fq "option advertise_routes '192.168.11.0/24'" "$TMP_DIR/etc/config/headscale_auto_enroll" || {
-	echo "build helper did not persist the validated LAN route"
+grep -Fq "option advertise_routes ''" "$TMP_DIR/etc/config/headscale_auto_enroll" || {
+	echo "build helper must not persist a build-time route"
 	exit 1
 }
 
@@ -85,18 +79,10 @@ EOF
 HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
 	WRT_IP='192.168.12.1' \
 	"$ENROLL_SCRIPT" "$DERIVED_DIR" >/dev/null
-grep -Fq "option advertise_routes '192.168.12.0/24'" "$DERIVED_DIR/etc/config/headscale_auto_enroll" || {
-	echo "build helper did not derive a CIDR from WRT_IP"
+grep -Fq "option advertise_routes ''" "$DERIVED_DIR/etc/config/headscale_auto_enroll" || {
+	echo "build helper did not defer CIDR selection to runtime"
 	exit 1
 }
-
-if HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
-	WRT_IP='192.168.12.1' \
-	HEADSCALE_OPENWRT_ADVERTISE_ROUTES='192.168.12.1/24' \
-	"$ENROLL_SCRIPT" "$DERIVED_DIR" >/dev/null 2>&1; then
-	echo "build helper accepted a host address as a subnet route"
-	exit 1
-fi
 
 grep -Fq 'cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file"' "$ENROLL_BIN" || {
 	echo "already-enrolled and recovered paths do not clean residual auth keys"

@@ -115,13 +115,11 @@ router reports successful enrollment.
 The runtime advertises exactly one IPv4 LAN route. It reads the active LAN
 address and prefix from ubus, with UCI as a fallback, and accepts only a
 canonical RFC1918 `/24`-`/30` that exactly equals the active LAN prefix. It
-rejects `0.0.0.0/0`, public space, wide aggregates, comma-separated route lists
-and stale build-time prefixes. The same validation is applied before updating an
-already-enrolled node.
-
-The build helper performs the corresponding syntax, RFC1918, prefix-length and
-containment checks. A controller-side site/CIDR inventory is still required to
-detect a collision between two different firmware builds.
+rejects `0.0.0.0/0`, public space and wide aggregates. A preserved or
+build-time `advertise_routes` value is never trusted: it is replaced with the
+active prefix and persisted before both new enrollment and an already-enrolled
+node's `tailscale set`. A controller-side site/CIDR inventory is still required
+to detect a collision between two different firmware builds.
 
 ## Deployment cautions for 192.168.12.1
 

@@ -175,18 +175,11 @@ set_config_option hostname_override "$(derive_headscale_hostname "$HEADSCALE_OPE
 set_config_option ssh "$HEADSCALE_OPENWRT_ENABLE_SSH"
 set_config_option accept_dns 0
 set_config_option accept_routes "$HEADSCALE_OPENWRT_ACCEPT_ROUTES"
-if [ -z "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" ] && [ -n "${WRT_IP:-}" ]; then
-	HEADSCALE_OPENWRT_ADVERTISE_ROUTES="$(derive_lan_subnet "${WRT_IP:-}")" || {
-		echo "headscale auto-enroll: WRT_IP must be a canonical RFC1918 IPv4 address" >&2
-		exit 1
-	}
-fi
-if [ -n "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" ] &&
-	! validate_build_advertise_route "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES" "${WRT_IP:-}"; then
-	echo "headscale auto-enroll: advertise route must be one canonical RFC1918 /24-/30 containing WRT_IP" >&2
-	exit 1
-fi
-set_config_option advertise_routes "$HEADSCALE_OPENWRT_ADVERTISE_ROUTES"
+# Never bake a route based on WRT_IP.  It is a LuCI/login default, while the
+# router's actual LAN may be restored or changed after a sysupgrade.  The
+# first-boot runtime derives the active RFC1918 prefix and persists it only
+# after validating the live interface state.
+set_config_option advertise_routes ''
 set_config_option auth_key_file /etc/tailscale/headscale.authkey
 set_config_option delete_auth_key_file 1
 

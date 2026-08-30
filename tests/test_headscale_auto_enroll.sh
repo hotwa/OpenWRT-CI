@@ -211,7 +211,6 @@ TEST_AUTH_KEY="hskey-auth-""testredacted"
 INJECT_LOG="$WORK_DIR/inject.log"
 HEADSCALE_OPENWRT_AUTHKEY="$TEST_AUTH_KEY" \
 HEADSCALE_OPENWRT_ACCEPT_ROUTES=1 \
-HEADSCALE_OPENWRT_ADVERTISE_ROUTES=192.168.12.0/24 \
 WRT_NAME=DAE-WRT \
 WRT_IP=192.168.12.1 \
 bash "$CI_INJECTOR" "$WORK_DIR" >"$INJECT_LOG"
@@ -231,9 +230,9 @@ grep -q "option accept_routes '1'" "$WORK_DIR/etc/config/headscale_auto_enroll" 
   exit 1
 }
 
-grep -q "option advertise_routes '192.168.12.0/24'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
-  echo "CI injector does not honor advertise-routes override"
-  exit 1
+grep -q "option advertise_routes ''" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+	echo "CI injector must defer route selection to the live router LAN"
+	exit 1
 }
 
 grep -q "option hostname_override 'openwrt-dae-wrt-12'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
