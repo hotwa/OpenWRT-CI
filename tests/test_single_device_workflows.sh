@@ -8,7 +8,7 @@ if grep -RniE 'openclaw|luci-app-openclaw' "$ROOT_DIR/.github/workflows"; then
 	exit 1
 fi
 
-for wf in "RE-CS-07-BUILD.yml" "RE-SS-01-BUILD.yml"; do
+for wf in "RE-CS-02-BUILD.yml" "RE-CS-07-BUILD.yml" "RE-SS-01-BUILD.yml"; do
 	path="$ROOT_DIR/.github/workflows/$wf"
 	[ -f "$path" ] || { echo "missing workflow $wf"; exit 1; }
 	grep -Fq 'inputs:' "$path"

@@ -21,6 +21,16 @@ CONFIG_PACKAGE_vm103-failover=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/.config" "$DEVICE"
 
+cat >"$WORK_DIR/re-cs-02.config" <<'EOT'
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq60xx=y
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
+CONFIG_PACKAGE_luci-app-wrtbak=y
+EOT
+bash "$SCRIPT" defconfig "$WORK_DIR/re-cs-02.config" jdcloud_re-cs-02
+grep -v '^CONFIG_PACKAGE_luci-app-wrtbak=y$' "$WORK_DIR/re-cs-02.config" >"$WORK_DIR/re-cs-02-missing.config"
+! bash "$SCRIPT" defconfig "$WORK_DIR/re-cs-02-missing.config" jdcloud_re-cs-02 >/dev/null 2>&1
+
 cat >"$WORK_DIR/re-ss-01.config" <<'EOT'
 CONFIG_TARGET_qualcommax=y
 CONFIG_TARGET_qualcommax_ipq60xx=y
