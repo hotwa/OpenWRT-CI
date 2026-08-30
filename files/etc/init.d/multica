@@ -64,6 +64,18 @@ resolve_program() {
 	printf '%s' "$candidate"
 }
 
+resolve_uv_root() {
+	local candidate
+	for candidate in /data/agent-runtime/current/uv /opt/uv; do
+		# The baseline is intentionally wired as current -> /opt/agent-runtime
+		# -> ../uv, so accepting this known internal link is required at boot.
+		[ -d "$candidate" ] && [ -x "$candidate/uv" ] || continue
+		printf '%s' "$candidate"
+		return 0
+	done
+	return 1
+}
+
 has_control_character() {
 	LC_ALL=C printf '%s' "$1" | grep -q '[[:cntrl:]]'
 }
@@ -79,7 +91,7 @@ valid_duration() {
 start_service() {
 	local enabled token workspace_id server_url app_url
 	local device_name runtime_name runtime_provider workspaces_root
-	local max_tasks poll_interval heartbeat_interval prog config_dir config_json config_tmp
+	local max_tasks poll_interval heartbeat_interval prog uv_root config_dir config_json config_tmp
 
 	enabled="$(cfg enabled 0)"
 	case "$enabled" in
@@ -89,6 +101,10 @@ start_service() {
 
 	prog="$(resolve_program)" || {
 		log_error "Multica is enabled but no executable binary was found"
+		return 1
+	}
+	uv_root="$(resolve_uv_root)" || {
+		log_error "Multica is enabled but its pinned uv runtime is unavailable"
 		return 1
 	}
 
@@ -155,6 +171,18 @@ start_service() {
 		log_error "/data is not mounted; refusing to start Multica on the root overlay"
 		return 1
 	}
+	# Ensure a role can invoke python3 before registering it as a usable Pi
+	# runtime.  The provisioner is offline and idempotent after first success.
+	if [ ! -x /usr/local/bin/python3 ] && [ -x /usr/sbin/uv-runtime-provision ]; then
+		/usr/sbin/uv-runtime-provision || {
+			log_error "offline CPython provisioning failed; refusing to start Multica"
+			return 1
+		}
+	fi
+	[ -x /usr/local/bin/python3 ] || {
+		log_error "python3 is unavailable; refusing to start Multica"
+		return 1
+	}
 
 	umask 077
 	config_dir="/root/.multica"
@@ -186,7 +214,10 @@ EOF
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
-		PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin" \
+		PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin" \
+		UV_CACHE_DIR=/data/uv/cache \
+		UV_PYTHON_INSTALL_DIR=/data/uv/python \
+		UV_PYTHON_INSTALL_MIRROR="file://$uv_root/python-mirror" \
 		MULTICA_SERVER_URL="$server_url" \
 		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
 		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \

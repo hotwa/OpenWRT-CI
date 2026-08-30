@@ -8,15 +8,22 @@
 ## Edge AI Agent ecosystem and runtime (Multica / Pi / CommandCode)
 
 - **Primary Workflow**: Multica orchestration + Pi / CommandCode CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
-- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and baseline finalization in `WRT-CORE.yml`.
+- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static),
+  `Scripts/fetch_uv_runtime.sh` (one pinned CPython 3.13 musl mirror), and
+  baseline finalization in `WRT-CORE.yml`.
 - Preserve pre-installed CLI tools and extensions:
   - `@earendil-works/pi-coding-agent` (`pi` CLI) + `@aaronkyriesenbach/pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-wechat-assistant`
   - `command-code` (`cmdc` CLI)
-- Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner and signed-generation guidance).
+- Preserve `/etc/profile.d/20-node-agent.sh`, `21-uv-python.sh`, and
+  `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status
+  banner and signed-generation guidance).
 - Keep `homeproxy`, `daed`, and `dae` pruned from `Config/GENERAL.txt` in favor of Nikki to prevent multi-proxy conflicts and save rootfs space.
 - Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. The app layer (CommandCode, Pi, their extensions, pnpm, Multica) is checked hourly by `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`; it commits to `main` only after complete arm64/x64 musl generations have passed probes, repository guards, and signed release publication. Do not treat those CI probes as a device gate.
-- Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION` and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
+- Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION`, uv/CPython SHA256 pins, and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
 - `/data/node` is an `agent-runtime`-managed compatibility symlink to the active signed immutable generation, not a writable global npm/pnpm prefix; do not replace it or run in-place package updates there. `/etc/profile.d/20-node-agent.sh` resolves the active generation for shells, and the `multica` procd service sets its own `PATH` because procd never loads `profile.d`.
+- `uv-runtime` is the only component allowed to expand the firmware's CPython
+  3.13 archive.  It uses the local mirror only and writes interpreters/caches
+  under `/data/uv`; it must never download an interpreter or write one to `/opt`.
 
 ## Tailscale LAN Gateway and Route Acceptance
 

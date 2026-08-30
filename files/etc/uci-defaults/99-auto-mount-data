@@ -364,6 +364,9 @@ prepare_agent_storage() {
 		"$DATA_ROOT/pi" \
 		"$DATA_ROOT/pi/agent" \
 		"$DATA_ROOT/commandcode" \
+		"$DATA_ROOT/uv" \
+		"$DATA_ROOT/uv/cache" \
+		"$DATA_ROOT/uv/python" \
 		"$DATA_ROOT/pnpm" \
 		"$DATA_ROOT/npm" \
 		"$DATA_ROOT/cache" \
@@ -393,6 +396,15 @@ prepare_agent_storage() {
 		log_error "could not create optional compatibility path: $OPT_ROOT/data"
 	link_compatibility_path "$DATA_ROOT/smb" "$OPT_ROOT/smb" || \
 		log_error "could not create optional compatibility path: $OPT_ROOT/smb"
+	# Enable future boot retries, then provision immediately so a newly flashed
+	# router with a ready /data mount has python3 before Multica starts.
+	if [ -x /etc/init.d/uv-runtime ]; then
+		/etc/init.d/uv-runtime enable || log_error "could not enable uv-runtime"
+	fi
+	if [ -x /usr/sbin/uv-runtime-provision ]; then
+		UV_RUNTIME_QUIET=1 /usr/sbin/uv-runtime-provision || \
+			log_error "offline Python provisioning deferred"
+	fi
 }
 
 main() {

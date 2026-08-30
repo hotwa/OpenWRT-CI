@@ -1,0 +1,82 @@
+#!/bin/sh
+# Materialize the pinned Python 3.13 from the firmware mirror without network
+# access.  Mutable interpreters and caches are deliberately kept on /data.
+
+set -u
+
+DATA_ROOT="${UV_RUNTIME_DATA_ROOT:-/data}"
+MOUNTS_FILE="${UV_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
+PYTHON_SERIES="${UV_RUNTIME_PYTHON_SERIES:-3.13}"
+
+log() {
+	command -v logger >/dev/null 2>&1 && logger -t uv-runtime -- "$*" || true
+	[ "${UV_RUNTIME_QUIET:-0}" = 1 ] || printf '%s\n' "uv-runtime: $*" >&2
+}
+
+data_ready() {
+	local probe="$DATA_ROOT/.uv-runtime-write-probe.$$"
+	awk -v target="$DATA_ROOT" '$2 == target { found=1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null || return 1
+	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
+	( umask 077; : >"$probe" ) 2>/dev/null || return 1
+	rm -f "$probe"
+}
+
+runtime_uv_root() {
+	local candidate
+	for candidate in "$DATA_ROOT/agent-runtime/current/uv" /opt/uv; do
+		# `current` may target the firmware baseline, whose uv entry is a
+		# deliberate internal link to /opt/uv.  Do not reject that valid path.
+		[ -d "$candidate" ] && [ -x "$candidate/uv" ] || continue
+		printf '%s' "$candidate"
+		return 0
+	done
+	return 1
+}
+
+publish_python_link() {
+	local python_bin="$1" link=/usr/local/bin/python3 temporary
+	temporary="${link}.new.$$"
+	[ -x "$python_bin" ] || return 1
+	if [ -e "$link" ] && [ ! -L "$link" ]; then
+		log "leaving administrator-owned $link unchanged"
+		return 0
+	fi
+	if [ -L "$link" ]; then
+		case "$(readlink -f "$link" 2>/dev/null || true)" in
+			"$DATA_ROOT"/uv/python/*) ;;
+			*) log "leaving administrator-owned $link symlink unchanged"; return 0 ;;
+		esac
+	fi
+	rm -f "$temporary" || return 1
+	ln -s "$python_bin" "$temporary" || return 1
+	mv -f "$temporary" "$link"
+}
+
+main() {
+	local uv_root uv_bin python_bin
+	data_ready || { log "/data is not ready; deferred Python provisioning"; return 1; }
+	uv_root="$(runtime_uv_root)" || { log "pinned uv runtime is unavailable"; return 1; }
+	uv_bin="$uv_root/uv"
+	mkdir -p "$DATA_ROOT/uv/cache" "$DATA_ROOT/uv/python" || return 1
+	chmod 0700 "$DATA_ROOT/uv" "$DATA_ROOT/uv/cache" "$DATA_ROOT/uv/python" 2>/dev/null || true
+	export UV_CACHE_DIR="$DATA_ROOT/uv/cache"
+	export UV_PYTHON_INSTALL_DIR="$DATA_ROOT/uv/python"
+	export UV_PYTHON_INSTALL_MIRROR="file://$uv_root/python-mirror"
+	export UV_OFFLINE=1
+	python_bin="$($uv_bin python find "$PYTHON_SERIES" 2>/dev/null || true)"
+	if [ ! -x "$python_bin" ]; then
+		log "installing pinned CPython $PYTHON_SERIES from the offline firmware mirror"
+		"$uv_bin" python install "$PYTHON_SERIES" --offline || { log "offline CPython installation failed"; return 1; }
+		python_bin="$($uv_bin python find "$PYTHON_SERIES" 2>/dev/null || true)"
+	fi
+	[ -x "$python_bin" ] || { log "CPython $PYTHON_SERIES is unavailable after installation"; return 1; }
+	case "$python_bin" in
+		"$DATA_ROOT"/uv/python/*) ;;
+		*) log "uv returned an interpreter outside managed /data storage"; return 1 ;;
+	esac
+	publish_python_link "$python_bin" || return 1
+	"$python_bin" --version >/dev/null 2>&1 || return 1
+	log "CPython $PYTHON_SERIES is ready at $python_bin"
+}
+
+main "$@"

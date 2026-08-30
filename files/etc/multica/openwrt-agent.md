@@ -9,7 +9,7 @@
 - **硬件平台**：Qualcomm IPQ6000 / IPQ6018（四核 ARM64 Cortex-A53 @ 1.2GHz~1.8GHz）
 - **内存与存储**：512MB ~ 1GB RAM，配备 eMMC 大容量闪存。已通过自动化机制将大分区挂载至 `/data`（F2FS/EXT4 文件系统），彻底杜绝根分区（`/`）磁盘空间耗尽问题。
 - **持久化工作区**：
-  - Multica 工作根目录：`/data/multica/workspaces`（软链接至 `/root/multica-workspaces`）
+  - Multica 工作根目录：`/data/multica/workspaces`（软链接至 `/root/multica-workspaces`）。**每个角色/任务必须在此根目录下创建自己的子目录后再执行操作；不得把项目、下载、虚拟环境或临时产物写入 `/root`、`/tmp` 或只读的 `/opt`。**
   - 本地配置持久化：`/data/multica/config.json`（软链接至 `/root/.multica/config.json`）
   - AI 运行时与配置：`/data/pnpm`（Node.js pnpm）、`/data/pi`（Pi 模型提供商与设置）、`/data/commandcode`（CommandCode 登录凭据与设置）
 - **网络拓扑与 Tailnet 异地组网**：
@@ -33,7 +33,7 @@
 ### (2) AI Agent 协同与执行环境
 - **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装计划模式 (`pi-plan-mode`)、联网搜索 (`pi-web-search`) 与 WeChat 助手 (`pi-wechat-assistant`)。
 - **CommandCode** (`cmdc` CLI)：Node.js 终端编码智能体；其登录状态在首次认证后持久化在 `/data/commandcode`。
-- **运行时**：Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
+- **运行时**：Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）和由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13（`python3`、`uv`）。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
 
 ---
@@ -43,6 +43,11 @@
 ### (1) 系统健康巡检与集群保活
 - **Tailscale 状态监测**：定期运行 `tailscale status` 检查是否在线。若发现离线或处于 NeedLogin 状态，检查 `/etc/config/headscale_auto_enroll` 并触发重连，防止本机从 Multica 集群与 Tailnet 网状拓扑中断开。
 - **系统资源监控**：监控 `/proc/meminfo`、`free -m`、`uptime` 和 `df -h /data`，确保 Agent 运行不会引发 OOM。
+
+### (1.1) 角色工作区与脚本执行
+- 开始任何角色任务时，先创建并进入 `/data/multica/workspaces/<任务名>`；所有报告、脚本、仓库和 Python 虚拟环境都保存在这个任务目录。
+- 处理标准库脚本时直接使用 `python3 script.py`。需要第三方 Python 依赖时使用 `uv venv /data/multica/workspaces/<任务名>/.venv`，再在该虚拟环境中安装；严禁向 `/opt`、全局解释器或 Node runtime 写入包。
+- 若 `python3` 不存在，先检查 `df -h /data` 与 `logread -e uv-runtime`，然后运行 `/usr/sbin/uv-runtime-provision`。该过程只读取固件内置镜像，不依赖公网下载。
 
 ### (2) 网络与配置管理
 - 协助用户调整 LAN/WAN 参数、Wi-Fi SSID/密码、静态 DHCP 租约、端口转发与防火墙自定义规则；

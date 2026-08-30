@@ -115,10 +115,14 @@ json_value() {
 		architecture) expression='@.architecture' ;;
 		libc) expression='@.libc' ;;
 		node_abi) expression='@.runtime_contract.node_abi' ;;
+		uv_version) expression='@.runtime_contract.uv_version' ;;
+		python_series) expression='@.runtime_contract.python_series' ;;
+		python_version) expression='@.runtime_contract.python_version' ;;
 		minimum_space_bytes) expression='@.minimum_space_bytes' ;;
 		bundle_filename) expression='@.bundle.filename' ;;
 		bundle_sha256) expression='@.bundle.sha256' ;;
 		critical_node) expression='@.critical_elf_sha256["node/bin/node"]' ;;
+		critical_uv) expression='@.critical_elf_sha256["uv/uv"]' ;;
 		critical_multica) expression='@.critical_elf_sha256["bin/multica"]' ;;
 		*) return 1 ;;
 	esac
@@ -191,6 +195,16 @@ runtime_node_dir() {
 	printf '%s' "$path"
 }
 
+runtime_uv_dir() {
+	local runtime="$1" path="$1/uv"
+	if [ -L "$path" ]; then
+		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" ../uv || return 1
+		path="$(readlink -f "$path" 2>/dev/null || true)"
+	fi
+	[ -d "$path" ] && [ ! -L "$path" ] && [ -x "$path/uv" ] || return 1
+	printf '%s' "$path"
+}
+
 runtime_multica_path() {
 	local runtime="$1" path="$1/bin/multica"
 	if [ -L "$path" ]; then
@@ -202,7 +216,7 @@ runtime_multica_path() {
 }
 
 manifest_compatible() {
-	local runtime="$1" manifest arch libc abi baseline_abi baseline_node
+	local runtime="$1" manifest arch libc abi baseline_abi baseline_node uv_version python_series python_version baseline_uv_version baseline_python_series baseline_python_version
 	manifest="$runtime/manifest.json"
 	[ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
 	# jsonfilter reports success for a missing path with empty output, so an
@@ -213,10 +227,25 @@ manifest_compatible() {
 	[ "$arch" = "$(machine_arch)" ] && [ "$libc" = musl ] || return 1
 	abi="$(json_value "$manifest" node_abi 2>/dev/null || true)"
 	case "$abi" in ''|*[!0-9]*) return 1 ;; esac
+	uv_version="$(json_value "$manifest" uv_version 2>/dev/null || true)"
+	python_series="$(json_value "$manifest" python_series 2>/dev/null || true)"
+	python_version="$(json_value "$manifest" python_version 2>/dev/null || true)"
+	case "$uv_version:$python_series:$python_version" in
+		[0-9]*.[0-9]*.[0-9]*:3.13:3.13.[0-9]*) ;;
+		*) return 1 ;;
+	esac
 	baseline_node="$(runtime_node_dir "$BASELINE" 2>/dev/null || true)"
 	if [ -n "$baseline_node" ] && [ -x "$baseline_node/bin/node" ]; then
 		baseline_abi="$($baseline_node/bin/node -p 'process.versions.modules' 2>/dev/null || true)"
 		[ "$abi" = "$baseline_abi" ] || return 1
+	fi
+	baseline_uv_version="$(json_value "$BASELINE/manifest.json" uv_version 2>/dev/null || true)"
+	baseline_python_series="$(json_value "$BASELINE/manifest.json" python_series 2>/dev/null || true)"
+	baseline_python_version="$(json_value "$BASELINE/manifest.json" python_version 2>/dev/null || true)"
+	if [ -n "$baseline_uv_version$baseline_python_series$baseline_python_version" ]; then
+		[ "$uv_version" = "$baseline_uv_version" ] && \
+		[ "$python_series" = "$baseline_python_series" ] && \
+		[ "$python_version" = "$baseline_python_version" ] || return 1
 	fi
 	return 0
 }
@@ -285,7 +314,7 @@ publish_pi_extension_link() {
 }
 
 set_current() {
-	local runtime="$1" target old_target old_runtime node_dir
+	local runtime="$1" target old_target old_runtime node_dir uv_dir
 	case "$runtime" in
 		"$GENERATIONS"/*)
 			safe_generation_path "$runtime" || return 1
@@ -299,7 +328,8 @@ set_current() {
 	# published.  The three renames are individually atomic; a later failure is
 	# restored to the old links below.
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] && [ -s "$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts" ] || return 1
+	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -s "$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts" ] || return 1
 	old_runtime="$(current_runtime)"
 	case "$old_runtime" in
 		"$BASELINE") old_target="$BASELINE" ;;
@@ -331,12 +361,14 @@ quarantine_runtime() {
 }
 
 runtime_health() {
-	local runtime="$1" command node_dir multica
+	local runtime="$1" command node_dir uv_dir multica
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
 	multica="$(runtime_multica_path "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] && [ -n "$multica" ] && [ -x "$node_dir/bin/node" ] || return 1
+	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -n "$multica" ] && [ -x "$node_dir/bin/node" ] || return 1
 	PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 		"$node_dir/bin/node" -p 'process.versions.modules' >/dev/null 2>&1 || return 1
+	"$uv_dir/uv" --version >/dev/null 2>&1 || return 1
 	for command in pi cmdc multica; do
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 			command -v "$command" >/dev/null 2>&1 || return 1
@@ -350,6 +382,10 @@ legacy_compatible() {
 	local legacy="$1" baseline_node legacy_arch baseline_arch legacy_abi baseline_abi command
 	legacy_node="$legacy/bin/node"
 	baseline_node="$BASELINE/node/bin/node"
+	# A historical /data/node prefix cannot constitute a complete runtime now
+	# that a generation also contains the pinned uv/Python base.  Quarantine it
+	# rather than importing a partial stack that would shadow the firmware.
+	[ -d "$legacy/uv" ] && [ -x "$legacy/uv/uv" ] || return 1
 	[ -x "$legacy_node" ] && [ -x "$baseline_node" ] || return 1
 	legacy_arch="$($legacy_node -p 'process.arch' 2>/dev/null || true)"
 	baseline_arch="$($baseline_node -p 'process.arch' 2>/dev/null || true)"
@@ -502,9 +538,10 @@ archive_has_no_special_files() {
 
 verify_critical_hashes() {
 	local runtime="$1" manifest="$1/manifest.json" key path expected actual
-	for key in critical_node critical_multica; do
+	for key in critical_node critical_uv critical_multica; do
 		case "$key" in
 			critical_node) path='node/bin/node' ;;
+			critical_uv) path='uv/uv' ;;
 			critical_multica) path='bin/multica' ;;
 		esac
 		expected="$(json_value "$manifest" "$key" 2>/dev/null || true)"

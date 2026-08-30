@@ -23,12 +23,15 @@ grep -Eq "cron: ['\"]?0 \* \* \* \*['\"]?" "$WORKFLOW" || fail "workflow is not 
 for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests'; do
   grep -Fq "$term" "$WORKFLOW" || fail "workflow omits $term"
 done
-if grep -Eqi 'HERMES_TARGET_RUNNER|opencode-dcp|fetch_uv_runtime' "$WORKFLOW"; then
-  fail "workflow still probes a retired runtime"
+if grep -Eqi 'HERMES_TARGET_RUNNER|opencode-dcp' "$WORKFLOW"; then
+	fail "workflow still probes a retired runtime"
 fi
+grep -Fq 'uv --version' "$WORKFLOW" || fail "workflow does not probe the pinned uv runtime"
 
-mkdir -p "$WORK/generation/node/bin" "$WORK/generation/bin" "$WORK/generation/vendor"
+mkdir -p "$WORK/generation/node/bin" "$WORK/generation/uv/python-mirror" "$WORK/generation/bin" "$WORK/generation/vendor"
 cp "$(command -v node)" "$WORK/generation/node/bin/node"
+cp "$(command -v node)" "$WORK/generation/uv/uv"
+printf 'python_series=3.13\n' > "$WORK/generation/uv/python-mirror/manifest.txt"
 printf '#!/bin/sh\necho 0.4.35\n' > "$WORK/generation/bin/multica"
 chmod 755 "$WORK/generation/node/bin/node" "$WORK/generation/bin/multica"
 printf '24.20.0\n' > "$WORK/generation/node-version"
@@ -44,15 +47,17 @@ if (m.architecture !== 'x64' || m.libc !== 'musl' || !m.components['command-code
 if (m.components['hermes-agent'] || m.components['opencode-ai']) process.exit(3);
 NODE
 
-mkdir -p "$WORK/firmware/files/opt/node/bin" "$WORK/firmware/files/etc/agent-runtime" "$WORK/firmware/files/usr/local/bin"
+mkdir -p "$WORK/firmware/files/opt/node/bin" "$WORK/firmware/files/opt/uv/python-mirror" "$WORK/firmware/files/etc/agent-runtime" "$WORK/firmware/files/usr/local/bin"
 cp "$WORK/generation/node/bin/node" "$WORK/firmware/files/opt/node/bin/node"
+cp "$WORK/generation/uv/uv" "$WORK/firmware/files/opt/uv/uv"
+cp "$WORK/generation/uv/python-mirror/manifest.txt" "$WORK/firmware/files/opt/uv/python-mirror/manifest.txt"
 cp "$WORK/generation/node-version" "$WORK/firmware/files/etc/agent-runtime/node-version"
 cp "$WORK/generation/bin/multica" "$WORK/firmware/files/usr/local/bin/multica"
-chmod 755 "$WORK/firmware/files/opt/node/bin/node" "$WORK/firmware/files/usr/local/bin/multica"
+chmod 755 "$WORK/firmware/files/opt/node/bin/node" "$WORK/firmware/files/opt/uv/uv" "$WORK/firmware/files/usr/local/bin/multica"
 GITHUB_WORKSPACE="$ROOT_DIR" AGENT_RUNTIME_RELEASE=497 bash "$FINALIZE" "$WORK/firmware/files" >/dev/null
 node - "$WORK/firmware/files/opt/agent-runtime/manifest.json" <<'NODE'
 const m = require(process.argv[2]);
-if (m.architecture !== 'x64' || m.runtime_release !== 497 || !m.components['command-code']) process.exit(1);
+if (m.architecture !== 'x64' || m.runtime_release !== 497 || !m.components['command-code'] || m.runtime_contract.python_series !== '3.13') process.exit(1);
 if (m.components['hermes-agent'] || m.components['opencode-ai']) process.exit(2);
 NODE
 

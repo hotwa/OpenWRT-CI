@@ -22,8 +22,8 @@ usage() {
   cat <<'EOF'
 Usage: package_agent_runtime_bundle.sh --source DIR --output DIR --arch arm64|x64 --runtime-release N
 
-DIR is the *contents* of one immutable generation.  It must contain node/ and
-bin/multica.  The command writes a .tar.gz payload and its detached
+DIR is the *contents* of one immutable generation.  It must contain node/, uv/
+and bin/multica.  The command writes a .tar.gz payload and its detached
 manifest.json to OUTPUT.  The device manager verifies the detached manifest,
 extracts the payload, then installs that same manifest as generation/manifest.json.
 EOF
@@ -47,6 +47,8 @@ case "$ARCH" in arm64|x64) ;; *) die "--arch must be arm64 or x64" ;; esac
 [[ "$RUNTIME_RELEASE" =~ ^[1-9][0-9]*$ ]] || die "runtime_release must be a positive integer"
 SOURCE="$(realpath -e "$SOURCE")"
 [ -d "$SOURCE/node" ] || die "generation source is missing node/"
+[ -x "$SOURCE/uv/uv" ] || die "generation source is missing executable uv/uv"
+[ -s "$SOURCE/uv/python-mirror/manifest.txt" ] || die "generation source is missing pinned Python mirror"
 [ -x "$SOURCE/bin/multica" ] || die "generation source is missing executable bin/multica"
 [ -s "$SOURCE/node-version" ] || die "generation source is missing node-version"
 [ -s "$SOURCE/vendor/pi-plan-mode/provenance.json" ] || die "generation source is missing vendored Pi plan-mode provenance"
@@ -78,7 +80,10 @@ MIN_SPACE_BYTES="$(( (EXTRACTED_BYTES + BUNDLE_BYTES + 4194304 + 4095) / 4096 * 
 
 NODE_VERSION="$(sed -n '1p' "$SOURCE/node-version" | tr -d '[:space:]')"
 MULTICA_VERSION="$(sed -n 's/^MULTICA_VERSION="${MULTICA_VERSION:-\([0-9.]*\)}".*/\1/p' "$ROOT_DIR/Scripts/fetch_multica_runtime.sh" | head -n1)"
-[ -n "$NODE_VERSION" ] && [ -n "$MULTICA_VERSION" ] || die "unable to read pinned runtime contract"
+UV_VERSION="$(sed -n 's/^UV_VERSION="\([0-9.]*\)".*/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
+PYTHON_VERSION="$(sed -n 's/^PYTHON_VERSION="\([0-9.]*\)".*/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
+PYTHON_RELEASE_TAG="$(sed -n 's/^PYTHON_RELEASE_TAG="\([0-9]*\)".*/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
+[ -n "$NODE_VERSION" ] && [ -n "$MULTICA_VERSION" ] && [ -n "$UV_VERSION" ] && [ -n "$PYTHON_VERSION" ] && [ -n "$PYTHON_RELEASE_TAG" ] || die "unable to read pinned runtime contract"
 
 case "${NODE_VERSION%%.*}" in
 	24) NODE_ABI=137 ;;
@@ -92,7 +97,7 @@ case "${NODE_VERSION%%.*}:$NODE_ABI" in 24:137|22:127) ;; *) die "unreviewed Nod
 PACKAGES_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 SOURCE="$SOURCE" MANIFEST="$MANIFEST" ARCH="$ARCH" RUNTIME_RELEASE="$RUNTIME_RELEASE" \
   BUNDLE_SHA256="$BUNDLE_SHA256" BUNDLE_BYTES="$BUNDLE_BYTES" MIN_SPACE_BYTES="$MIN_SPACE_BYTES" \
-  NODE_VERSION="$NODE_VERSION" NODE_ABI="$NODE_ABI" MULTICA_VERSION="$MULTICA_VERSION" \
+  NODE_VERSION="$NODE_VERSION" NODE_ABI="$NODE_ABI" MULTICA_VERSION="$MULTICA_VERSION" UV_VERSION="$UV_VERSION" PYTHON_VERSION="$PYTHON_VERSION" PYTHON_RELEASE_TAG="$PYTHON_RELEASE_TAG" \
   LOCK_FILE="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json" PACKAGES_JSON="$PACKAGES_JSON" \
   node <<'NODE'
 const crypto = require('node:crypto');
@@ -108,12 +113,13 @@ const releaseInputs = [
   path.join(path.dirname(e.PACKAGES_JSON), 'vendor/pi-plan-mode/provenance.json'),
   path.join(path.dirname(e.PACKAGES_JSON), 'vendor/pi-plan-mode/plan-mode.ts'),
   path.join(path.dirname(e.PACKAGES_JSON), 'runtime-release'),
-  path.join(path.dirname(path.dirname(e.PACKAGES_JSON)), 'fetch_multica_runtime.sh')
+  path.join(path.dirname(path.dirname(e.PACKAGES_JSON)), 'fetch_multica_runtime.sh'),
+  path.join(path.dirname(path.dirname(e.PACKAGES_JSON)), 'fetch_uv_runtime.sh')
 ];
 const inputHash = crypto.createHash('sha256');
 for (const file of releaseInputs) inputHash.update(fs.readFileSync(file));
 const criticalCandidates = [
-  'node/bin/node', 'bin/multica',
+  'node/bin/node', 'uv/uv', 'bin/multica',
   'node/lib/node_modules/command-code/dist/index.mjs',
   'vendor/pi-plan-mode/provenance.json'
 ];
@@ -135,9 +141,13 @@ const manifest = {
   minimum_space_bytes: Number(e.MIN_SPACE_BYTES),
   runtime_contract: {
     node_version: e.NODE_VERSION,
-    node_abi: Number(e.NODE_ABI)
+    node_abi: Number(e.NODE_ABI),
+    uv_version: e.UV_VERSION,
+    python_series: '3.13',
+    python_version: e.PYTHON_VERSION,
+    python_release_tag: e.PYTHON_RELEASE_TAG
   },
-  components: { ...packages, multica: e.MULTICA_VERSION, 'pi-plan-mode': piPlanMode.version },
+  components: { ...packages, multica: e.MULTICA_VERSION, uv: e.UV_VERSION, cpython: e.PYTHON_VERSION, 'pi-plan-mode': piPlanMode.version },
   vendored_extensions: { 'pi-plan-mode': piPlanMode },
   lock_sha256: sha256(e.LOCK_FILE),
   input_sha256: inputHash.digest('hex'),

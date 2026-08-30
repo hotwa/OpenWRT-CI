@@ -91,14 +91,14 @@ jobs:
         id: changes
         run: |
           set -euo pipefail
-          paths=(Scripts/node-agent-runtime Scripts/fetch_multica_runtime.sh)
+          paths=(Scripts/node-agent-runtime Scripts/fetch_multica_runtime.sh Scripts/fetch_uv_runtime.sh)
           if [ "${{ inputs.force_release }}" = "true" ]; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
             echo 'Forced release of the current verified pins.'
             exit 0
           fi
           if git diff --quiet -- "${paths[@]}"; then
-            input_sha="$(node -e "const crypto=require('node:crypto'), fs=require('node:fs'); const files=['Scripts/node-agent-runtime/package.json','Scripts/node-agent-runtime/package-lock.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/plan-mode.ts','Scripts/node-agent-runtime/runtime-release','Scripts/fetch_multica_runtime.sh']; const h=crypto.createHash('sha256'); for (const f of files) h.update(fs.readFileSync(f)); console.log(h.digest('hex'));")"
+            input_sha="$(node -e "const crypto=require('node:crypto'), fs=require('node:fs'); const files=['Scripts/node-agent-runtime/package.json','Scripts/node-agent-runtime/package-lock.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json','Scripts/node-agent-runtime/vendor/pi-plan-mode/plan-mode.ts','Scripts/node-agent-runtime/runtime-release','Scripts/fetch_multica_runtime.sh','Scripts/fetch_uv_runtime.sh']; const h=crypto.createHash('sha256'); for (const f of files) h.update(fs.readFileSync(f)); console.log(h.digest('hex'));")"
             channel='https://github.com/hotwa/OpenWRT-CI/releases/download/agent-runtime-stable'
             mkdir -p "$RUNNER_TEMP/channel-check"
             if ! curl -fsSL "$channel/index.json" -o "$RUNNER_TEMP/channel-check/index.json" || \
@@ -159,8 +159,9 @@ jobs:
           for arch in arm64 x64; do
             case "$arch" in arm64) platform=linux/arm64 ;; x64) platform=linux/amd64 ;; esac
             docker run --rm --platform "$platform" -v "$RUNNER_TEMP/generation/$arch:/generation:ro" alpine:3.20 /bin/sh -ec '
-              export PATH=/generation/node/bin:/generation/bin:$PATH
+              export PATH=/generation/node/bin:/generation/uv:/generation/bin:$PATH
               node -p "process.versions.modules"
+              uv --version
               pi --version
               cmdc --version
               multica --version

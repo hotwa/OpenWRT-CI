@@ -1,0 +1,10 @@
+#!/bin/sh /etc/rc.common
+
+START=92
+STOP=10
+
+start() {
+	# This is intentionally non-fatal.  Multica will separately refuse to start
+	# without /data, while a failed Python extraction is retried on the next boot.
+	/usr/sbin/uv-runtime-provision || logger -t uv-runtime 'Python provisioning deferred'
+}

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
+UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 LOCKFILE="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"
 MODELS="$ROOT_DIR/files/etc/pi/agent/models.json"
@@ -12,16 +13,17 @@ PROFILE_NODE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
 PROFILE_UPDATE="$ROOT_DIR/files/etc/profile.d/30-agent-update-check.sh"
 
 fail() { echo "node runtime guard: $*" >&2; exit 1; }
-for path in "$WORKFLOW" "$FETCH_SCRIPT" "$MANIFEST" "$LOCKFILE" "$MODELS" "$SETTINGS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
+for path in "$WORKFLOW" "$FETCH_SCRIPT" "$UV_FETCH" "$MANIFEST" "$LOCKFILE" "$MODELS" "$SETTINGS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$FETCH_SCRIPT"
+bash -n "$UV_FETCH"
 
 grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh' "$WORKFLOW" || fail "WRT-CORE does not build the Node runtime"
 grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh' "$WORKFLOW" || fail "WRT-CORE does not build Multica"
-if grep -Fq 'fetch_uv_runtime.sh' "$WORKFLOW"; then
-  fail "WRT-CORE still stages the retired uv runtime"
-fi
+grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh' "$WORKFLOW" || fail "WRT-CORE does not stage the pinned uv runtime"
+grep -Fq 'PYTHON_SERIES="3.13"' "$UV_FETCH" || fail "uv runtime must carry exactly Python 3.13"
+grep -Fq 'UV_OFFLINE=1' "$ROOT_DIR/files/usr/sbin/uv-runtime-provision" || fail "Python provisioning must remain offline"
 
 for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
   'prune_foreign_platform_builds' 'verify_agent_runtime_arch' \
@@ -56,7 +58,7 @@ NODE
 
 grep -Fq '/data/node/bin' "$PROFILE_NODE" || fail "login PATH does not prefer an active generation"
 grep -Fq 'cmdc --version' "$PROFILE_UPDATE" || fail "login banner does not show CommandCode"
-if grep -Eqi 'opencode|hermes|uv' "$PROFILE_NODE" "$PROFILE_UPDATE"; then
+if grep -Eqi 'opencode|hermes' "$PROFILE_NODE" "$PROFILE_UPDATE"; then
   fail "login profile still references a retired runtime"
 fi
 

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Enable the retrying Python provisioner independently of whether a data
+# partition is already available on this first boot.
+
+if [ -x /etc/init.d/uv-runtime ]; then
+	/etc/init.d/uv-runtime enable || logger -t uv-runtime 'could not enable Python provisioner'
+fi
+exit 0

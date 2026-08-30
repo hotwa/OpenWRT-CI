@@ -24,7 +24,9 @@ if (m.schema_version !== 1 || !Number.isSafeInteger(m.runtime_release) || m.runt
 if (!['arm64', 'x64'].includes(m.architecture) || m.libc !== 'musl') throw new Error('invalid platform');
 if (!/^[a-f0-9]{64}$/.test(m.bundle.sha256) || !/^[a-f0-9]{64}$/.test(m.lock_sha256) || !/^[a-f0-9]{64}$/.test(m.input_sha256)) throw new Error('invalid SHA256');
 if (!Number.isSafeInteger(m.runtime_contract.node_abi)) throw new Error('invalid runtime contract');
+if (!/^\d+\.\d+\.\d+$/.test(m.runtime_contract.uv_version || '') || m.runtime_contract.python_series !== '3.13' || !/^3\.13\.\d+$/.test(m.runtime_contract.python_version || '') || !/^\d{8}$/.test(m.runtime_contract.python_release_tag || '')) throw new Error('invalid pinned Python runtime contract');
 if (!m.components['command-code']) throw new Error('CommandCode is missing from component contract');
+if (!m.components.uv || !m.components.cpython) throw new Error('uv or CPython is missing from component contract');
 if (!m.vendored_extensions['pi-plan-mode'] || m.components['pi-plan-mode'] !== m.vendored_extensions['pi-plan-mode'].version) throw new Error('invalid vendored Pi plan-mode contract');
 NODE
 
