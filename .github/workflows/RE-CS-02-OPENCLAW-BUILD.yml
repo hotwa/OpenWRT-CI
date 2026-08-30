@@ -1,4 +1,4 @@
-name: RE-CS-02 OpenClaw Build Only
+name: RE-CS-02 Build Only
 
 on:
   workflow_dispatch:
@@ -38,7 +38,6 @@ jobs:
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-02
       WRT_REQUIRED_DEVICE: jdcloud_re-cs-02
       WRT_FEATURE_OVERLAY: true
-      WRT_OPENCLAW: true
       # Same guarded first-boot eMMC -> /data layout as the RE-SS-01 gate.
       WRT_EMMC_DATA_PROVISIONING: true
       WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'

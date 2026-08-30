@@ -24,9 +24,9 @@ if grep -q '^CONFIG_PACKAGE_luci-app-openclaw=y$' "$GENERAL"; then
 	echo "OpenClaw must not be enabled by GENERAL.txt"
 	exit 1
 fi
-grep -qx 'CONFIG_PACKAGE_luci-app-openclaw=y' "$CONFIG"
+! grep -qx 'CONFIG_PACKAGE_luci-app-openclaw=y' "$CONFIG"
 
-grep -Fq 'name: RE-CS-02 OpenClaw Build Only' "$WORKFLOW"
+grep -Fq 'name: RE-CS-02 Build Only' "$WORKFLOW"
 grep -Fq 'workflow_dispatch:' "$WORKFLOW"
 grep -Fq 'uses: ./.github/workflows/WRT-CORE.yml' "$WORKFLOW"
 grep -Fq 'secrets: inherit' "$WORKFLOW"
@@ -37,7 +37,7 @@ grep -Fq 'WRT_SPLIT_DEVICE_ARTIFACTS: false' "$WORKFLOW"
 grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$WORKFLOW"
-grep -Fq 'WRT_OPENCLAW: true' "$WORKFLOW"
+! grep -Fq 'WRT_OPENCLAW: true' "$WORKFLOW"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$WORKFLOW"
 grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.11.1'\'' }}' "$WORKFLOW"
 if grep -Fq 'WRT_WORD:' "$WORKFLOW"; then
@@ -45,4 +45,4 @@ if grep -Fq 'WRT_WORD:' "$WORKFLOW"; then
   exit 1
 fi
 
-echo "RE-CS-02 OpenClaw build guards passed"
+echo "RE-CS-02 build excludes OpenClaw"

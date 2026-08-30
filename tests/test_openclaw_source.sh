@@ -6,17 +6,9 @@ PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 
-grep -Fq 'OPENCLAW_PACKAGE_COMMIT=94d420b581d5aaaa379274fcf60e0e04cdd2c762' "$PACKAGES_SH" || {
-  echo "openclaw source commit is not pinned"
+if grep -Eq '^[[:space:]]*UPDATE_PACKAGE[[:space:]]+"openclaw"' "$PACKAGES_SH"; then
+  echo "OpenClaw source fetch must remain disabled"
   exit 1
-}
-grep -Fq 'if [ "${WRT_OPENCLAW:-false}" = "true" ]; then' "$PACKAGES_SH" || {
-	echo "openclaw source fetch is not gated by WRT_OPENCLAW"
-	exit 1
-}
-grep -Fq 'UPDATE_PACKAGE "openclaw" "hotwa/luci-app-openclaw" "main" "" "" "$OPENCLAW_PACKAGE_COMMIT"' "$PACKAGES_SH" || {
-  echo "openclaw source is not pinned to the reviewed hotwa commit"
-  exit 1
-}
+fi
 
-echo "openclaw source test passed"
+echo "OpenClaw source remains disabled"
