@@ -76,7 +76,7 @@ Lucky 监听 `192.168.66.2` 或 `0.0.0.0` 即可接收 CPE relay；不是让每�
 - bootstrap 不直接运行 reconcile，只启用并启动唯一的 gate-aware procd 服务，保证 factory 首启本轮即可收敛。服务持有进程锁，等待 wrtbak `gate.json` 终态后幂等修复；network 值改变时受控 reload netifd，reload 失败恢复修改前的 metric/defaultroute/peerdns 并返回失败。用户保留的 IPv4 `0.0.0.0/0` 规则属于显式 override，可能先于 CPE failover 匹配，运行日志会告警。
 - Nikki 位于策略路由上层，但不同 TUN/规则模式对 fwmark 和出口选择的实际兼容性必须在设备上验证，不能仅凭固件配置断言。
 - `tailscale` 与 `luci-app-tailscale-community` 已内置。私有构建中只有在注入 `HEADSCALE_OPENWRT_AUTHKEY` Secret 时才会首启自动加入 Headscale；该密钥不写入仓库。
-- CPE-5G 预设默认不启用 LAN 到 Tailnet 的转发。路由器本身可经 Tailnet 管理；如需让 LAN 客户端访问 Tailnet，必须在触发构建前单独评估并启用对应策略。
+- CPE-5G B 私有功能预设启用双向 LAN/Tailnet Mesh 转发；A 隔离基线不含该功能覆盖层。`tailscale` 区仍保持 `forward=REJECT`，仅由两条显式 forwarding 放行，Headscale ACL 继续决定哪些 Tailnet 节点和站点网段可访问 CPE LAN。
 - `luci-app-wrtbak` 固定使用经过审查的提交。日常 R2 上传继续按 LAN/IP 推导站点代理；首启恢复通过 `WRTBAK_S3_FORCE_DIRECT` 强制直连 R2，避免依赖代理链路。
 - `WRTBAK_FIRSTBOOT_AUTO_ENABLED` 只在 CPE-5G 工作流中提供，默认 `0`。只有已确认恢复来源和回滚路径时才应设为 `1`；恢复完成后该上游功能会按配置重启设备。
 - B 预设启用 wrtbak 首启恢复时，Headscale 自动注册受 `/root/wrtbak/firstboot/gate.json` 门禁约束：必须先复用恢复的 `tailscaled.state`，确认没有备份或恢复最终失败后才允许消耗 auth key 注册新节点。该规则来自共享 feature overlay，已随 `main` 的 CPE-5G B 构建生效。

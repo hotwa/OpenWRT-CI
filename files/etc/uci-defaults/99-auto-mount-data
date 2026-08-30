@@ -6,6 +6,7 @@ set -u
 
 DATA_ROOT="${AUTO_MOUNT_DATA_ROOT:-/data}"
 ROOT_HOME="${AUTO_MOUNT_ROOT_HOME:-/root}"
+OPT_ROOT="${AUTO_MOUNT_OPT_ROOT:-/opt}"
 MOUNTS_FILE="${AUTO_MOUNT_PROC_MOUNTS:-/proc/mounts}"
 LOCK_BASE="${AUTO_MOUNT_LOCK_BASE:-/var/lock}"
 LOCK_DIR="$LOCK_BASE/openwrt-data-mount.lock"
@@ -332,6 +333,28 @@ link_directory() {
 	mv "$temporary" "$link_path" || { rm -f "$temporary"; return 1; }
 }
 
+# These are convenience paths only. /data remains the real mountpoint because
+# /opt contains immutable Node and agent-runtime baselines that must never be
+# hidden by a data-disk mount. Do not replace a pre-existing user path.
+link_compatibility_path() {
+	local target="$1"
+	local link_path="$2"
+	local temporary="${link_path}.new.$$"
+
+	[ -d "$target" ] && [ ! -L "$target" ] || return 1
+	if [ -L "$link_path" ]; then
+		[ "$(readlink "$link_path")" = "$target" ]
+		return
+	fi
+	[ ! -e "$link_path" ] || {
+		log_error "leaving existing compatibility path unchanged: $link_path"
+		return 0
+	}
+	mkdir -p "$(dirname "$link_path")" || return 1
+	ln -s "$target" "$temporary" || return 1
+	mv "$temporary" "$link_path" || { rm -f "$temporary"; return 1; }
+}
+
 prepare_agent_storage() {
 	local directory
 	for directory in \
@@ -346,9 +369,11 @@ prepare_agent_storage() {
 		"$DATA_ROOT/uv_cache" \
 		"$DATA_ROOT/uv" \
 		"$DATA_ROOT/uv/python" \
-		"$DATA_ROOT/uv/python-cache"; do
+		"$DATA_ROOT/uv/python-cache" \
+		"$DATA_ROOT/smb"; do
 		ensure_real_directory "$directory" || return 1
 	done
+	chmod 0750 "$DATA_ROOT/smb" 2>/dev/null || true
 
 	if [ -f /etc/multica/openwrt-agent.md ]; then
 		cp -p /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
@@ -361,6 +386,10 @@ prepare_agent_storage() {
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1
 	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || return 1
 	link_directory "$DATA_ROOT/opencode" "$ROOT_HOME/.opencode" opencode || return 1
+	link_compatibility_path "$DATA_ROOT" "$OPT_ROOT/data" || \
+		log_error "could not create optional compatibility path: $OPT_ROOT/data"
+	link_compatibility_path "$DATA_ROOT/smb" "$OPT_ROOT/smb" || \
+		log_error "could not create optional compatibility path: $OPT_ROOT/smb"
 }
 
 main() {

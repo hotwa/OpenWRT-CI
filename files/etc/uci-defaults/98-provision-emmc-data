@@ -1,0 +1,429 @@
+#!/bin/sh
+# Provision a dedicated mutable data partition for reviewed JDCloud eMMC
+# layouts. This is deliberately earlier than 99-auto-mount-data: it only ever
+# creates a new, tail-end GPT partition after a board/topology preflight, then
+# leaves mounting, migration and fstab persistence to the existing safe path.
+
+set -u
+
+TAG="emmc-data-provision"
+CONFIG="agent-storage"
+SECTION="main"
+LABEL="openwrt-data"
+MIN_SIZE_MB=1024
+BOARD_FILE="${EMMC_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
+SYS_BLOCK_ROOT="${EMMC_DATA_SYS_BLOCK_ROOT:-/sys/block}"
+DEV_ROOT="${EMMC_DATA_DEV_ROOT:-/dev}"
+MOUNTS_FILE="${EMMC_DATA_MOUNTS_FILE:-/proc/mounts}"
+OVERLAY_DIR="${EMMC_DATA_OVERLAY_DIR:-/overlay}"
+PENDING_FILE="${EMMC_DATA_PENDING_FILE:-$OVERLAY_DIR/.emmc-data-provision.pending}"
+TESTING="${EMMC_DATA_PROVISION_TESTING:-0}"
+TEST_TABLE_FILE="${EMMC_DATA_TEST_TABLE_FILE:-}"
+TEST_STATE_DIR="${EMMC_DATA_TEST_STATE_DIR:-}"
+
+log() {
+	printf '%s\n' "$TAG: $*" >&2
+	command -v logger >/dev/null 2>&1 && logger -t "$TAG" -- "$*" || true
+}
+
+fail() {
+	log "$*"
+	return 1
+}
+
+cfg() {
+	local option="$1" default="$2" value=""
+	if [ "$TESTING" = "1" ]; then
+		case "$option" in
+			enabled) value="${EMMC_DATA_TEST_ENABLED:-}" ;;
+			min_size_mb) value="${EMMC_DATA_TEST_MIN_SIZE_MB:-}" ;;
+			label) value="${EMMC_DATA_TEST_LABEL:-}" ;;
+		esac
+	elif command -v uci >/dev/null 2>&1; then
+		value="$(uci -q get "$CONFIG.$SECTION.$option" 2>/dev/null || true)"
+	fi
+	[ -n "$value" ] || value="$default"
+	printf '%s' "$value"
+}
+
+supported_board() {
+	case "$1" in
+		jdcloud,re-ss-01|jdcloud,re-cs-02|jdcloud,re-cs-07) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+valid_number() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+valid_label() {
+	case "$1" in
+		openwrt-data) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+run_sgdisk() {
+	if [ "$TESTING" = "1" ]; then
+		[ -n "$TEST_STATE_DIR" ] && printf '%s\n' "$*" >>"$TEST_STATE_DIR/sgdisk.calls"
+		case "$1" in
+			-p) cat "$TEST_TABLE_FILE" ;;
+			-i) printf "Partition name: '%s'\nFirst sector: %s\nLast sector: %s\n" \
+				"$LABEL" "${EMMC_DATA_TEST_START:-}" "${EMMC_DATA_TEST_END:-}" ;;
+			--backup=*) : >"${1#--backup=}" ;;
+			-e) : ;;
+			--new=*)
+				if [ "${EMMC_DATA_TEST_NEW_PARTITION_APPEARS:-0}" = "1" ]; then
+					spec="${1#--new=}"
+					old_ifs="$IFS"; IFS=':'; set -- $spec; IFS="$old_ifs"
+					printf '%s\n' "  $1         $2         $3   0.0 MiB    8300  $LABEL" >>"$TEST_TABLE_FILE"
+				fi
+				: ;;
+			*) return 1 ;;
+		esac
+		return 0
+	fi
+	sgdisk "$@"
+}
+
+run_partprobe() {
+	if [ "$TESTING" = "1" ]; then
+		[ -n "$TEST_STATE_DIR" ] && printf '%s\n' "$*" >>"$TEST_STATE_DIR/partprobe.calls"
+		return 0
+	fi
+	partprobe "$@"
+}
+
+run_mkfs() {
+	if [ "$TESTING" = "1" ]; then
+		[ -n "$TEST_STATE_DIR" ] && printf '%s\n' "$*" >>"$TEST_STATE_DIR/mkfs.calls"
+		[ -n "$TEST_STATE_DIR" ] && : >"$TEST_STATE_DIR/formatted"
+		return 0
+	fi
+	mkfs.ext4 "$@"
+}
+
+partition_table() {
+	local disk="$1"
+	if [ "$TESTING" = "1" ]; then
+		cat "$TEST_TABLE_FILE"
+	else
+		run_sgdisk -p "$disk" 2>&1
+	fi
+}
+
+partition_rows() {
+	partition_table "$1" | awk '
+		$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {
+			# sgdisk prints: number start end size-unit type-code name.
+			name = $7
+			for (i = 8; i <= NF; i++) name = name " " $i
+			print $1 "\t" $2 "\t" $3 "\t" name
+		}'
+}
+
+partition_by_name() {
+	local disk="$1" name="$2"
+	partition_rows "$disk" | awk -F '\t' -v expected="$name" '$4 == expected { print; count++ } END { exit count == 1 ? 0 : 1 }'
+}
+
+partition_by_number() {
+	local disk="$1" number="$2"
+	partition_rows "$disk" | awk -F '\t' -v expected="$number" '$1 == expected { print; count++ } END { exit count == 1 ? 0 : 1 }'
+}
+
+table_has_required_topology() {
+	local disk="$1"
+	partition_by_name "$disk" rootfs >/dev/null 2>&1 &&
+		partition_by_name "$disk" rootfs_data >/dev/null 2>&1
+}
+
+table_slot_limit() {
+	partition_table "$1" | sed -n 's/^Partition table holds up to \([0-9][0-9]*\) entries.*/\1/p' | head -n 1
+}
+
+table_last_sector() {
+	partition_table "$1" | sed -n 's/^First usable sector is [0-9][0-9]*, last usable sector is \([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+
+table_max_partition() {
+	partition_rows "$1" | awk -F '\t' 'BEGIN { max = 0 } $1 > max { max = $1 } END { print max }'
+}
+
+table_max_end() {
+	partition_rows "$1" | awk -F '\t' 'BEGIN { max = 0 } $3 > max { max = $3 } END { print max }'
+}
+
+partition_device() {
+	local disk="$1" number="$2" base
+	base="${disk##*/}"
+	printf '%s/%sp%s' "$DEV_ROOT" "$base" "$number"
+}
+
+device_is_ready() {
+	local device="$1"
+	if [ "$TESTING" = "1" ]; then
+		[ "${EMMC_DATA_TEST_DEVICE_READY:-0}" = "1" ]
+	else
+		[ -b "$device" ]
+	fi
+}
+
+device_is_mounted() {
+	local device="$1"
+	awk -v expected="$device" '$1 == expected { found = 1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null
+}
+
+filesystem_type() {
+	local device="$1"
+	if [ "$TESTING" = "1" ]; then
+		[ -f "$TEST_STATE_DIR/formatted" ] && printf '%s' ext4
+		return 0
+	fi
+	blkid -o value -s TYPE "$device" 2>/dev/null || true
+}
+
+filesystem_label() {
+	local device="$1"
+	if [ "$TESTING" = "1" ]; then
+		[ -f "$TEST_STATE_DIR/formatted" ] && printf '%s' "$LABEL"
+		return 0
+	fi
+	blkid -o value -s LABEL "$device" 2>/dev/null || true
+}
+
+approved_data_exists() {
+	if [ "$TESTING" = "1" ]; then
+		[ "${EMMC_DATA_TEST_EXISTING_DATA:-0}" = "1" ]
+		return
+	fi
+	blkid -t "LABEL=$LABEL" -o device 2>/dev/null | awk 'NR == 1 { found = 1 } END { exit !found }'
+}
+
+write_pending() {
+	local disk="$1" number="$2" start="$3" end="$4" phase="$5" tmp
+	mkdir -p "$OVERLAY_DIR" || return 1
+	tmp="$PENDING_FILE.new.$$"
+	( umask 077; printf 'disk=%s\nnumber=%s\nstart=%s\nend=%s\nlabel=%s\nphase=%s\n' \
+		"$disk" "$number" "$start" "$end" "$LABEL" "$phase" >"$tmp" ) || return 1
+	mv -f "$tmp" "$PENDING_FILE"
+}
+
+read_pending() {
+	[ -f "$PENDING_FILE" ] || return 1
+	PENDING_DISK="$(sed -n 's/^disk=//p' "$PENDING_FILE" | head -n 1)"
+	PENDING_NUMBER="$(sed -n 's/^number=//p' "$PENDING_FILE" | head -n 1)"
+	PENDING_START="$(sed -n 's/^start=//p' "$PENDING_FILE" | head -n 1)"
+	PENDING_END="$(sed -n 's/^end=//p' "$PENDING_FILE" | head -n 1)"
+	PENDING_LABEL="$(sed -n 's/^label=//p' "$PENDING_FILE" | head -n 1)"
+	PENDING_PHASE="$(sed -n 's/^phase=//p' "$PENDING_FILE" | head -n 1)"
+	case "$PENDING_DISK" in "$DEV_ROOT"/mmcblk[0-9]) ;; *) return 1 ;; esac
+	valid_number "$PENDING_NUMBER" && valid_number "$PENDING_START" && valid_number "$PENDING_END" &&
+		[ "$PENDING_START" -le "$PENDING_END" ] && [ "$PENDING_LABEL" = "$LABEL" ] &&
+		case "$PENDING_PHASE" in intent|created) return 0 ;; *) return 1 ;; esac
+}
+
+backup_gpt() {
+	local disk="$1" board="$2" backup safe_board
+	mkdir -p "$OVERLAY_DIR" || return 1
+	safe_board="$(printf '%s' "$board" | tr ',' '_')"
+	backup="$OVERLAY_DIR/${TAG}-${safe_board}-$(date +%s).gpt"
+	run_sgdisk "--backup=$backup" "$disk" || return 1
+	[ -s "$backup" ] || [ "$TESTING" = "1" ] || return 1
+	printf '%s' "$backup"
+}
+
+verify_created_partition() {
+	local disk="$1" number="$2" start="$3" end="$4" info
+	info="$(run_sgdisk -i "$number" "$disk" 2>&1)" || return 1
+	printf '%s\n' "$info" | grep -Fq "Partition name: '$LABEL'" || return 1
+	printf '%s\n' "$info" | grep -Fq "First sector: $start" || return 1
+	printf '%s\n' "$info" | grep -Fq "Last sector: $end" || return 1
+}
+
+wait_for_device() {
+	local device="$1" attempt=0
+	run_partprobe "${device%p*}" >/dev/null 2>&1 || return 1
+	while [ "$attempt" -lt 10 ]; do
+		device_is_ready "$device" && return 0
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	return 1
+}
+
+pending_partition_matches_gpt() {
+	local row number start end name last_usable max_end
+	row="$(partition_by_number "$PENDING_DISK" "$PENDING_NUMBER" 2>/dev/null || true)"
+	[ -n "$row" ] || return 1
+	number="$(printf '%s\n' "$row" | awk -F '\t' '{ print $1 }')"
+	start="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
+	end="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
+	name="$(printf '%s\n' "$row" | awk -F '\t' '{ print $4 }')"
+	[ "$number" = "$PENDING_NUMBER" ] && [ "$start" = "$PENDING_START" ] && \
+		[ "$end" = "$PENDING_END" ] && [ "$name" = "$LABEL" ] || return 1
+	table_has_required_topology "$PENDING_DISK" || return 1
+	last_usable="$(table_last_sector "$PENDING_DISK")"
+	max_end="$(table_max_end "$PENDING_DISK")"
+	valid_number "$last_usable" && valid_number "$max_end" && \
+		[ "$last_usable" = "$PENDING_END" ] && [ "$max_end" = "$PENDING_END" ]
+}
+
+pending_geometry_is_available() {
+	local sector_size total_sectors max_partition max_end expected_start expected_end
+	table_has_required_topology "$PENDING_DISK" || return 1
+	partition_by_name "$PENDING_DISK" "$LABEL" >/dev/null 2>&1 && return 1
+	sector_size="$(cat "$SYS_BLOCK_ROOT/${PENDING_DISK##*/}/queue/logical_block_size" 2>/dev/null || true)"
+	total_sectors="$(cat "$SYS_BLOCK_ROOT/${PENDING_DISK##*/}/size" 2>/dev/null || true)"
+	max_partition="$(table_max_partition "$PENDING_DISK")"
+	max_end="$(table_max_end "$PENDING_DISK")"
+	for value in "$sector_size" "$total_sectors" "$max_partition" "$max_end"; do
+		valid_number "$value" || return 1
+	done
+	case "$sector_size" in 512|1024|2048|4096) ;; *) return 1 ;; esac
+	expected_start=$(( ((max_end + 1 + 2047) / 2048) * 2048 ))
+	expected_end=$((total_sectors - 34))
+	[ "$PENDING_NUMBER" -eq $((max_partition + 1)) ] && \
+		[ "$PENDING_START" -eq "$expected_start" ] && [ "$PENDING_END" -eq "$expected_end" ]
+}
+
+create_pending_partition() {
+	run_sgdisk "--new=$PENDING_NUMBER:$PENDING_START:$PENDING_END" \
+		"--typecode=$PENDING_NUMBER:8300" "--change-name=$PENDING_NUMBER:$LABEL" \
+		"$PENDING_DISK" || return 1
+	[ "${EMMC_DATA_TEST_STOP_AFTER_NEW:-0}" != "1" ] || return 1
+	verify_created_partition "$PENDING_DISK" "$PENDING_NUMBER" "$PENDING_START" "$PENDING_END" || return 1
+	# A verified created phase can only be completed if it still matches the
+	# live GPT geometry below. If power fails before this rewrite, 'intent'
+	# recovery performs the same live verification before formatting.
+	write_pending "$PENDING_DISK" "$PENDING_NUMBER" "$PENDING_START" "$PENDING_END" created || return 1
+}
+
+format_pending_partition() {
+	local device existing_type type label
+	read_pending || return 1
+	pending_partition_matches_gpt || return 1
+	device="$(partition_device "$PENDING_DISK" "$PENDING_NUMBER")"
+	device_is_ready "$device" || return 1
+	device_is_mounted "$device" && return 1
+	existing_type="$(filesystem_type "$device")"
+	[ -z "$existing_type" ] || return 1
+	run_mkfs -F -L "$LABEL" "$device" || return 1
+	type="$(filesystem_type "$device")"
+	label="$(filesystem_label "$device")"
+	[ "$type" = ext4 ] && [ "$label" = "$LABEL" ] || return 1
+	rm -f "$PENDING_FILE"
+	log "created and formatted $device as $LABEL"
+}
+
+resume_pending_partition() {
+	local device
+	read_pending || return 1
+	if pending_partition_matches_gpt; then
+		device="$(partition_device "$PENDING_DISK" "$PENDING_NUMBER")"
+		wait_for_device "$device" || return 1
+		format_pending_partition
+		return
+	fi
+	[ "$PENDING_PHASE" = intent ] || return 1
+	pending_geometry_is_available || return 1
+	create_pending_partition || return 1
+	device="$(partition_device "$PENDING_DISK" "$PENDING_NUMBER")"
+	wait_for_device "$device" || return 1
+	format_pending_partition
+}
+
+provision_new_partition() {
+	local disk="$1" board="$2" sector_size total_sectors slot_limit last_usable
+	local max_partition max_end number start end min_sectors backup
+
+	table_has_required_topology "$disk" || return 1
+	partition_by_name "$disk" "$LABEL" >/dev/null 2>&1 && return 1
+	sector_size="$(cat "$SYS_BLOCK_ROOT/${disk##*/}/queue/logical_block_size" 2>/dev/null || true)"
+	total_sectors="$(cat "$SYS_BLOCK_ROOT/${disk##*/}/size" 2>/dev/null || true)"
+	slot_limit="$(table_slot_limit "$disk")"
+	max_partition="$(table_max_partition "$disk")"
+	max_end="$(table_max_end "$disk")"
+	for value in "$sector_size" "$total_sectors" "$slot_limit" "$max_partition" "$max_end"; do
+		valid_number "$value" || return 1
+	done
+	case "$sector_size" in 512|1024|2048|4096) ;; *) return 1 ;; esac
+	number=$((max_partition + 1))
+	[ "$number" -le "$slot_limit" ] || return 1
+	start=$(( ((max_end + 1 + 2047) / 2048) * 2048 ))
+	# GPT reserves the final 33 logical sectors after the last usable one.
+	end=$((total_sectors - 34))
+	min_sectors=$((MIN_SIZE_MB * 1048576 / sector_size))
+	[ "$end" -ge "$start" ] && [ $((end - start + 1)) -ge "$min_sectors" ] || return 1
+
+	backup="$(backup_gpt "$disk" "$board")" || return 1
+	log "saved GPT backup to $backup"
+	# Move a stale secondary GPT header to the real end of the device before
+	# adding the tail partition. The following geometry check fails closed if
+	# the kernel-visible capacity and GPT still disagree.
+	run_sgdisk -e "$disk" || return 1
+	last_usable="$(table_last_sector "$disk")"
+	valid_number "$last_usable" && [ "$last_usable" -eq "$end" ] || return 1
+	# Persist exact intended geometry before creating anything, so a power loss
+	# cannot strand an unnamed, unformatted partition without a safe recovery.
+	write_pending "$disk" "$number" "$start" "$end" intent || return 1
+	PENDING_DISK="$disk"; PENDING_NUMBER="$number"; PENDING_START="$start"; PENDING_END="$end"
+	PENDING_LABEL="$LABEL"; PENDING_PHASE=intent
+	create_pending_partition || return 1
+	wait_for_device "$(partition_device "$disk" "$number")" || return 1
+	format_pending_partition
+}
+
+find_candidate_disk() {
+	local path name candidate="" count=0
+	for path in "$SYS_BLOCK_ROOT"/mmcblk[0-9]; do
+		[ -d "$path" ] || continue
+		name="${path##*/}"
+		table_has_required_topology "$DEV_ROOT/$name" || continue
+		candidate="$DEV_ROOT/$name"
+		count=$((count + 1))
+	done
+	[ "$count" -eq 1 ] || return 1
+	printf '%s' "$candidate"
+}
+
+main() {
+	local enabled board disk minimum label
+	enabled="$(cfg enabled 0)"
+	case "$enabled" in 1|true|yes|on) ;; *) return 0 ;; esac
+	board="$(cat "$BOARD_FILE" 2>/dev/null || true)"
+	supported_board "$board" || {
+		log "board '$board' is not approved for automatic eMMC provisioning"
+		return 0
+	}
+	minimum="$(cfg min_size_mb "$MIN_SIZE_MB")"
+	label="$(cfg label "$LABEL")"
+	valid_number "$minimum" && [ "$minimum" -ge 256 ] && [ "$minimum" -le 16384 ] || return 1
+	valid_label "$label" || return 1
+	MIN_SIZE_MB="$minimum"
+	LABEL="$label"
+	approved_data_exists && return 0
+	if [ -f "$PENDING_FILE" ]; then
+		resume_pending_partition || {
+			log "pending data partition is not ready; leaving first-boot script for a safe retry"
+			return 1
+		}
+		return 0
+	fi
+	disk="$(find_candidate_disk)" || {
+		log "expected exactly one approved eMMC GPT topology; refusing to select a disk"
+		return 1
+	}
+	provision_new_partition "$disk" "$board" || {
+		log "provisioning preflight failed; no existing filesystem was formatted"
+		return 1
+	}
+}
+
+if [ "${EMMC_DATA_PROVISION_LIBRARY_ONLY:-0}" != "1" ]; then
+	main "$@"
+fi

@@ -34,8 +34,8 @@ on:
         required: false
         type: string
       LAN_TAILNET:
-        description: '允许 LAN 设备访问 Tailscale 内网。默认关闭；仅在确认该路由器应作为 LAN->tailnet 网关时开启。'
-        default: false
+        description: '允许 LAN 与获授权 Tailnet 设备双向访问。默认开启；Headscale ACL 仍限制可访问的节点与网段。'
+        default: true
         required: false
         type: boolean
       WAN_SSH:
@@ -94,12 +94,10 @@ jobs:
       WRT_NAME: DAE-WRT
       #默认WIFI名称
       WRT_SSID: DAE-WRT
-      #默认WIFI密码
-      WRT_WORD: 12345678
       #默认地址
       WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
-      #允许 LAN 设备访问 Tailscale 内网
-      WRT_LAN_TAILNET: ${{ inputs.LAN_TAILNET || false }}
+      #私有 Mesh 双向 LAN/Tailnet 网关
+      WRT_LAN_TAILNET: ${{ github.event_name != 'workflow_dispatch' || inputs.LAN_TAILNET }}
       #允许 WAN 访问路由器本机 Dropbear SSH
       WRT_WAN_SSH: ${{ inputs.WAN_SSH || false }}
       WRT_WAN_SSH_PORT: ${{ inputs.WAN_SSH_PORT || '22' }}

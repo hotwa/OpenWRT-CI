@@ -3,10 +3,16 @@
 ## 1. Scope and trust boundaries
 
 Each OpenWrt router joins `https://headscale.jmsu.top`, advertises its own LAN
-prefix, accepts approved remote prefixes, and provides LAN-to-Tailnet forwarding.
-The fw4 `tailscale` zone deliberately keeps `forward=REJECT`; this overlay adds
-only `lan -> tailscale` forwarding and does not create unrestricted
-`tailscale -> lan` access.
+prefix, accepts approved remote prefixes, and provides private-Mesh forwarding
+in both directions. The fw4 `tailscale` zone deliberately keeps
+`forward=REJECT`; the overlay adds only explicit `lan -> tailscale` and
+`tailscale -> lan` forwardings. It does not turn the zone into an unrestricted
+forwarding domain: Headscale ACLs remain the access boundary for Tailnet-origin
+traffic.
+
+Firmware upgraded from the earlier one-way gateway schema is promoted once to
+the private-Mesh defaults, including an old preserved `enabled='0'` setting.
+The stamped schema then preserves a later explicit UCI opt-out.
 
 Every site must have a unique CIDR. Duplicate or overlapping LAN prefixes are a
 deployment error, not a high-availability configuration. Keep a controller-side

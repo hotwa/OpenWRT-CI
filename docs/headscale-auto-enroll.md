@@ -8,7 +8,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - Use ordinary SSH to the router over its Tailscale IP for normal management after the router joins Headscale, for example `ssh root@100.64.x.x`.
 - `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
-- The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
+- The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Its private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
 
 ## Files
 

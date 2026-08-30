@@ -16,12 +16,17 @@ for workflow in "$QCA_612" "$QCA_618" "$QCA_LIBWRT"; do
 		exit 1
 	}
 
-	grep -q "description: '允许 LAN 设备访问 Tailscale 内网" "$workflow" || {
+	grep -q "description: '允许 LAN 与获授权 Tailnet 设备双向访问" "$workflow" || {
 		echo "$workflow missing LAN_TAILNET safety description"
 		exit 1
 	}
 
-	grep -q "WRT_LAN_TAILNET: \${{ inputs.LAN_TAILNET || false }}" "$workflow" || {
+	grep -A5 '^      LAN_TAILNET:' "$workflow" | grep -q 'default: true' || {
+		echo "$workflow does not default LAN_TAILNET to true"
+		exit 1
+	}
+
+	grep -q "WRT_LAN_TAILNET: \${{ github.event_name != 'workflow_dispatch' || inputs.LAN_TAILNET }}" "$workflow" || {
 		echo "$workflow does not pass LAN_TAILNET into WRT-CORE"
 		exit 1
 	}
@@ -29,6 +34,11 @@ done
 
 grep -q "WRT_LAN_TAILNET:" "$WRT_CORE" || {
 	echo "WRT-CORE missing WRT_LAN_TAILNET input"
+	exit 1
+}
+
+grep -A4 '^      WRT_LAN_TAILNET:' "$WRT_CORE" | grep -q 'default: true' || {
+	echo "WRT-CORE must enable the private Mesh gateway by default"
 	exit 1
 }
 
@@ -52,10 +62,22 @@ grep -q "option enabled '0'" "$WORK_DIR/files/etc/config/tailscale" || {
 	echo "configurer should leave LAN-to-tailnet disabled when input is false"
 	exit 1
 }
+grep -q "option tailnet_to_lan '0'" "$WORK_DIR/files/etc/config/tailscale" || {
+	echo "configurer should disable tailnet-to-LAN when input is false"
+	exit 1
+}
+grep -q "option mesh_schema_version '2'" "$WORK_DIR/files/etc/config/tailscale" || {
+	echo "configurer should stamp the private Mesh schema version"
+	exit 1
+}
 
 "$CONFIGURER" "$WORK_DIR/files" true
 grep -A8 "config lan_to_tailnet 'lan_to_tailnet'" "$WORK_DIR/files/etc/config/tailscale" | grep -q "option enabled '1'" || {
 	echo "configurer should enable LAN-to-tailnet when input is true"
+	exit 1
+}
+grep -A10 "config lan_to_tailnet 'lan_to_tailnet'" "$WORK_DIR/files/etc/config/tailscale" | grep -q "option tailnet_to_lan '1'" || {
+	echo "configurer should enable tailnet-to-LAN when input is true"
 	exit 1
 }
 

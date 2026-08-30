@@ -56,9 +56,14 @@ grep -q 'WRT_PW:' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'WRT_LAN_TAILNET: false' "$WORKFLOW" || {
-  echo "CPE-5G workflow must keep LAN-to-tailnet forwarding disabled by default"
-  exit 1
+printf '%s\n' "$baseline_block" | grep -q 'WRT_LAN_TAILNET: false' || {
+	echo "CPE-5G A isolation baseline must keep the unused gateway input disabled"
+	exit 1
+}
+
+printf '%s\n' "$cpe_block" | grep -q 'WRT_LAN_TAILNET: true' || {
+	echo "CPE-5G B must enable the private Mesh gateway"
+	exit 1
 }
 
 grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {

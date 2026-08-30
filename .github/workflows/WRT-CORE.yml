@@ -19,9 +19,6 @@ on:
       WRT_SSID:
         required: true
         type: string
-      WRT_WORD:
-        required: true
-        type: string
       WRT_IP:
         required: true
         type: string
@@ -60,6 +57,10 @@ on:
         type: string
         default: ''
       WRT_LAN_TAILNET:
+        required: false
+        type: boolean
+        default: true
+      WRT_EMMC_DATA_PROVISIONING:
         required: false
         type: boolean
         default: false
@@ -185,7 +186,6 @@ env:
   WRT_THEME: ${{inputs.WRT_THEME}}
   WRT_NAME: ${{inputs.WRT_NAME}}
   WRT_SSID: ${{inputs.WRT_SSID}}
-  WRT_WORD: ${{inputs.WRT_WORD}}
   WRT_IP: ${{inputs.WRT_IP}}
   WRT_PW: ${{inputs.WRT_PW}}
   WRT_REPO: ${{inputs.WRT_REPO}}
@@ -198,6 +198,7 @@ env:
   WRT_SPLIT_DEVICE_ARTIFACTS: ${{inputs.WRT_SPLIT_DEVICE_ARTIFACTS}}
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
+  WRT_EMMC_DATA_PROVISIONING: ${{inputs.WRT_EMMC_DATA_PROVISIONING}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
@@ -481,7 +482,8 @@ jobs:
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
-            $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
           else
             echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
@@ -836,7 +838,6 @@ jobs:
           登录密码：${WRT_PW}
 
           WIFI名称：${WRT_SSID}
-          WIFI密码：${WRT_WORD}
 
           内核版本：${WRT_KVER}
           插件列表：${WRT_LIST}

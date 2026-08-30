@@ -40,6 +40,7 @@ run_fixture() {
 		AUTO_MOUNT_DATA_TESTING=1 \
 		AUTO_MOUNT_DATA_ROOT="$case_root/data" \
 		AUTO_MOUNT_ROOT_HOME="$case_root/root" \
+		AUTO_MOUNT_OPT_ROOT="$case_root/opt" \
 		AUTO_MOUNT_PROC_MOUNTS="$case_root/mounts" \
 		AUTO_MOUNT_LOCK_BASE="$case_root/lock" \
 		AUTO_MOUNT_BLOCK_INFO="$case_root/block.info" \
@@ -113,6 +114,18 @@ run_fixture "$CASE_OK"
 }
 cmp -s "$CASE_OK/root/.multica/config.json" "$CASE_OK/data/multica/config.json"
 cmp -s "$CASE_OK/root/.pi/settings.json" "$CASE_OK/data/pi/settings.json"
+[ -d "$CASE_OK/data/smb" ] || {
+	echo "isolated Samba data directory was not created"
+	exit 1
+}
+[ -L "$CASE_OK/opt/data" ] && [ "$(readlink "$CASE_OK/opt/data")" = "$CASE_OK/data" ] || {
+	echo "missing /opt/data compatibility link"
+	exit 1
+}
+[ -L "$CASE_OK/opt/smb" ] && [ "$(readlink "$CASE_OK/opt/smb")" = "$CASE_OK/data/smb" ] || {
+	echo "missing /opt/smb compatibility link"
+	exit 1
+}
 grep -Fxq 'uuid=ok-uuid' "$CASE_OK/fstab.record" || {
 	echo "fstab fixture was not persisted by filesystem UUID"
 	exit 1

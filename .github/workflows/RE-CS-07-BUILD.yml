@@ -27,7 +27,6 @@ jobs:
       WRT_THEME: argon
       WRT_NAME: RE-CS-07
       WRT_SSID: RE-CS-07
-      WRT_WORD: 12345678
       WRT_IP: ${{ inputs.LAN_IP || '192.168.12.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git

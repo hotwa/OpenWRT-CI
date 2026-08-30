@@ -12,6 +12,7 @@ DEFAULT_CIDR6="fd7a:115c:a1e0::/48"
 DEFAULT_DNS_DOMAIN="hs.jmsu.top"
 DEFAULT_MAGICDNS="100.100.100.100"
 DEFAULT_DNSMASQ_SERVER="/hs.jmsu.top/100.100.100.100@tailscale0"
+MESH_SCHEMA_VERSION="2"
 
 changed=0
 firewall_changed=0
@@ -52,6 +53,8 @@ ensure_list_entry() {
 }
 
 ensure_tailscale_config() {
+	local mesh_schema_version
+
 	[ -f "/etc/config/tailscale" ] || touch /etc/config/tailscale
 
 	if ! uci -q get "tailscale.$SECTION" >/dev/null 2>&1; then
@@ -59,7 +62,17 @@ ensure_tailscale_config() {
 		changed=1
 	fi
 
-	ensure_default_option "tailscale.$SECTION.enabled" "1"
+	mesh_schema_version="$(uci -q get "tailscale.$SECTION.mesh_schema_version" 2>/dev/null || true)"
+	if [ "$mesh_schema_version" != "$MESH_SCHEMA_VERSION" ]; then
+		# A pre-Mesh image may have preserved enabled='0' across sysupgrade.
+		# Promote it once, then retain any later explicit UCI opt-out.
+		ensure_option "tailscale.$SECTION.enabled" "1"
+		ensure_option "tailscale.$SECTION.tailnet_to_lan" "1"
+		ensure_option "tailscale.$SECTION.mesh_schema_version" "$MESH_SCHEMA_VERSION"
+	else
+		ensure_default_option "tailscale.$SECTION.enabled" "1"
+		ensure_default_option "tailscale.$SECTION.tailnet_to_lan" "1"
+	fi
 	ensure_default_option "tailscale.$SECTION.cidr4" "$DEFAULT_CIDR4"
 	ensure_default_option "tailscale.$SECTION.cidr6" "$DEFAULT_CIDR6"
 	ensure_default_option "tailscale.$SECTION.dns_domain" "$DEFAULT_DNS_DOMAIN"
@@ -76,6 +89,7 @@ apply_firewall() {
 	local cidr4="$1"
 	local cidr6="$2"
 	local masq="$3"
+	local tailnet_to_lan="$4"
 
 	# Static policy markers for audits:
 	# firewall.tailscale.input='ACCEPT'
@@ -85,6 +99,7 @@ apply_firewall() {
 	# src='lan'
 	# dest='tailscale'
 	# tailscale_lan_to_tailnet='1'
+	# tailscale_tailnet_to_lan='1'
 	changed=0
 	ensure_option "firewall.tailscale" "zone"
 	ensure_option "firewall.tailscale.name" "tailscale"
@@ -104,6 +119,15 @@ apply_firewall() {
 	# forwarding by zone, while Nikki/DAE generated rules keep the CIDRs direct.
 	ensure_option "firewall.tailscale_lan_to_tailnet.cidr4" "$cidr4"
 	ensure_option "firewall.tailscale_lan_to_tailnet.cidr6" "$cidr6"
+
+	# Keep the zone default at REJECT. This is the only reverse forwarding
+	# allowed by the private Mesh profile; Headscale ACLs remain the access
+	# boundary for traffic originating in the Tailnet.
+	ensure_option "firewall.tailscale_tailnet_to_lan" "forwarding"
+	ensure_option "firewall.tailscale_tailnet_to_lan.src" "tailscale"
+	ensure_option "firewall.tailscale_tailnet_to_lan.dest" "lan"
+	ensure_option "firewall.tailscale_tailnet_to_lan.enabled" "$tailnet_to_lan"
+	ensure_option "firewall.tailscale_tailnet_to_lan.tailscale_tailnet_to_lan" "$tailnet_to_lan"
 
 	if [ "$changed" -eq 1 ]; then
 		uci commit firewall
@@ -165,13 +189,18 @@ reload_services() {
 }
 
 start() {
-	local enabled cidr4 cidr6 dns_domain magicdns masq
+	local enabled tailnet_to_lan cidr4 cidr6 dns_domain magicdns masq
 
 	command -v uci >/dev/null 2>&1 || return 0
 	ensure_tailscale_config
 	config_load tailscale
 	config_get enabled lan_to_tailnet enabled '0'
 	[ "$enabled" = '1' ] || return 0
+	config_get tailnet_to_lan "$SECTION" tailnet_to_lan '1'
+	case "$tailnet_to_lan" in
+		1|true|yes|on) tailnet_to_lan=1 ;;
+		*) tailnet_to_lan=0 ;;
+	esac
 
 	config_get cidr4 "$SECTION" cidr4 "$DEFAULT_CIDR4"
 	config_get cidr6 "$SECTION" cidr6 "$DEFAULT_CIDR6"
@@ -179,7 +208,7 @@ start() {
 	config_get magicdns "$SECTION" magicdns "$DEFAULT_MAGICDNS"
 	config_get masq "$SECTION" masq '1'
 
-	apply_firewall "$cidr4" "$cidr6" "$masq"
+	apply_firewall "$cidr4" "$cidr6" "$masq" "$tailnet_to_lan"
 	apply_dnsmasq "$dns_domain" "$magicdns"
 	reapply_dns_guard
 	reapply_nikki_guard
@@ -188,9 +217,10 @@ start() {
 
 stop() {
 	command -v uci >/dev/null 2>&1 || return 0
-	uci -q get firewall.tailscale_lan_to_tailnet >/dev/null 2>&1 || return 0
-
-	uci set firewall.tailscale_lan_to_tailnet.enabled='0'
+	uci -q get firewall.tailscale_lan_to_tailnet >/dev/null 2>&1 &&
+		uci set firewall.tailscale_lan_to_tailnet.enabled='0'
+	uci -q get firewall.tailscale_tailnet_to_lan >/dev/null 2>&1 &&
+		uci set firewall.tailscale_tailnet_to_lan.enabled='0'
 	uci commit firewall
 	[ -x /etc/init.d/firewall ] && /etc/init.d/firewall restart >/dev/null 2>&1 || true
 }

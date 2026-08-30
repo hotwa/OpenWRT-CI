@@ -73,6 +73,31 @@ grep -Fq "option advertise_routes '192.168.11.0/24'" "$TMP_DIR/etc/config/headsc
 	exit 1
 }
 
+DERIVED_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR" "$DERIVED_DIR"' EXIT
+mkdir -p "$DERIVED_DIR/etc/config"
+cat >"$DERIVED_DIR/etc/config/headscale_auto_enroll" <<'EOF'
+config enroll 'main'
+	option enabled '0'
+	option advertise_routes ''
+EOF
+
+HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
+	WRT_IP='192.168.12.1' \
+	"$ENROLL_SCRIPT" "$DERIVED_DIR" >/dev/null
+grep -Fq "option advertise_routes '192.168.12.0/24'" "$DERIVED_DIR/etc/config/headscale_auto_enroll" || {
+	echo "build helper did not derive a CIDR from WRT_IP"
+	exit 1
+}
+
+if HEADSCALE_OPENWRT_AUTHKEY='hskey-auth-''test-only' \
+	WRT_IP='192.168.12.1' \
+	HEADSCALE_OPENWRT_ADVERTISE_ROUTES='192.168.12.1/24' \
+	"$ENROLL_SCRIPT" "$DERIVED_DIR" >/dev/null 2>&1; then
+	echo "build helper accepted a host address as a subnet route"
+	exit 1
+fi
+
 grep -Fq 'cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file"' "$ENROLL_BIN" || {
 	echo "already-enrolled and recovered paths do not clean residual auth keys"
 	exit 1

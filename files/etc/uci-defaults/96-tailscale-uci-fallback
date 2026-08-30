@@ -17,6 +17,8 @@ config lan_bypass_host
 
 config lan_to_tailnet 'lan_to_tailnet'
 	option enabled '1'
+	option tailnet_to_lan '1'
+	option mesh_schema_version '2'
 	option cidr4 '100.64.0.0/10'
 	option cidr6 'fd7a:115c:a1e0::/48'
 	option dns_domain 'hs.jmsu.top'

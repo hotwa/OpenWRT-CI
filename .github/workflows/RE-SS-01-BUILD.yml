@@ -27,7 +27,6 @@ jobs:
       WRT_THEME: argon
       WRT_NAME: RE-SS-01
       WRT_SSID: RE-SS-01
-      WRT_WORD: 12345678
       WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
@@ -39,6 +38,9 @@ jobs:
       WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
       WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
       WRT_FEATURE_OVERLAY: true
+      # First device gate for the guarded eMMC -> /data provisioner. The
+      # script itself still refuses any non-JDCloud/ambiguous GPT layout.
+      WRT_EMMC_DATA_PROVISIONING: true
       WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
       WRTBAK_DEVICE_ALIAS: home-re-ss-01
       WRTBAK_PROXY_PROFILE: auto

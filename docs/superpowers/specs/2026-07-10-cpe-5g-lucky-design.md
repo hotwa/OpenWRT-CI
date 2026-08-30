@@ -11,7 +11,7 @@ Provide a repeatable firmware build preset for the CPE-connected `re-ss-01` rout
 - Default the CPE LAN address to `192.168.13.1/24`, avoiding existing `192.168.10.0/24`, `192.168.11.0/24`, and `192.168.12.0/24` allocations.
 - Use the existing `IPQ60XX-WIFI-YES` profile, which includes the `jdcloud_re-ss-01` target adjustments.
 - Reuse the existing Tailscale and Headscale auto-enrollment overlay. Do not embed enrollment secrets in the repository.
-- Keep `WRT_LAN_TAILNET` false by default. The router itself can be managed over Headscale; exposing the CPE LAN as a tailnet gateway remains an explicit later decision.
+- Superseded by the private-Mesh policy: CPE-5G B enables `WRT_LAN_TAILNET` and explicit bidirectional LAN/Tailnet forwarding, while the no-overlay A isolation baseline remains without the gateway. Headscale ACLs are the Tailnet-to-LAN access boundary.
 
 ## Validation
 

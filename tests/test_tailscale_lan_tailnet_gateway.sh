@@ -41,7 +41,9 @@ for expected in \
 	"option cidr6 'fd7a:115c:a1e0::/48'" \
 	"option dns_domain 'hs.jmsu.top'" \
 	"option magicdns '100.100.100.100'" \
-	"option masq '1'"; do
+	"option masq '1'" \
+	"option tailnet_to_lan '1'" \
+	"option mesh_schema_version '2'"; do
 	grep -q "$expected" "$TAILSCALE_CONFIG" || {
 		echo "tailscale config missing $expected"
 		exit 1
@@ -77,6 +79,16 @@ grep -q 'ensure_default_option "tailscale.\$SECTION.enabled" "1"' "$GATEWAY_INIT
 	exit 1
 }
 
+grep -q 'MESH_SCHEMA_VERSION="2"' "$GATEWAY_INIT" || {
+	echo "gateway script must mark the private Mesh configuration schema"
+	exit 1
+}
+
+grep -q 'ensure_option "tailscale.\$SECTION.enabled" "1"' "$GATEWAY_INIT" || {
+	echo "gateway script must migrate a legacy disabled gateway once"
+	exit 1
+}
+
 if grep -q 'ensure_option "tailscale.\$SECTION.enabled" "0"' "$GATEWAY_INIT"; then
 	echo "gateway script must not reset lan_to_tailnet.enabled on every start"
 	exit 1
@@ -89,17 +101,28 @@ for expected in \
 	"firewall.tailscale.masq" \
 	"src='lan'" \
 	"dest='tailscale'" \
-	"tailscale_lan_to_tailnet='1'"; do
+	"tailscale_lan_to_tailnet='1'" \
+	"tailscale_tailnet_to_lan='1'"; do
 	grep -q "$expected" "$GATEWAY_INIT" || {
 		echo "gateway script missing firewall guard: $expected"
 		exit 1
 	}
 done
 
-if grep -q "src='tailscale'.*dest='lan'" "$GATEWAY_INIT"; then
-	echo "gateway script must not add tailnet-to-LAN forwarding"
+grep -q 'firewall.tailscale_tailnet_to_lan.src" "tailscale"' "$GATEWAY_INIT" || {
+	echo "gateway script does not add explicit tailnet-to-LAN forwarding"
 	exit 1
-fi
+}
+
+grep -q 'firewall.tailscale_tailnet_to_lan.dest" "lan"' "$GATEWAY_INIT" || {
+	echo "gateway script tailnet-to-LAN forwarding does not target LAN"
+	exit 1
+}
+
+grep -q 'firewall.tailscale.forward" "REJECT"' "$GATEWAY_INIT" || {
+	echo "gateway script must retain default tailscale-zone forwarding rejection"
+	exit 1
+}
 
 for expected in \
 	"/hs.jmsu.top/100.100.100.100@tailscale0" \

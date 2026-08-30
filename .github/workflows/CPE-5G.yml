@@ -47,7 +47,6 @@ jobs:
       WRT_THEME: argon
       WRT_NAME: CPE-706-A
       WRT_SSID: CPE-706-A
-      WRT_WORD: 12345678
       WRT_IP: 192.168.10.1
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
@@ -74,7 +73,6 @@ jobs:
       WRT_THEME: argon
       WRT_NAME: CPE-5G
       WRT_SSID: CPE-5G
-      WRT_WORD: 12345678
       WRT_IP: 192.168.13.1
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
@@ -87,7 +85,7 @@ jobs:
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
       WRT_FEATURE_OVERLAY: true
-      WRT_LAN_TAILNET: false
+      WRT_LAN_TAILNET: true
       WRT_WAN_SSH: false
       WRT_WAN_SSH_PORT: '22'
       WRT_WAN_SSH_SOURCE: ''

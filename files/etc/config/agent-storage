@@ -1,0 +1,6 @@
+# The first-boot provisioner is intentionally disabled in the generic overlay.
+# A reviewed device workflow enables it for one hardware target at a time.
+config emmc_data 'main'
+	option enabled '0'
+	option min_size_mb '1024'
+	option label 'openwrt-data'

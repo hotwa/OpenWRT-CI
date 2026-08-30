@@ -39,6 +39,8 @@ config lan_bypass_host
 
 config lan_to_tailnet 'lan_to_tailnet'
 	option enabled '0'
+	option tailnet_to_lan '0'
+	option mesh_schema_version '2'
 	option cidr4 '100.64.0.0/10'
 	option cidr6 'fd7a:115c:a1e0::/48'
 	option dns_domain 'hs.jmsu.top'
@@ -53,21 +55,38 @@ awk -v enabled="$([ "$ENABLE" = true ] && printf 1 || printf 0)" '
 		in_section = 0
 		section_seen = 0
 		enabled_seen = 0
+		tailnet_to_lan_seen = 0
+		mesh_schema_seen = 0
 	}
-	function maybe_insert_enabled() {
+	function maybe_insert_options() {
 		if (in_section && !enabled_seen) {
 			print "\toption enabled '\''" enabled "'\''"
 			enabled_seen = 1
 		}
+		if (in_section && !tailnet_to_lan_seen) {
+			print "\toption tailnet_to_lan '\''" enabled "'\''"
+			tailnet_to_lan_seen = 1
+		}
+		if (in_section && !mesh_schema_seen) {
+			print "\toption mesh_schema_version '\''2'\''"
+			mesh_schema_seen = 1
+		}
 	}
 	/^config[[:space:]]+/ {
-		maybe_insert_enabled()
+		maybe_insert_options()
 		in_section = ($0 == "config lan_to_tailnet '\''lan_to_tailnet'\''")
 		if (in_section) {
 			section_seen = 1
 			enabled_seen = 0
+			tailnet_to_lan_seen = 0
+			mesh_schema_seen = 0
 		}
 		print
+		next
+	}
+	in_section && /^[[:space:]]*option[[:space:]]+mesh_schema_version[[:space:]]+/ {
+		print "\toption mesh_schema_version '\''2'\''"
+		mesh_schema_seen = 1
 		next
 	}
 	in_section && /^[[:space:]]*option[[:space:]]+enabled[[:space:]]+/ {
@@ -75,13 +94,20 @@ awk -v enabled="$([ "$ENABLE" = true ] && printf 1 || printf 0)" '
 		enabled_seen = 1
 		next
 	}
+	in_section && /^[[:space:]]*option[[:space:]]+tailnet_to_lan[[:space:]]+/ {
+		print "\toption tailnet_to_lan '\''" enabled "'\''"
+		tailnet_to_lan_seen = 1
+		next
+	}
 	{ print }
 	END {
-		maybe_insert_enabled()
+		maybe_insert_options()
 		if (!section_seen) {
 			print ""
 			print "config lan_to_tailnet '\''lan_to_tailnet'\''"
 			print "\toption enabled '\''" enabled "'\''"
+			print "\toption tailnet_to_lan '\''" enabled "'\''"
+			print "\toption mesh_schema_version '\''2'\''"
 			print "\toption cidr4 '\''100.64.0.0/10'\''"
 			print "\toption cidr6 '\''fd7a:115c:a1e0::/48'\''"
 			print "\toption dns_domain '\''hs.jmsu.top'\''"
