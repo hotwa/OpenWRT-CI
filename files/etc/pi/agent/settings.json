@@ -1,0 +1,7 @@
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B",
+  "defaultThinkingLevel": "medium",
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "ask"
+}

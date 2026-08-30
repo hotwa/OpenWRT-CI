@@ -150,12 +150,6 @@ UPDATE_PACKAGE "gecoosac" "laipeng668/luci-app-gecoosac" "main"
 UPDATE_PACKAGE "mosdns" "sbwml/luci-app-mosdns" "v5" "" "v2dat"
 UPDATE_PACKAGE "netspeedtest" "sirpdboy/netspeedtest" "main" "" "homebox ookla-speedtest"
 UPDATE_PACKAGE "netwizard" "sirpdboy/luci-app-netwizard" "main"
-# OpenClaw is disabled for every current firmware target. Do not re-enable
-# this source fetch or add luci-app-openclaw to a device config without an
-# explicit device-level request and a separate security review.
-#
-# OPENCLAW_PACKAGE_COMMIT=94d420b581d5aaaa379274fcf60e0e04cdd2c762
-# UPDATE_PACKAGE "openclaw" "hotwa/luci-app-openclaw" "main" "" "" "$OPENCLAW_PACKAGE_COMMIT"
 UPDATE_PACKAGE "openlist2" "sbwml/luci-app-openlist2" "main"
 UPDATE_PACKAGE "partexp" "sirpdboy/luci-app-partexp" "main"
 UPDATE_PACKAGE "qbittorrent" "sbwml/luci-app-qbittorrent" "master" "" "qt6base qt6tools rblibtorrent"

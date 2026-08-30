@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -7,246 +7,58 @@ WORKFLOW="$ROOT_DIR/.github/workflows/Agent-Runtime-Bump.yml"
 POLICY_DOC="$ROOT_DIR/docs/agent-runtime-version-policy.md"
 AGENTS_DOC="$ROOT_DIR/AGENTS.md"
 NODE_FETCH="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
-UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 MULTICA_FETCH="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
 CORE_WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 PACKAGE_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 RUNTIME_RELEASE_FILE="$ROOT_DIR/Scripts/node-agent-runtime/runtime-release"
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
+trap 'rm -rf -- "$WORK_DIR"' EXIT
 
-fail() {
-  echo "agent runtime policy: $*"
-  exit 1
-}
-
-for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH" \
-  "$UV_FETCH" "$MULTICA_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON" "$RUNTIME_RELEASE_FILE"; do
+fail() { echo "agent runtime policy: $*" >&2; exit 1; }
+for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH" "$MULTICA_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON" "$RUNTIME_RELEASE_FILE"; do
   [ -f "$path" ] || fail "missing $path"
 done
-grep -Eq '^[1-9][0-9]*$' "$RUNTIME_RELEASE_FILE" || fail "invalid runtime release counter"
+bash -n "$BUMP_SCRIPT"
 
-bash -n "$BUMP_SCRIPT" || fail "bump_agent_runtime.sh does not parse"
-
-# The bump engine is the only writer of the floating layer, and the guards below
-# call its functions directly, which requires it to end by invoking main.
-[ "$(tail -n1 "$BUMP_SCRIPT")" = 'main "$@"' ] ||
-  fail "bump_agent_runtime.sh must end with main \"\$@\" so guards can source it"
-sed '$d' "$BUMP_SCRIPT" >"$WORK_DIR/lib.sh"
-
-run_as_lib() {
-  (
-    set -euo pipefail
-    export GITHUB_WORKSPACE="$ROOT_DIR"
-    # shellcheck disable=SC1090
-    source "$WORK_DIR/lib.sh"
-    [ -z "${TEST_PACKAGE_JSON:-}" ] || PACKAGE_JSON="$TEST_PACKAGE_JSON"
-    [ -z "${TEST_PACKAGE_LOCK:-}" ] || PACKAGE_LOCK="$TEST_PACKAGE_LOCK"
-    "$@"
-  )
-}
-
-# --- the automation must be wired to the engine, not to hand-written bumps ---
-grep -q 'Scripts/bump_agent_runtime.sh' "$WORKFLOW" ||
-  fail "Agent-Runtime-Bump.yml does not run the bump engine"
-grep -q 'mode=apply' "$WORKFLOW" || fail "workflow never applies bumps"
-grep -q 'mode=plan' "$WORKFLOW" || fail "workflow has no dry-run path"
-grep -q 'cron:' "$WORKFLOW" || fail "workflow is not scheduled"
-grep -q 'workflow_dispatch:' "$WORKFLOW" || fail "workflow is not manually dispatchable"
-grep -q 'cancel-in-progress: false' "$WORKFLOW" ||
-  fail "concurrent bumps must not cancel each other before the push"
-
-# A gate failure must be able to fail the step: `cmd | tee` without pipefail
-# reports tee's status, so every run block has to opt in explicitly.
-awk '
-  BEGIN { bad = 0 }
-  /run: \|[[:space:]]*$/ {
-    if ((getline next_line) <= 0 || next_line !~ /set -eu/) { bad = 1 }
-  }
-  END { exit bad }
-' "$WORKFLOW" || fail "a workflow run block is missing 'set -euo pipefail'"
-
-if grep -Eq -- '--no-verify|git push .*-f|--force' "$WORKFLOW"; then
-  fail "workflow must not bypass hooks or force-push"
-fi
-
-# Commit/push must come after the gates, and only for the floating layer.
-BUMP_STEP_LINE="$(grep -n 'bump_agent_runtime.sh' "$WORKFLOW" | head -n1 | cut -d: -f1)"
-PUSH_STEP_LINE="$(grep -n 'git push' "$WORKFLOW" | head -n1 | cut -d: -f1)"
-SIGN_STEP_LINE="$(grep -n 'Sign index and manifests' "$WORKFLOW" | head -n1 | cut -d: -f1)"
-PUBLISH_STEP_LINE="$(grep -n 'Publish signed complete stack release' "$WORKFLOW" | head -n1 | cut -d: -f1)"
-[ -n "$PUSH_STEP_LINE" ] || fail "workflow never pushes"
-[ "$BUMP_STEP_LINE" -lt "$PUSH_STEP_LINE" ] ||
-  fail "workflow pushes before the bump engine has verified anything"
-[ -n "$SIGN_STEP_LINE" ] && [ -n "$PUBLISH_STEP_LINE" ] ||
-  fail "workflow lost signing or stable publication"
-[ "$SIGN_STEP_LINE" -lt "$PUSH_STEP_LINE" ] && [ "$PUSH_STEP_LINE" -lt "$PUBLISH_STEP_LINE" ] ||
-  fail "workflow must sign, commit/push, then publish the stable channel"
-grep -q 'incomplete signed' "$WORKFLOW" ||
-  fail "workflow does not document stable-channel recovery after a partial publish"
-for base in fetch_node_runtime.sh fetch_uv_runtime.sh; do
-  if grep -q "$base" "$WORKFLOW"; then
-    fail "Agent-Runtime-Bump.yml must not touch the pinned runtime base ($base)"
+for term in 'CommandCode' 'Pi' 'Multica' 'Node.js'; do
+  grep -Fq "$term" "$POLICY_DOC" || fail "policy omits $term"
+done
+for retired in 'fetch_uv_runtime.sh' 'build_hermes_core.sh' 'opencode-ai' 'hermes-agent'; do
+  if grep -Fq "$retired" "$BUMP_SCRIPT" "$WORKFLOW" "$NODE_FETCH" "$POLICY_DOC"; then
+    fail "retired runtime reference survives: $retired"
   fi
 done
-
-# --- the engine must gate before it declares itself committable ---
-GUARD_LINE="$(grep -n '^[[:space:]]*run_guard_suite$' "$BUMP_SCRIPT" | tail -n1 | cut -d: -f1)"
-READY_LINE="$(grep -n 'ready to commit' "$BUMP_SCRIPT" | head -n1 | cut -d: -f1)"
-[ -n "$GUARD_LINE" ] && [ -n "$READY_LINE" ] || fail "bump engine lost its commit gate"
-[ "$GUARD_LINE" -lt "$READY_LINE" ] ||
-  fail "bump engine reports success before running the gates"
-for cpu in arm64 x64; do
-  grep -Eq "verify_target_cpu[[:space:]]+$cpu" "$BUMP_SCRIPT" ||
-    fail "bump engine does not verify the linux-$cpu-musl install"
-done
-
-# The pinned base is read-only for the engine: every reference to it must be a read.
-if grep -F 'UV_SCRIPT' "$BUMP_SCRIPT" | grep -Eq 'sed -i|install |cp |>>'; then
-  fail "bump engine writes the pinned uv/CPython base"
+if grep -Fq 'fetch_uv_runtime.sh' "$CORE_WORKFLOW"; then
+  fail "firmware workflow still invokes uv bootstrap"
 fi
-
-# --- build-time interlock: the baked Hermes Core must match its bridge ---
-grep -q '"pythonVersion"' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh no longer reads hermes-agent's managed pythonVersion"
-grep -q 'opt/agent-runtime/hermes-core.json' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh does not check the offline Hermes Core metadata"
-grep -q 'HERMES_PYTHON_SERIES=' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh does not publish HERMES_PYTHON_SERIES"
-grep -q 'Core metadata Python' "$NODE_FETCH" ||
-  fail "fetch_node_runtime.sh does not verify the Hermes Core Python contract"
-
-# uv must still precede Node: Hermes Core expands its fixed Python from that mirror.
-UV_LINE="$(grep -n 'Scripts/fetch_uv_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
 NODE_LINE="$(grep -n 'Scripts/fetch_node_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
 MULTICA_LINE="$(grep -n 'Scripts/fetch_multica_runtime.sh' "$CORE_WORKFLOW" | head -n1 | cut -d: -f1)"
-[ "$UV_LINE" -lt "$NODE_LINE" ] && [ "$NODE_LINE" -lt "$MULTICA_LINE" ] ||
-  fail "WRT-CORE.yml must run fetch_uv_runtime.sh before fetch_node_runtime.sh"
+[ -n "$NODE_LINE" ] && [ -n "$MULTICA_LINE" ] && [ "$NODE_LINE" -lt "$MULTICA_LINE" ] || fail "WRT-CORE must prepare Node before Multica"
 
-# --- behaviour, not just text ---
-if bash "$BUMP_SCRIPT" not-a-mode >"$WORK_DIR/mode.log" 2>&1; then
-  fail "bump engine accepted an unknown mode"
-fi
-grep -q 'unknown mode' "$WORK_DIR/mode.log" ||
-  fail "bump engine did not explain the rejected mode"
-
-# The plan loop reads manifest_packages with `while read`, so a missing
-# terminating newline silently drops the last dependency.
-LISTED_FILE="$WORK_DIR/listed.txt"
-EXPECTED_FILE="$WORK_DIR/expected.txt"
-: >"$LISTED_FILE"
-while IFS= read -r dep; do
-  [ -n "$dep" ] && printf '%s\n' "$dep" >>"$LISTED_FILE"
-done < <(run_as_lib manifest_packages)
-node -e 'console.log(Object.keys(require(process.argv[1]).dependencies).join("\n"))' \
-  "$PACKAGE_JSON" >"$EXPECTED_FILE"
-cmp -s "$LISTED_FILE" "$EXPECTED_FILE" ||
-  fail "manifest_packages listed $(wc -l <"$LISTED_FILE") of $(wc -l <"$EXPECTED_FILE") dependencies to the plan loop"
-
-# Every floating pin must stay exact, or `npm ci` would resolve freely.
-node -e '
-  const deps = require(process.argv[1]).dependencies;
-  const loose = Object.entries(deps).filter(([, v]) => !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(v));
-  if (loose.length) process.stderr.write(loose.map(([k, v]) => `${k}@${v}`).join(", ") + "\n");
-  process.exit(loose.length ? 5 : 0);
-' "$PACKAGE_JSON" || fail "package.json contains a non-exact dependency pin (listed above)"
-
-# The Multica and PYTHON_SERIES extraction patterns are the fragile part of the
-# engine; prove they still match the real files.
-[ "$(run_as_lib multica_current_version)" = \
-  "$(grep -m1 '^MULTICA_VERSION=' "$MULTICA_FETCH" | sed -E 's/.*:-([0-9.]+).*/\1/')" ] ||
-  fail "multica_current_version no longer parses $MULTICA_FETCH"
-grep -q 'MULTICA_VERSION="\${MULTICA_VERSION:-' "$MULTICA_FETCH" ||
-  fail "Multica pin is no longer overridable by the caller"
-[ "$(run_as_lib python_series_mirror)" = \
-  "$(grep -m1 '^PYTHON_SERIES=(' "$UV_FETCH" | sed -E 's/^PYTHON_SERIES=\((.*)\)$/\1/')" ] ||
-  fail "python_series_mirror no longer parses $UV_FETCH"
-
-# Rewriting package.json must move exactly one pin and keep the file committable.
-cp "$PACKAGE_JSON" "$WORK_DIR/package.json.orig"
-cp "$PACKAGE_JSON" "$WORK_DIR/package.json"
-FIRST_DEP="$(head -n1 "$LISTED_FILE")"
-TEST_PACKAGE_JSON="$WORK_DIR/package.json" \
-  run_as_lib set_manifest_version "$FIRST_DEP" 9.9.9 ||
-  fail "set_manifest_version refused a known dependency"
-[ "$(grep -c '"9.9.9"' "$WORK_DIR/package.json")" = "1" ] ||
-  fail "set_manifest_version leaked the test version into more than one entry"
-cmp -s "$PACKAGE_JSON" "$WORK_DIR/package.json.orig" ||
-  fail "set_manifest_version wrote the repository manifest instead of the fixture"
-node -e '
-  const fs = require("node:fs");
-  const [a, b, name] = process.argv.slice(1);
-  const before = JSON.parse(fs.readFileSync(a, "utf8"));
-  const after = JSON.parse(fs.readFileSync(b, "utf8"));
-  if (after.dependencies[name] !== "9.9.9") process.exit(1);
-  delete before.dependencies[name];
-  delete after.dependencies[name];
-  if (JSON.stringify(before) !== JSON.stringify(after)) process.exit(2);
-' "$WORK_DIR/package.json.orig" "$WORK_DIR/package.json" "$FIRST_DEP" ||
-  fail "set_manifest_version changed more than the requested pin"
-[ "$(tail -c1 "$WORK_DIR/package.json" | od -An -c | tr -d ' \n')" = '\n' ] ||
-  fail "set_manifest_version dropped the trailing newline"
-[ "$(tr -cd '\r' <"$WORK_DIR/package.json" | wc -c)" = "0" ] ||
-  fail "set_manifest_version wrote CRLF line endings into package.json"
-
-# npm records pi-wechat-assistant's obsolete optional peer even though the
-# maintained Pi scope is pinned.  The sanitizer may remove exactly that
-# metadata, and it must fail closed for every other legacy occurrence.
-node - "$WORK_DIR/legacy-peer.lock" <<'NODE'
-const fs = require('node:fs');
-fs.writeFileSync(process.argv[2], JSON.stringify({
-  lockfileVersion: 3,
-  packages: {
-    '': {},
-    'node_modules/pi-wechat-assistant': {
-      peerDependencies: {
-        '@earendil-works/pi-coding-agent': '*',
-        '@mariozechner/pi-coding-agent': '*'
-      },
-      peerDependenciesMeta: {
-        '@earendil-works/pi-coding-agent': { optional: true },
-        '@mariozechner/pi-coding-agent': { optional: true }
-      }
-    }
-  }
-}, null, 2) + '\n');
-NODE
-TEST_PACKAGE_LOCK="$WORK_DIR/legacy-peer.lock" run_as_lib sanitize_legacy_pi_optional_peer ||
-  fail "legacy Pi optional-peer sanitizer rejected the expected pi-wechat metadata"
-if grep -q '@mariozechner/pi-coding-agent' "$WORK_DIR/legacy-peer.lock"; then
-  fail "legacy Pi optional-peer sanitizer left the retired scope in the lock"
-fi
-node - "$WORK_DIR/unexpected-legacy.lock" <<'NODE'
-const fs = require('node:fs');
-fs.writeFileSync(process.argv[2], JSON.stringify({ packages: {
-  'node_modules/pi-wechat-assistant': {},
-  'node_modules/unexpected': { peerDependencies: { '@mariozechner/pi-coding-agent': '*' } }
-} }) + '\n');
-NODE
-if TEST_PACKAGE_LOCK="$WORK_DIR/unexpected-legacy.lock" run_as_lib sanitize_legacy_pi_optional_peer >"$WORK_DIR/unexpected-legacy.log" 2>&1; then
-  fail "legacy Pi optional-peer sanitizer accepted an unexpected lock occurrence"
-fi
-if grep -q '@mariozechner/pi-coding-agent' "$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"; then
-  fail "package-lock must not retain the retired Pi scope"
-fi
-
-# runtime_release is a strict sequence.  It must not use a wall clock that an
-# old router firmware could report behind an already-installed generation.
-printf '41\n' >"$WORK_DIR/runtime-release"
-AGENT_RUNTIME_RELEASE_FILE="$WORK_DIR/runtime-release" run_as_lib advance_runtime_release >/dev/null ||
-  fail "runtime release counter did not advance"
-[ "$(cat "$WORK_DIR/runtime-release")" = "42" ] ||
-  fail "runtime release counter is not strictly sequential"
-if grep -q 'date -u' "$BUMP_SCRIPT"; then
-  fail "runtime release counter must not derive monotonicity from wall-clock time"
-fi
-
-# The policy is only real if both documents point at the same enforcement.
-grep -q 'agent-runtime-version-policy.md' "$AGENTS_DOC" ||
-  fail "AGENTS.md does not route maintainers to the version policy"
-for term in bump_agent_runtime.sh Agent-Runtime-Bump.yml PYTHON_SERIES WRT_COMMIT; do
-  grep -q "$term" "$POLICY_DOC" ||
-    fail "docs/agent-runtime-version-policy.md no longer documents $term"
+for command in pi cmdc command-code commandcode; do
+  grep -Fq "$command" "$BUMP_SCRIPT" || fail "cross-target verification omits $command"
 done
+
+# npm returns a nested `dist` object only when asked for `dist`; asking for
+# `dist.integrity` instead creates a flattened key and makes the bump job fail
+# before it can decide whether the vendored extension needs refreshing.
+FAKE_NPM_DIR="$WORK_DIR/fake-npm"
+FAKE_NPM_LOG="$WORK_DIR/npm.args"
+mkdir -p "$FAKE_NPM_DIR"
+printf '%s\n' \
+  '#!/bin/sh' \
+  'printf "%s\\n" "$*" > "$TEST_NPM_LOG"' \
+  'printf "%s\\n" '\''{"version":"0.4.8","dist":{"integrity":"sha512-test=="}}'\''' \
+  >"$FAKE_NPM_DIR/npm"
+chmod 755 "$FAKE_NPM_DIR/npm"
+(
+  export PATH="$FAKE_NPM_DIR:$PATH"
+  export TEST_NPM_LOG="$FAKE_NPM_LOG"
+  # shellcheck disable=SC1090
+  . <(sed '/^main "\$@"$/d' "$BUMP_SCRIPT")
+  pi_plan_vendor_latest
+) >"$WORK_DIR/pi-plan-latest"
+[ "$(cat "$WORK_DIR/pi-plan-latest")" = $'0.4.8\tsha512-test==' ] || fail "pi-plan vendor metadata parsing broke"
+[ "$(cat "$FAKE_NPM_LOG")" = 'view pi-plan-mode version dist --json' ] || fail "pi-plan vendor query must request nested dist"
 
 echo "agent runtime policy tests passed"

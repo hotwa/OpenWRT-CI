@@ -168,7 +168,7 @@ safe_generation_path() {
 
 baseline_link_matches() {
 	# Firmware finalization intentionally wires the immutable baseline to the
-	# separately staged /opt/node, /opt/uv and Multica prefixes.  Accept only
+	# separately staged /opt/node and Multica prefixes.  Accept only
 	# those exact links; downloaded generations must always contain real top
 	# level directories.
 	local link="$1" expected="$2" resolved wanted
@@ -185,16 +185,6 @@ runtime_node_dir() {
 	local runtime="$1" path="$1/node"
 	if [ -L "$path" ]; then
 		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" ../node || return 1
-		path="$(readlink -f "$path" 2>/dev/null || true)"
-	fi
-	[ -d "$path" ] && [ ! -L "$path" ] || return 1
-	printf '%s' "$path"
-}
-
-runtime_uv_dir() {
-	local runtime="$1" path="$1/uv"
-	if [ -L "$path" ]; then
-		[ "$runtime" = "$BASELINE" ] && baseline_link_matches "$path" ../uv || return 1
 		path="$(readlink -f "$path" 2>/dev/null || true)"
 	fi
 	[ -d "$path" ] && [ ! -L "$path" ] || return 1
@@ -341,22 +331,13 @@ quarantine_runtime() {
 }
 
 runtime_health() {
-	local runtime="$1" command uv hermes_python node_dir uv_dir multica
+	local runtime="$1" command node_dir multica
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
-	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
 	multica="$(runtime_multica_path "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -n "$multica" ] && [ -x "$node_dir/bin/node" ] || return 1
-	# Hermes is delivered as Core only. Its metadata pins the local managed
-	# Python contract and must travel with every immutable generation.
-	[ -f "$runtime/hermes-core.json" ] && [ ! -L "$runtime/hermes-core.json" ] || return 1
-	hermes_python="$node_dir/lib/node_modules/hermes-agent/runtime/hermes-agent/venv/bin/python"
-	[ -x "$hermes_python" ] && timeout 90 "$hermes_python" -c 'import hermes_cli.main' >/dev/null 2>&1 || return 1
-	uv="$uv_dir/uv"
-	[ -x "$uv" ] || uv="$uv_dir/bin/uv"
-	[ -x "$uv" ] && "$uv" --version >/dev/null 2>&1 || return 1
+	[ -n "$node_dir" ] && [ -n "$multica" ] && [ -x "$node_dir/bin/node" ] || return 1
 	PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 		"$node_dir/bin/node" -p 'process.versions.modules' >/dev/null 2>&1 || return 1
-	for command in opencode pi hermes multica; do
+	for command in pi cmdc multica; do
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 			command -v "$command" >/dev/null 2>&1 || return 1
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
@@ -375,7 +356,7 @@ legacy_compatible() {
 	legacy_abi="$($legacy_node -p 'process.versions.modules' 2>/dev/null || true)"
 	baseline_abi="$($baseline_node -p 'process.versions.modules' 2>/dev/null || true)"
 	[ "$legacy_arch" = "$baseline_arch" ] && [ "$legacy_abi" = "$baseline_abi" ] || return 1
-	for command in opencode pi hermes; do
+	for command in pi cmdc; do
 		PATH="$legacy/bin:/usr/local/bin:/usr/bin:/bin" "$command" --version >/dev/null 2>&1 || return 1
 	done
 	/usr/local/bin/multica --version >/dev/null 2>&1 || return 1
@@ -535,22 +516,13 @@ verify_critical_hashes() {
 }
 
 restart_and_check() {
-	local runtime="$1" multica_enabled attempt=0
+	local runtime="$1" multica_enabled
 	multica_enabled="$(uci -q get multica.main.enabled 2>/dev/null || echo 0)"
 	if [ -x /etc/init.d/multica ]; then
 		/etc/init.d/multica restart >/dev/null 2>&1 || [ "$multica_enabled" != 1 ] || return 1
 		if [ "$multica_enabled" = 1 ]; then
 			/etc/init.d/multica running >/dev/null 2>&1 || return 1
 		fi
-	fi
-	if [ -x /etc/init.d/hermes-runtime ]; then
-		rm -f /tmp/hermes-runtime.status
-		/etc/init.d/hermes-runtime restart >/dev/null 2>&1 || return 1
-		while [ "$attempt" -lt 15 ]; do
-			grep -q '^ok ' /tmp/hermes-runtime.status 2>/dev/null && break
-			attempt=$((attempt + 1)); sleep 1
-		done
-		grep -q '^ok ' /tmp/hermes-runtime.status 2>/dev/null || return 1
 	fi
 	runtime_health "$runtime"
 }

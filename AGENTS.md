@@ -3,23 +3,20 @@
 ## Upstream merge policy
 
 - Read `docs/upstream-merge-policy.md` before comparing, cherry-picking, merging, or manually copying changes from `davidtall/DaeWRT-CI`, `davidtall/immortalwrt`, `VIKINGYFY/immortalwrt`, or other OpenWrt CI upstreams.
-- Prefer small, documented, atomic upstream absorptions. Do not accept upstream deletions of hotwa device targets, Nikki, wrtbak/private build wiring, CPE-5G baselines, Headscale/Tailscale overlays, Node.js 24/Python 3.12 AI agent runtimes, or repository guard tests unless the user explicitly asks for that exact removal.
+- Prefer small, documented, atomic upstream absorptions. Do not accept upstream deletions of hotwa device targets, Nikki, wrtbak/private build wiring, CPE-5G baselines, Headscale/Tailscale overlays, the Node.js 24 AI agent runtime, or repository guard tests unless the user explicitly asks for that exact removal.
 
-## Edge AI Agent ecosystem and runtime (Multica / OpenCode / Pi / Hermes)
+## Edge AI Agent ecosystem and runtime (Multica / Pi / CommandCode)
 
-- **Primary Workflow**: Multica orchestration + OpenCode / Pi CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
-- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static), `Scripts/fetch_uv_runtime.sh` (`uv` + the offline CPython 3.11/3.12/3.13 build mirror), `Scripts/build_hermes_core.sh`, and baseline finalization in `WRT-CORE.yml`.
+- **Primary Workflow**: Multica orchestration + Pi / CommandCode CLI agents for autonomous OpenWrt network inspection, firewall telemetry, and self-healing.
+- Preserve `Scripts/fetch_node_runtime.sh` (Node.js 24 LTS musl static) and baseline finalization in `WRT-CORE.yml`.
 - Preserve pre-installed CLI tools and extensions:
-  - `opencode-ai` (`opencode` CLI) + `@tarquinen/opencode-dcp`, `@mohak34/opencode-notifier`, `opencode-conductor-plugin`
   - `@earendil-works/pi-coding-agent` (`pi` CLI) + `@aaronkyriesenbach/pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-wechat-assistant`
-  - Nous Research `hermes-agent` (`hermes` CLI)
-  - `luci-app-openclaw` (WeChat/TG gateway and LuCI manager)
+  - `command-code` (`cmdc` CLI)
 - Preserve `/etc/profile.d/20-node-agent.sh` and `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status banner and signed-generation guidance).
 - Keep `homeproxy`, `daed`, and `dae` pruned from `Config/GENERAL.txt` in favor of Nikki to prevent multi-proxy conflicts and save rootfs space.
-- Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. Layered policy: the app layer (opencode, pi, hermes, their extensions, pnpm, Multica) is checked hourly by `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`; it commits to `main` only after complete arm64/x64 musl generations have passed probes, repository guards, and signed release publication. Do not treat those CI probes as a device gate.
-- Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION`, `UV_VERSION` and its SHA256s, `PYTHON_RELEASE_TAG`, `PYTHON_SERIES`, and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
-- Do not remove CPython 3.11 from `PYTHON_SERIES` or drop the bridge/Core Python-series check in `write_agent_runtime_policy()`. Hermes Core uses the locally mirrored 3.11 during its offline build, then removes only that manifest-verified archive so the Core venv is the sole shipped copy; keep the `WRT-CORE.yml` order uv → node → multica.
-- `/data/node` is an `agent-runtime`-managed compatibility symlink to the active signed immutable generation, not a writable global npm/pnpm prefix; do not replace it or run in-place package updates there. `/etc/profile.d/20-node-agent.sh` resolves the active generation for shells, and procd services (`multica`, `hermes-runtime`) must set their own `PATH` because procd never loads `profile.d`. Hermes is a baked Core-only offline runtime: its boot coordinator performs health checks only and must never provision through the network.
+- Read `docs/agent-runtime-version-policy.md` before changing any agent-runtime version pin. The app layer (CommandCode, Pi, their extensions, pnpm, Multica) is checked hourly by `Agent-Runtime-Bump.yml` + `Scripts/bump_agent_runtime.sh`; it commits to `main` only after complete arm64/x64 musl generations have passed probes, repository guards, and signed release publication. Do not treat those CI probes as a device gate.
+- Never let automation float the runtime base: `NODE_DEFAULT_VERSION`/`NODE_FALLBACK_VERSION` and the per-device `WRT_COMMIT` pins stay exact and human-edited only.
+- `/data/node` is an `agent-runtime`-managed compatibility symlink to the active signed immutable generation, not a writable global npm/pnpm prefix; do not replace it or run in-place package updates there. `/etc/profile.d/20-node-agent.sh` resolves the active generation for shells, and the `multica` procd service sets its own `PATH` because procd never loads `profile.d`.
 
 ## Tailscale LAN Gateway and Route Acceptance
 
@@ -79,12 +76,12 @@ These three bugs each cost a full failed CI run. Check for them when editing
   interpret escape sequences in plain quotes; tab-separated rows then split on
   every `t` and `\`, corrupting fields silently (no `die` message). Use
   `IFS=$'\t'` (ANSI-C quoting) or a `read -d ''`/awk-based parse. See
-  `Scripts/build_hermes_core.sh` mirror-row parsing and commit `29afaa9`.
+  `Scripts/fetch_node_runtime.sh` target-binary verification.
 - **`set -e` + command substitution swallows failures silently.** A failing
   `var="$(cmd)"` (e.g. a qemu `target_exec` that cannot load the target
   binary) exits the script with code 1 and prints nothing; the CI log ends
   with only `##[error]Process completed with exit code 1.` after the last
-  successful log line. `Scripts/build_hermes_core.sh` now carries an ERR trap
+  successful log line. Runtime scripts carry an ERR trap
   printing the failing `LINENO` and `BASH_COMMAND`; when adding new
   verification gates, wrap bare `$( ... )` calls in `|| die "..."` with the
   context message instead of relying on `set -e`.
@@ -105,7 +102,7 @@ Trigger: dispatch `RE-SS-01-BUILD` (or any caller workflow) with
    `ssh -o "ProxyCommand=ssh -i <ECS key> root@112.124.106.23 docker exec -i tailscale-gw nc %h %p" runner@100.64.0.x`
 3. Run the environment probe first:
    `ssh runner@100.64.0.x "bash /home/runner/work/OpenWRT-CI/OpenWRT-CI/Scripts/ci-debug-probe.sh"`
-   (disk, binfmt/QEMU, staging_dir symlinks, musl loaders, node/uv paths).
+   (disk, binfmt/QEMU, staging_dir symlinks, musl loaders and Node paths).
 4. Reproduce the failing package in isolation:
    `cd /home/runner/work/OpenWRT-CI/OpenWRT-CI/wrt && make package/feeds/custom/<pkg>/compile V=s -j1`
 5. Write the fix locally in this repo, commit, push; then release the runner:

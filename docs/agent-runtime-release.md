@@ -2,11 +2,11 @@
 
 `Agent-Runtime-Bump.yml` runs at UTC minute 0 every hour. It resolves the
 app-layer pins, builds arm64 and x64 musl generation payloads, and probes
-OpenCode/DCP, Pi, Hermes and Multica before it can commit or publish anything.
+CommandCode, Pi and Multica before it can commit or publish anything.
 The job only publishes a new release when the verified app-layer pins changed.
 
 The release is an all-or-nothing stack. A router must never run `npm install
-latest`, `pnpm update`, or `hermes update` from the Runtime Manager.
+latest`, `pnpm update`, or CLI self-update from the Runtime Manager.
 
 ## Artifacts
 
@@ -17,7 +17,7 @@ For each architecture the release contains:
 - one signed `index.json` and `index.json.sig`
 
 The manifest declares the monotonic `runtime_release`, architecture and musl
-contract, Node ABI, uv/CPython contract, every component version, lock SHA256,
+contract, Node ABI, every component version, lock SHA256,
 critical executable SHA256 values, bundle SHA256, and the minimum free-space
 requirement. `index.json` lists both architectures and only relative artifact
 names; the device resolves them from its configured release base URL.

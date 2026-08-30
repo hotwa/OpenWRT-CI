@@ -98,9 +98,10 @@ fi
 
 # Successful mount: persist UUID and atomically migrate all pre-existing state.
 CASE_OK="$TMP_ROOT/success"
-mkdir -p "$CASE_OK/root/.multica" "$CASE_OK/root/.pi"
+mkdir -p "$CASE_OK/root/.multica" "$CASE_OK/root/.pi" "$CASE_OK/root/.commandcode"
 printf '%s\n' multica-state >"$CASE_OK/root/.multica/config.json"
 printf '%s\n' pi-state >"$CASE_OK/root/.pi/settings.json"
+printf '%s\n' commandcode-auth >"$CASE_OK/root/.commandcode/auth.json"
 : >"$CASE_OK/mounts"
 printf '%s\n' '/dev/mmcblk0p11: UUID="ok-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="ok-part"' >"$CASE_OK/block.info"
 run_fixture "$CASE_OK"
@@ -112,8 +113,13 @@ run_fixture "$CASE_OK"
 	echo "Pi state was not linked to verified data storage"
 	exit 1
 }
+[ -L "$CASE_OK/root/.commandcode" ] && [ "$(readlink "$CASE_OK/root/.commandcode")" = "$CASE_OK/data/commandcode" ] || {
+	echo "CommandCode state was not linked to verified data storage"
+	exit 1
+}
 cmp -s "$CASE_OK/root/.multica/config.json" "$CASE_OK/data/multica/config.json"
 cmp -s "$CASE_OK/root/.pi/settings.json" "$CASE_OK/data/pi/settings.json"
+cmp -s "$CASE_OK/root/.commandcode/auth.json" "$CASE_OK/data/commandcode/auth.json"
 [ -d "$CASE_OK/data/smb" ] || {
 	echo "isolated Samba data directory was not created"
 	exit 1
@@ -131,9 +137,11 @@ grep -Fxq 'uuid=ok-uuid' "$CASE_OK/fstab.record" || {
 	exit 1
 }
 
-grep -Fq '[ -r /tmp/uv-env.sh ] && . /tmp/uv-env.sh' "$PROFILE" || {
-	echo "node profile does not consume the mount-gated runtime environment"
+for setting in 'PNPM_HOME=/data/pnpm/bin' 'PNPM_STORE_DIR=/data/pnpm/store' 'npm_config_cache=/data/npm'; do
+grep -Fq "$setting" "$PROFILE" || {
+	echo "node profile does not keep mutable package state on /data: $setting"
 	exit 1
 }
+done
 
 echo "auto mount data fixture tests passed"

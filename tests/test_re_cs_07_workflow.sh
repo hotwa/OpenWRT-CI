@@ -15,7 +15,7 @@ grep -Fq 'WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}' "$CORE"
 grep -Fq "if: inputs.WRT_EXPECTED_DEVICE != ''" "$CORE"
 grep -Fq "if: env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$CORE"
 grep -Fq 'mkdir -p ./wrt/files' "$CORE"
-for runtime_fetch in fetch_uv_runtime.sh fetch_node_runtime.sh fetch_multica_runtime.sh; do
+for runtime_fetch in fetch_node_runtime.sh fetch_multica_runtime.sh; do
 	grep -Fq "$runtime_fetch \"\$GITHUB_WORKSPACE/wrt/files\"" "$CORE" || {
 		echo "$runtime_fetch is not given the explicit firmware overlay target"
 		exit 1

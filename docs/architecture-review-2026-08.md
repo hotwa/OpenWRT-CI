@@ -1,5 +1,10 @@
 # OpenWRT-CI 系统级架构审查报告
 
+> 历史审查说明：本文记录的是 2026-08-28 的旧运行时架构。后续固件已移除
+> OpenCode、Hermes、uv 和离线 CPython；当前运行时契约以
+> `docs/agent-runtime-version-policy.md` 为准。本文中这些组件的分析仅保留为
+> 变更背景，不能当作当前构建行为。
+
 审查对象：`hotwa/OpenWRT-CI`（本地工作树，截至 2026-08-28）
 审查范围：Multica Edge Agent、Headscale 异地组网、eMMC `/data` 持久化、CI 工作流与密钥链路
 审查方法：逐文件源码审查 + `multica-ai/multica` 上游 `CLI_AND_DAEMON.md` / `CLI_INSTALL.md` 行为核对

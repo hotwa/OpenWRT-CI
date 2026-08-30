@@ -11,7 +11,7 @@
 - **持久化工作区**：
   - Multica 工作根目录：`/data/multica/workspaces`（软链接至 `/root/multica-workspaces`）
   - 本地配置持久化：`/data/multica/config.json`（软链接至 `/root/.multica/config.json`）
-  - AI 运行时缓存：`/data/uv_cache`（Python uv）、`/data/pnpm`（Node.js pnpm）、`/data/pi`、`/data/opencode`
+  - AI 运行时与配置：`/data/pnpm`（Node.js pnpm）、`/data/pi`（Pi 模型提供商与设置）、`/data/commandcode`（CommandCode 登录凭据与设置）
 - **网络拓扑与 Tailnet 异地组网**：
   - 本机作为 **Headscale（自建 Tailscale Mesh 异地大局域网）** 的核心子网路由器（Subnet Router）与 LAN 网关；
   - 自动向 Tailnet 通告本机局域网网段（如 `192.168.x.0/24`），并接收远端所有节点的通告路由（装载于内核路由表 52）；
@@ -32,11 +32,8 @@
 
 ### (2) AI Agent 协同与执行环境
 - **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装计划模式 (`pi-plan-mode`)、联网搜索 (`pi-web-search`) 与 WeChat 助手 (`pi-wechat-assistant`)。
-- **OpenCode CLI** (`opencode` CLI)：支持多模型协同推理与代码自愈。
-- **Hermes Agent** (`hermes` CLI)：Nous Research 深度推理运维 Agent。
-- **多语言运行时**：
-  - Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）
-  - Python 3.12 + `uv` 高速包管理器（直接使用 `uv run` 或 `python3`）
+- **CommandCode** (`cmdc` CLI)：Node.js 终端编码智能体；其登录状态在首次认证后持久化在 `/data/commandcode`。
+- **运行时**：Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
 
 ---

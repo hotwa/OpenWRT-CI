@@ -64,10 +64,6 @@ on:
         required: false
         type: boolean
         default: false
-      WRT_OPENCLAW:
-        required: false
-        type: boolean
-        default: false
       WRT_CPE_5G:
         required: false
         type: boolean
@@ -203,7 +199,6 @@ env:
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_EMMC_DATA_PROVISIONING: ${{inputs.WRT_EMMC_DATA_PROVISIONING}}
-  WRT_OPENCLAW: ${{inputs.WRT_OPENCLAW}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
@@ -479,7 +474,6 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Handles.sh
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files
-          GITHUB_TOKEN="${{ github.token }}" $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
@@ -575,50 +569,6 @@ jobs:
           }
           grep -q '^CONFIG_PACKAGE_luci-app-wrtbak=y$' .config || {
             echo "ERROR: luci-app-wrtbak was dropped from .config after defconfig"
-            exit 1
-          }
-          grep -q '^CONFIG_PACKAGE_python3=y$' .config || {
-            echo "ERROR: python3 was dropped from .config after defconfig"
-            exit 1
-          }
-          grep -q '^CONFIG_PACKAGE_python3-venv=y$' .config || {
-            echo "ERROR: python3-venv was dropped from .config after defconfig"
-            exit 1
-          }
-          test -f "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
-            echo "ERROR: uv profile script is missing from files overlay"
-            exit 1
-          }
-          test -f "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
-            echo "ERROR: uv init script is missing from files overlay"
-            exit 1
-          }
-          test -L "$GITHUB_WORKSPACE/files/etc/rc.d/S90uv-storage" || {
-            echo "ERROR: uv init service is not enabled in files overlay"
-            exit 1
-          }
-          test -x "$GITHUB_WORKSPACE/files/usr/bin/uv-runtime-smoke" || {
-            echo "ERROR: uv runtime smoke helper is missing or not executable"
-            exit 1
-          }
-          grep -q 'UV_PYTHON_INSTALL_MIRROR=file:///opt/uv/python-mirror' "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
-            echo "ERROR: uv profile script does not export the immutable mirror"
-            exit 1
-          }
-          grep -q '/tmp/uv-env.sh' "$GITHUB_WORKSPACE/files/etc/profile.d/uv.sh" || {
-            echo "ERROR: uv profile script does not source /tmp/uv-env.sh"
-            exit 1
-          }
-          grep -q 'UV_CACHE_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
-            echo "ERROR: uv init script does not write UV_CACHE_DIR"
-            exit 1
-          }
-          grep -q 'UV_PYTHON_INSTALL_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
-            echo "ERROR: uv init script does not write UV_PYTHON_INSTALL_DIR"
-            exit 1
-          }
-          grep -q 'UV_PYTHON_CACHE_DIR' "$GITHUB_WORKSPACE/files/etc/init.d/uv-storage" || {
-            echo "ERROR: uv init script does not write UV_PYTHON_CACHE_DIR"
             exit 1
           }
           fi

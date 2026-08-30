@@ -22,8 +22,8 @@ usage() {
   cat <<'EOF'
 Usage: package_agent_runtime_bundle.sh --source DIR --output DIR --arch arm64|x64 --runtime-release N
 
-DIR is the *contents* of one immutable generation.  It must contain node/,
-uv/, and bin/multica.  The command writes a .tar.gz payload and its detached
+DIR is the *contents* of one immutable generation.  It must contain node/ and
+bin/multica.  The command writes a .tar.gz payload and its detached
 manifest.json to OUTPUT.  The device manager verifies the detached manifest,
 extracts the payload, then installs that same manifest as generation/manifest.json.
 EOF
@@ -47,9 +47,7 @@ case "$ARCH" in arm64|x64) ;; *) die "--arch must be arm64 or x64" ;; esac
 [[ "$RUNTIME_RELEASE" =~ ^[1-9][0-9]*$ ]] || die "runtime_release must be a positive integer"
 SOURCE="$(realpath -e "$SOURCE")"
 [ -d "$SOURCE/node" ] || die "generation source is missing node/"
-[ -d "$SOURCE/uv" ] || die "generation source is missing uv/"
 [ -x "$SOURCE/bin/multica" ] || die "generation source is missing executable bin/multica"
-[ -s "$SOURCE/hermes-core.json" ] || die "generation source is missing hermes-core.json"
 [ -s "$SOURCE/node-version" ] || die "generation source is missing node-version"
 [ -s "$SOURCE/vendor/pi-plan-mode/provenance.json" ] || die "generation source is missing vendored Pi plan-mode provenance"
 
@@ -79,13 +77,14 @@ EXTRACTED_BYTES="$(du -sb "$SOURCE" | awk '{print $1}')"
 MIN_SPACE_BYTES="$(( (EXTRACTED_BYTES + BUNDLE_BYTES + 4194304 + 4095) / 4096 * 4096 ))"
 
 NODE_VERSION="$(sed -n '1p' "$SOURCE/node-version" | tr -d '[:space:]')"
-UV_VERSION="$(sed -n 's/^UV_VERSION="\([^"]*\)".*/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
-PYTHON_RELEASE_TAG="$(sed -n 's/^PYTHON_RELEASE_TAG="\([^"]*\)".*/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
-PYTHON_SERIES="$(sed -n 's/^PYTHON_SERIES=(\(.*\))$/\1/p' "$ROOT_DIR/Scripts/fetch_uv_runtime.sh" | head -n1)"
 MULTICA_VERSION="$(sed -n 's/^MULTICA_VERSION="${MULTICA_VERSION:-\([0-9.]*\)}".*/\1/p' "$ROOT_DIR/Scripts/fetch_multica_runtime.sh" | head -n1)"
-[ -n "$NODE_VERSION" ] && [ -n "$UV_VERSION" ] && [ -n "$PYTHON_RELEASE_TAG" ] && [ -n "$PYTHON_SERIES" ] && [ -n "$MULTICA_VERSION" ] || die "unable to read pinned runtime contract"
+[ -n "$NODE_VERSION" ] && [ -n "$MULTICA_VERSION" ] || die "unable to read pinned runtime contract"
 
-NODE_ABI="$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.node_abi))' "$SOURCE/hermes-core.json")"
+case "${NODE_VERSION%%.*}" in
+	24) NODE_ABI=137 ;;
+	22) NODE_ABI=127 ;;
+	*) die "unreviewed Node version/ABI contract: $NODE_VERSION" ;;
+esac
 case "${NODE_VERSION%%.*}:$NODE_ABI" in 24:137|22:127) ;; *) die "unreviewed Node version/ABI contract: $NODE_VERSION/$NODE_ABI" ;; esac
 
 # Component versions always come from the repository's reviewed lock input,
@@ -93,8 +92,7 @@ case "${NODE_VERSION%%.*}:$NODE_ABI" in 24:137|22:127) ;; *) die "unreviewed Nod
 PACKAGES_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 SOURCE="$SOURCE" MANIFEST="$MANIFEST" ARCH="$ARCH" RUNTIME_RELEASE="$RUNTIME_RELEASE" \
   BUNDLE_SHA256="$BUNDLE_SHA256" BUNDLE_BYTES="$BUNDLE_BYTES" MIN_SPACE_BYTES="$MIN_SPACE_BYTES" \
-  NODE_VERSION="$NODE_VERSION" NODE_ABI="$NODE_ABI" UV_VERSION="$UV_VERSION" \
-  PYTHON_RELEASE_TAG="$PYTHON_RELEASE_TAG" PYTHON_SERIES="$PYTHON_SERIES" MULTICA_VERSION="$MULTICA_VERSION" \
+  NODE_VERSION="$NODE_VERSION" NODE_ABI="$NODE_ABI" MULTICA_VERSION="$MULTICA_VERSION" \
   LOCK_FILE="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json" PACKAGES_JSON="$PACKAGES_JSON" \
   node <<'NODE'
 const crypto = require('node:crypto');
@@ -103,7 +101,6 @@ const path = require('node:path');
 const e = process.env;
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const packages = JSON.parse(fs.readFileSync(e.PACKAGES_JSON, 'utf8')).dependencies;
-const hermesCore = JSON.parse(fs.readFileSync(path.join(e.SOURCE, 'hermes-core.json'), 'utf8'));
 const piPlanMode = JSON.parse(fs.readFileSync(path.join(e.SOURCE, 'vendor/pi-plan-mode/provenance.json'), 'utf8'));
 const releaseInputs = [
   e.PACKAGES_JSON,
@@ -115,13 +112,9 @@ const releaseInputs = [
 ];
 const inputHash = crypto.createHash('sha256');
 for (const file of releaseInputs) inputHash.update(fs.readFileSync(file));
-if (String(hermesCore.node_abi) !== String(e.NODE_ABI)) throw new Error('Hermes Core Node ABI disagrees with bundle contract');
-if (hermesCore.architecture !== (e.ARCH === 'arm64' ? 'arm64' : 'x64')) throw new Error('Hermes Core architecture disagrees with bundle contract');
 const criticalCandidates = [
-  'node/bin/node', 'bin/multica', 'uv/bin/uv', 'uv/uv',
-  'node/lib/node_modules/opencode-ai/bin/opencode.exe',
-  'node/lib/node_modules/hermes-agent/bin/hermes.js',
-  'hermes-core.json',
+  'node/bin/node', 'bin/multica',
+  'node/lib/node_modules/command-code/dist/index.mjs',
   'vendor/pi-plan-mode/provenance.json'
 ];
 const critical_elf_sha256 = {};
@@ -142,13 +135,9 @@ const manifest = {
   minimum_space_bytes: Number(e.MIN_SPACE_BYTES),
   runtime_contract: {
     node_version: e.NODE_VERSION,
-    node_abi: Number(e.NODE_ABI),
-    uv_version: e.UV_VERSION,
-    cpython_release_tag: e.PYTHON_RELEASE_TAG,
-    cpython_series: e.PYTHON_SERIES.trim().split(/\s+/)
+    node_abi: Number(e.NODE_ABI)
   },
-  components: { ...packages, multica: e.MULTICA_VERSION, 'hermes-core': hermesCore.npm_version, 'pi-plan-mode': piPlanMode.version },
-  hermes_core: hermesCore,
+  components: { ...packages, multica: e.MULTICA_VERSION, 'pi-plan-mode': piPlanMode.version },
   vendored_extensions: { 'pi-plan-mode': piPlanMode },
   lock_sha256: sha256(e.LOCK_FILE),
   input_sha256: inputHash.digest('hex'),

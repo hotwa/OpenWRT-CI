@@ -61,7 +61,7 @@ selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' p
 	echo "exact runtime selector returned: $selected"
 	exit 1
 }
-if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' opencode >/dev/null; then
+if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' commandcode >/dev/null; then
 	echo "runtime selector accepted the wrong provider"
 	exit 1
 fi

@@ -15,7 +15,6 @@ SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PI_PLAN_MODE_VENDOR_DIR="$AGENT_RUNTIME_MANIFEST_DIR/vendor/pi-plan-mode"
-HERMES_CORE_BUILDER="$SCRIPT_DIR/build_hermes_core.sh"
 
 # Default Node.js target version (Node 24 LTS line)
 NODE_DEFAULT_VERSION="24.20.0"
@@ -239,7 +238,7 @@ preinstall_cli_agents_and_extensions() (
 	local node_arch="$1"
 	local npm_arch staging_dir bin
 
-	log_info "Installing OpenCode, Pi CLI, Hermes bridge and extensions from package-lock.json..."
+	log_info "Installing CommandCode, Pi CLI and extensions from package-lock.json..."
 	command -v npm >/dev/null 2>&1 || {
 		echo "ERROR: host npm is required for the locked agent runtime install" >&2
 		return 1
@@ -274,22 +273,10 @@ preinstall_cli_agents_and_extensions() (
 	}
 	cp -a "$staging_dir/node_modules/." "$NODE_LIB_DIR/"
 
-	# hermes-agent's upstream postinstall clones source, downloads its own uv and
-	# asks uv for every optional extra. It would build for the CI host, not the target,
-	# and makes first boot depend on WAN.  The audited Core-only builder below is
-	# the sole producer of its runtime.
-	prune_agent_runtime_deadweight
-	fix_opencode_entrypoint "$npm_arch"
 	prune_foreign_platform_builds "$npm_arch"
-	[ -f "$HERMES_CORE_BUILDER" ] || {
-		echo "ERROR: Hermes Core builder is missing: $HERMES_CORE_BUILDER" >&2
-		return 1
-	}
-	bash "$HERMES_CORE_BUILDER" "$TARGET_FILES" "$node_arch"
 	verify_agent_runtime_arch "$npm_arch"
-	write_agent_runtime_policy
 
-	for bin in pnpm opencode pi hermes; do
+	for bin in pnpm pi cmdc command-code commandcode; do
 		[ -e "$NODE_LIB_DIR/.bin/$bin" ] || {
 			echo "ERROR: locked agent runtime did not install $bin" >&2
 			return 1
@@ -332,94 +319,6 @@ foreign_os_binary() {
 		207:250:237:254|254:237:250:207|202:254:186:190|190:186:254:202) return 0 ;;
 	esac
 	return 1
-}
-
-# opencode-ai 的 postinstall 在构建 runner 上按 runner 架构把二进制复制成
-# bin/opencode.exe，交叉安装时会把 x86-64/glibc 程序烧进 ARM64 固件；平台包
-# 目录只在安装期使用，运行入口始终是 opencode-ai/bin/opencode.exe。
-fix_opencode_entrypoint() {
-	local npm_arch="$1"
-	local target="$NODE_LIB_DIR/opencode-ai/bin/opencode.exe"
-	local candidates pkg source expected_machine
-	local machine interp
-
-	[ -f "$NODE_LIB_DIR/opencode-ai/package.json" ] || {
-		echo "ERROR: opencode-ai is missing from the locked agent runtime" >&2
-		return 1
-	}
-
-	case "$npm_arch" in
-		arm64)
-			candidates="opencode-linux-arm64-musl"
-			expected_machine=183
-			;;
-		x64)
-			candidates="opencode-linux-x64-baseline-musl opencode-linux-x64-musl"
-			expected_machine=62
-			;;
-		*)
-			echo "ERROR: unsupported npm target $npm_arch" >&2
-			return 1
-			;;
-	esac
-
-	source=""
-	for pkg in $candidates; do
-		if [ -f "$NODE_LIB_DIR/$pkg/bin/opencode" ]; then
-			source="$NODE_LIB_DIR/$pkg/bin/opencode"
-			break
-		fi
-	done
-	[ -n "$source" ] || {
-		echo "ERROR: none of the musl opencode packages ($candidates) was installed" >&2
-		return 1
-	}
-
-	rm -f "$target"
-	cp -f "$source" "$target"
-	chmod 0755 "$target"
-	rm -rf "$NODE_LIB_DIR"/opencode-linux-*
-
-	machine="$(elf_machine_id "$target")" || {
-		echo "ERROR: $target is not an ELF64 little-endian executable" >&2
-		return 1
-	}
-	[ "$machine" = "$expected_machine" ] || {
-		echo "ERROR: opencode entrypoint is ELF machine $machine, expected $expected_machine for $npm_arch" >&2
-		return 1
-	}
-	interp="$(head -c 8192 "$target" | grep -a -m1 -oE '/lib[a-z0-9_]*/ld-[A-Za-z0-9._-]+' || true)"
-	echo "$interp" | grep -q musl || {
-		echo "ERROR: opencode entrypoint interpreter is '$interp', expected a musl loader" >&2
-		return 1
-	}
-
-	log_info "opencode entrypoint now uses the ${npm_arch} musl binary (${interp})."
-}
-
-# `npm ci --ignore-scripts` deliberately leaves Hermes without a runtime.  Start
-# from a clean package on every build so a cached workspace cannot accidentally
-# retain host/glibc postinstall output; build_hermes_core.sh then adds only the
-# locked upstream Core and a target-musl venv using the firmware's uv/Python.
-prune_agent_runtime_deadweight() {
-	local hermes_dir="$NODE_LIB_DIR/hermes-agent"
-	local path
-
-	for path in \
-		"$hermes_dir/runtime" \
-		"$hermes_dir/.uv_bin"
-	do
-		if [ -e "$path" ]; then
-			rm -rf -- "$path"
-			log_info "Pruned ${path#"$NODE_LIB_DIR"/}."
-		else
-			warn "expected prunable path is missing: $path"
-		fi
-	done
-
-	# A host-created marker must never make the local health coordinator believe
-	# that an unverified runtime is usable.
-	rm -f -- "$hermes_dir/.hermes-agent-runtime.json"
 }
 
 # 交叉安装（npm ci --os=linux --cpu=<arch> --libc=musl）会把两类设备上永远加载不了
@@ -519,65 +418,16 @@ verify_agent_runtime_arch() {
 		}
 	done < <(find "$NODE_LIB_DIR" -type f \
 		\( -name '*.node' -o -name '*.so' -o -name '*.so.*' \
-		   -o -name 'uv' -o -name 'python3.*' -o -name 'opencode*' -o -name 'hermes' \) \
+		   -o -name 'cmdc' -o -name 'command-code' -o -name 'commandcode' \) \
 		-size +8k -print)
 
 	log_info "Verified every loadable agent runtime binary targets ${npm_arch}."
 }
 
-# The device-side provisioner must install exactly the audited npm release, so
-# the pinned version is recorded at build time instead of floating on device.
-write_agent_runtime_policy() {
-	local hermes_version hermes_python_series core_manifest core_python_series
-	local policy_dir="$TARGET_FILES/etc/agent-runtime"
-	local hermes_package_json="$NODE_LIB_DIR/hermes-agent/package.json"
-
-	hermes_version="$(sed -n 's/^[[:space:]]*"version": *"\([^"]*\)".*/\1/p' \
-		"$hermes_package_json" | head -n1)"
-	[[ "$hermes_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-		echo "ERROR: unable to read the pinned hermes-agent version from the locked runtime" >&2
-		return 1
-	}
-
-	# hermes-agent's postinstall asks uv for one exact managed CPython series and
-	# runs it with UV_NO_CONFIG, so a router can only satisfy it from the local
-	# file:// mirror. Shipping a request the mirror cannot answer means hermes
-	# never provisions, and nothing in the build would notice.
-	hermes_python_series="$(sed -n 's/^[[:space:]]*"pythonVersion": *"\([^"]*\)".*/\1/p' \
-		"$hermes_package_json" | head -n1)"
-	[[ "$hermes_python_series" =~ ^[0-9]+\.[0-9]+$ ]] || {
-		echo "ERROR: unable to read hermes-agent's managed pythonVersion from the locked runtime" >&2
-		return 1
-	}
-
-	core_manifest="$TARGET_FILES/opt/agent-runtime/hermes-core.json"
-	[ -s "$core_manifest" ] || {
-		echo "ERROR: Hermes Core builder did not write $core_manifest" >&2
-		return 1
-	}
-	core_python_series="$(sed -n 's/^[[:space:]]*"python_series": *"\([^"]*\)".*/\1/p' "$core_manifest" | head -n1)"
-	[ "$core_python_series" = "$hermes_python_series" ] || {
-		echo "ERROR: Hermes Core metadata Python $core_python_series does not match hermes-agent $hermes_python_series" >&2
-		return 1
-	}
-
-	mkdir -p "$policy_dir"
-	cat >"$policy_dir/agent-update.env" <<EOF
-# Generated by Scripts/fetch_node_runtime.sh. Do not edit on device.
-HERMES_NPM_PACKAGE=hermes-agent
-HERMES_NPM_VERSION=$hermes_version
-HERMES_PYTHON_SERIES=$hermes_python_series
-HERMES_RUNTIME_MODE=core-offline
-HERMES_CORE_ROOT=/opt/node/lib/node_modules/hermes-agent/runtime/hermes-agent
-HERMES_CORE_MANIFEST=/opt/agent-runtime/hermes-core.json
-EOF
-	log_info "Recorded offline Hermes Core $hermes_version (managed Python $hermes_python_series)."
-}
-
 setup_symlinks() {
 	log_info "Configuring binary symlinks..."
 
-	for bin in node npm npx corepack pnpm opencode pi hermes; do
+	for bin in node npm npx corepack pnpm pi cmdc command-code commandcode; do
 		if [ -f "$NODE_BIN_DIR/$bin" ]; then
 			chmod +x "$NODE_BIN_DIR/$bin" 2>/dev/null || true
 			ln -sf "/opt/node/bin/$bin" "$SYS_BIN_DIR/$bin"
@@ -603,8 +453,18 @@ install_vendored_pi_extensions() {
 configure_pi_extensions() {
 	log_info "Writing default Pi extensions configuration..."
 
+	[ -s "$TARGET_FILES/etc/pi/agent/models.json" ] || {
+		echo "ERROR: default Pi model catalog is missing" >&2
+		return 1
+	}
+	cp -f "$TARGET_FILES/etc/pi/agent/models.json" "$PI_CONFIG_DIR/models.json"
 	cat >"$PI_CONFIG_DIR/settings.json" <<'EOF'
 {
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B",
+  "defaultThinkingLevel": "medium",
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "ask",
   "packages": [
     "@aaronkyriesenbach/pi-package-manager",
     "btw-pi",
@@ -617,6 +477,7 @@ configure_pi_extensions() {
   "autoUpdate": false
 }
 EOF
+	cp -f "$PI_CONFIG_DIR/settings.json" "$TARGET_FILES/etc/pi/agent/settings.json"
 }
 
 main() {

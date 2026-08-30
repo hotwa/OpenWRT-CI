@@ -18,10 +18,8 @@ if command -v sudo >/dev/null 2>&1; then SUDO="sudo -E"; else SUDO=""; fi
 CI_DEBUG_ENV_FILE="${CI_DEBUG_ENV_FILE:-${RUNNER_TEMP:-/tmp}/ci-debug-env}"
 
 if ! command -v tailscale >/dev/null 2>&1; then
-  # NOTE: do NOT use https://tailscale.com/install.sh here. This CI's hermes
-  # step copies an Alpine musl minirootfs into system /lib (build_hermes_core.sh),
-  # which makes install.sh misdetect the Ubuntu runner as Alpine and fail with
-  # "requires the community repo". Download the Ubuntu deb explicitly instead.
+  # Do not use https://tailscale.com/install.sh here: the CI runner is Ubuntu
+  # and this bootstrap intentionally installs the matching deb explicitly.
   echo "Installing tailscale client (Ubuntu amd64 deb)"
   DEB_URL=""
   for v in 1.94.2 1.92.0 1.90.0; do

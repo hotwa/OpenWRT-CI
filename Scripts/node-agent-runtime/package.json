@@ -6,12 +6,8 @@
   "dependencies": {
     "@aaronkyriesenbach/pi-package-manager": "0.4.0",
     "@earendil-works/pi-coding-agent": "0.84.4",
-    "@mohak34/opencode-notifier": "0.2.8",
-    "@tarquinen/opencode-dcp": "3.1.15",
     "btw-pi": "0.4.0",
-    "hermes-agent": "0.20.6",
-    "opencode-ai": "1.18.25",
-    "opencode-conductor-plugin": "1.32.0",
+    "command-code": "1.38.2",
     "pi-web-search": "1.3.1",
     "pi-wechat-assistant": "0.3.0",
     "pnpm": "11.24.0"

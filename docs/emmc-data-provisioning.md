@@ -2,14 +2,14 @@
 
 智能体的可变状态始终使用真实挂载点 `/data`；不要把数据分区挂到 `/opt`。
 `/opt/node` 与 `/opt/agent-runtime` 是固件内不可变运行时基线，挂载覆盖
-`/opt` 会阻断 Node、uv、Multica 与 Hermes 的回退路径。
+`/opt` 会阻断 Node、Pi、CommandCode 与 Multica 的回退路径。
 
 ## 布局
 
 首次启动准备成功后，目录职责如下：
 
 - `/data/multica/workspaces`：Multica 工作区；
-- `/data/multica`、`/data/agent-runtime`、`/data/uv`、`/data/pi`：运行时和
+- `/data/multica`、`/data/agent-runtime`、`/data/pi`、`/data/commandcode`：运行时和
   智能体状态；
 - `/data/smb`：Samba 文件目录，与智能体状态隔离；
 - `/opt/data -> /data`、`/opt/smb -> /data/smb`：仅为人工管理提供的兼容链接。

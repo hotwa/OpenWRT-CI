@@ -8,7 +8,6 @@ CONFIG="multica"
 SECTION="main"
 DEFAULT_PROG="/usr/local/bin/multica"
 MAX_TASKS_LIMIT=4
-RUNTIME_ENV="/tmp/uv-env.sh"
 
 cfg() {
 	local name="$1"
@@ -77,27 +76,10 @@ valid_duration() {
 	printf '%s' "$1" | grep -Eq '^[1-9][0-9]*(ms|s|m|h)$'
 }
 
-runtime_env_value() {
-	local key="$1"
-	local values count value
-	values="$(sed -n "s/^export ${key}=//p" "$RUNTIME_ENV")"
-	count="$(printf '%s\n' "$values" | sed '/^$/d' | wc -l)"
-	[ "$count" -eq 1 ] || return 1
-	value="$(printf '%s\n' "$values" | sed -n '1p')"
-	case "$value" in
-		/data/*) ;;
-		*) return 1 ;;
-	esac
-	has_control_character "$value" && return 1
-	printf '%s' "$value"
-}
-
 start_service() {
 	local enabled token workspace_id server_url app_url
 	local device_name runtime_name runtime_provider workspaces_root
 	local max_tasks poll_interval heartbeat_interval prog config_dir config_json config_tmp
-	local runtime_env_mode uv_cache_dir uv_python_install_dir uv_python_cache_dir
-	local pnpm_store_dir npm_config_cache xdg_cache_home
 
 	enabled="$(cfg enabled 0)"
 	case "$enabled" in
@@ -174,22 +156,6 @@ start_service() {
 		return 1
 	}
 
-	[ -f "$RUNTIME_ENV" ] && [ ! -L "$RUNTIME_ENV" ] || {
-		log_error "$RUNTIME_ENV is unavailable; refusing to fall back to rootfs caches"
-		return 1
-	}
-	runtime_env_mode="$(stat -c '%u:%a' "$RUNTIME_ENV" 2>/dev/null || true)"
-	case "$runtime_env_mode" in
-		0:600|0:400) ;;
-		*) log_error "$RUNTIME_ENV must be a root-owned private regular file"; return 1 ;;
-	esac
-	uv_cache_dir="$(runtime_env_value UV_CACHE_DIR)" || return 1
-	uv_python_install_dir="$(runtime_env_value UV_PYTHON_INSTALL_DIR)" || return 1
-	uv_python_cache_dir="$(runtime_env_value UV_PYTHON_CACHE_DIR)" || return 1
-	pnpm_store_dir="$(runtime_env_value PNPM_STORE_DIR)" || return 1
-	npm_config_cache="$(runtime_env_value NPM_CONFIG_CACHE)" || return 1
-	xdg_cache_home="$(runtime_env_value XDG_CACHE_HOME)" || return 1
-
 	umask 077
 	config_dir="/root/.multica"
 	config_json="$config_dir/config.json"
@@ -221,7 +187,6 @@ EOF
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
 		PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin" \
-		OPENTUI_LIBC=musl \
 		MULTICA_SERVER_URL="$server_url" \
 		MULTICA_DAEMON_DEVICE_NAME="$device_name" \
 		MULTICA_AGENT_RUNTIME_NAME="$runtime_name" \
@@ -230,14 +195,6 @@ EOF
 		MULTICA_DAEMON_MAX_CONCURRENT_TASKS="$max_tasks" \
 		MULTICA_DAEMON_POLL_INTERVAL="$poll_interval" \
 		MULTICA_DAEMON_HEARTBEAT_INTERVAL="$heartbeat_interval"
-	procd_append_param env \
-		UV_CACHE_DIR="$uv_cache_dir" \
-		UV_PYTHON_INSTALL_DIR="$uv_python_install_dir" \
-		UV_PYTHON_CACHE_DIR="$uv_python_cache_dir" \
-		PNPM_STORE_DIR="$pnpm_store_dir" \
-		NPM_CONFIG_CACHE="$npm_config_cache" \
-		npm_config_cache="$npm_config_cache" \
-		XDG_CACHE_HOME="$xdg_cache_home"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1

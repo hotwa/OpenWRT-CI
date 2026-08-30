@@ -4,10 +4,10 @@
 # manifest, and prove the result still installs for the firmware's target CPUs.
 #
 # Policy owner: docs/agent-runtime-version-policy.md
-#   App layer (this script): opencode, pi, hermes, their extensions, pnpm and
-#     Multica - allowed to follow upstream latest.
-#   Runtime base (never touched here): Node.js, uv, the offline CPython mirror,
-#     the OpenWrt source commit and the kernel. Those stay exact-pinned.
+#   App layer (this script): CommandCode, Pi, Pi extensions, pnpm and Multica
+#     - allowed to follow upstream latest.
+#   Runtime base (never touched here): Node.js, the OpenWrt source commit and
+#     the kernel. Those stay exact-pinned.
 #
 # Modes:
 #   plan    print current vs latest, change nothing
@@ -26,7 +26,6 @@ RUNTIME_RELEASE_FILE="${AGENT_RUNTIME_RELEASE_FILE:-$MANIFEST_DIR/runtime-releas
 PI_PLAN_VENDOR_SCRIPT="$ROOT_DIR/Scripts/refresh_pi_plan_mode_vendor.sh"
 PI_PLAN_PROVENANCE="$MANIFEST_DIR/vendor/pi-plan-mode/provenance.json"
 MULTICA_SCRIPT="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
-UV_SCRIPT="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 GUARD_DIR="$ROOT_DIR/tests"
 GITHUB_API="https://api.github.com/repos"
 CLEANUP_DIRS=()
@@ -118,7 +117,10 @@ pi_plan_vendor_current() {
 }
 
 pi_plan_vendor_latest() {
-	npm view pi-plan-mode version dist.integrity --json |
+	# Asking npm for dist.integrity produces a flattened JSON key named
+	# "dist.integrity", while the parser below intentionally validates the
+	# nested dist object. Request dist so both sides use the same shape.
+	npm view pi-plan-mode version dist --json |
 		node -e '
 			let input = "";
 			process.stdin.on("data", (chunk) => { input += chunk; });
@@ -273,15 +275,11 @@ fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
 NODE
 }
 
-python_series_mirror() {
-	sed -n 's/^PYTHON_SERIES=(\(.*\))$/\1/p' "$UV_SCRIPT"
-}
-
 # The same cross-target install WRT-CORE performs. A lock that cannot resolve the
 # musl platform packages for a firmware CPU must never reach main.
 verify_target_cpu() {
 	local cpu="$1"
-	local work_dir hermes_python mirrored
+	local work_dir
 
 	work_dir="$(new_work_dir)"
 	cp "$PACKAGE_JSON" "$PACKAGE_LOCK" "$work_dir/"
@@ -294,22 +292,13 @@ verify_target_cpu() {
 			die "npm ci could not install the re-resolved lock for linux-${cpu}-musl"
 		}
 
-	[ -d "$work_dir/node_modules/opencode-linux-${cpu}-musl" ] ||
-		die "linux-${cpu}-musl install is missing the matching opencode platform package"
-
-	hermes_python="$(sed -n 's/^[[:space:]]*"pythonVersion": *"\([^"]*\)".*/\1/p' \
-		"$work_dir/node_modules/hermes-agent/package.json" | head -n1)"
-	[[ "$hermes_python" =~ ^[0-9]+\.[0-9]+$ ]] ||
-		die "unable to read hermes-agent's managed pythonVersion for linux-${cpu}-musl"
-	mirrored=" $(python_series_mirror) "
-	case "$mirrored" in
-		*" $hermes_python "*)
-			log_info "Verified linux-${cpu}-musl install (hermes managed Python $hermes_python)."
-			;;
-		*)
-			die "hermes-agent needs managed Python $hermes_python but $(basename "$UV_SCRIPT") mirrors:$(python_series_mirror)"
-			;;
-	esac
+	[ -s "$work_dir/node_modules/command-code/dist/index.mjs" ] ||
+		die "linux-${cpu}-musl install is missing CommandCode's entrypoint"
+	for command in pi cmdc command-code commandcode; do
+		[ -e "$work_dir/node_modules/.bin/$command" ] ||
+			die "linux-${cpu}-musl install is missing $command"
+	done
+	log_info "Verified linux-${cpu}-musl install (CommandCode and Pi)."
 }
 
 run_guard_suite() {
@@ -356,8 +345,7 @@ main() {
 		die "locked agent runtime manifest is incomplete"
 	[ -f "$PI_PLAN_VENDOR_SCRIPT" ] && [ -f "$PI_PLAN_PROVENANCE" ] ||
 		die "vendored pi-plan-mode refresh chain is incomplete"
-	[ -f "$MULTICA_SCRIPT" ] && [ -f "$UV_SCRIPT" ] ||
-		die "runtime fetch scripts are missing"
+	[ -f "$MULTICA_SCRIPT" ] || die "Multica runtime fetch script is missing"
 
 	plan="$(resolve_plan)"
 	# Validate the upstream archive and the narrowly reviewed PR #9 scope patch

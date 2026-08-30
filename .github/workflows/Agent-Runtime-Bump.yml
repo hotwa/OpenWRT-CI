@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # The app layer follows upstream only after both musl generations have passed
-# their probes. Devices never resolve npm or Hermes "latest" themselves.
+# their probes. Devices never resolve npm "latest" themselves.
 name: Agent-Runtime-Bump
 
 on:
@@ -142,7 +142,7 @@ jobs:
           command -v qemu-aarch64
           runtime_release="$(sed -n '1p' Scripts/node-agent-runtime/runtime-release)"
           echo "RUNTIME_RELEASE=$runtime_release" >> "$GITHUB_ENV"
-          AGENT_RUNTIME_RELEASE="$runtime_release" HERMES_TARGET_RUNNER=qemu-aarch64 bash Scripts/build_agent_runtime_generation.sh --arch arm64 --output "$RUNNER_TEMP/generation/arm64"
+          AGENT_RUNTIME_RELEASE="$runtime_release" bash Scripts/build_agent_runtime_generation.sh --arch arm64 --output "$RUNNER_TEMP/generation/arm64"
           bash Scripts/package_agent_runtime_bundle.sh --arch arm64 --source "$RUNNER_TEMP/generation/arm64" --output "$RUNNER_TEMP/release" --runtime-release "$runtime_release"
 
       - name: Build x64 musl generation
@@ -161,13 +161,11 @@ jobs:
             docker run --rm --platform "$platform" -v "$RUNNER_TEMP/generation/$arch:/generation:ro" alpine:3.20 /bin/sh -ec '
               export PATH=/generation/node/bin:/generation/bin:$PATH
               node -p "process.versions.modules"
-              opencode --version
               pi --version
-              hermes --version
+              cmdc --version
               multica --version
               cd /generation/node/lib/node_modules
-              node -e "require(\"@tarquinen/opencode-dcp\")"
-              test -e /generation/node/lib/node_modules/hermes-agent
+              test -s /generation/node/lib/node_modules/command-code/dist/index.mjs
             '
           done
 

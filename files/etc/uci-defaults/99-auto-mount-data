@@ -362,14 +362,11 @@ prepare_agent_storage() {
 		"$DATA_ROOT/multica/workspaces" \
 		"$DATA_ROOT/agent_workspaces" \
 		"$DATA_ROOT/pi" \
-		"$DATA_ROOT/opencode" \
+		"$DATA_ROOT/pi/agent" \
+		"$DATA_ROOT/commandcode" \
 		"$DATA_ROOT/pnpm" \
 		"$DATA_ROOT/npm" \
 		"$DATA_ROOT/cache" \
-		"$DATA_ROOT/uv_cache" \
-		"$DATA_ROOT/uv" \
-		"$DATA_ROOT/uv/python" \
-		"$DATA_ROOT/uv/python-cache" \
 		"$DATA_ROOT/smb"; do
 		ensure_real_directory "$directory" || return 1
 	done
@@ -380,12 +377,18 @@ prepare_agent_storage() {
 		cmp -s /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
 		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
+	for config_file in models.json settings.json; do
+		[ -r "/etc/pi/agent/$config_file" ] || continue
+		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
+		cp -p "/etc/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
+		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
+	done
 
 	[ -d "$ROOT_HOME" ] || return 0
 	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || return 1
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1
 	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || return 1
-	link_directory "$DATA_ROOT/opencode" "$ROOT_HOME/.opencode" opencode || return 1
+	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || return 1
 	link_compatibility_path "$DATA_ROOT" "$OPT_ROOT/data" || \
 		log_error "could not create optional compatibility path: $OPT_ROOT/data"
 	link_compatibility_path "$DATA_ROOT/smb" "$OPT_ROOT/smb" || \

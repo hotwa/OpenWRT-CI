@@ -71,8 +71,8 @@ echo "=== [5/7] MUSL LOADERS & TARGET LIBS ==="
 find "$WRT_DIR/staging_dir" -name "ld-musl-*.so.1" -o -name libc.so 2>/dev/null | head -n 30
 echo ""
 
-echo "=== [6/7] AGENT RUNTIME STACK (NODE / PYTHON / UV) ==="
-for c in node npm pnpm python python3 uv; do
+echo "=== [6/7] AGENT RUNTIME STACK (NODE / PI / COMMANDCODE) ==="
+for c in node npm pnpm pi cmdc command-code commandcode; do
   if command -v "$c" >/dev/null 2>&1; then
     echo "  $c -> $(command -v "$c") ($("$c" --version 2>/dev/null | head -n1))"
   fi
@@ -83,7 +83,7 @@ fi
 echo ""
 
 echo "=== [7/7] CROSS-COMPILE RELEVANT ENV VARS ==="
-env | sort | grep -E "^(PATH|STAGING_DIR|TOOLCHAIN_DIR|ARCH|TARGET|CROSS_COMPILE|CC|CXX|LD|AR|NODE_|UV_|PYTHON)" || echo "(none)"
+env | sort | grep -E "^(PATH|STAGING_DIR|TOOLCHAIN_DIR|ARCH|TARGET|CROSS_COMPILE|CC|CXX|LD|AR|NODE_|PNPM_|NPM_)" || echo "(none)"
 echo ""
 echo "========================================================================"
 echo "Probe completed."
