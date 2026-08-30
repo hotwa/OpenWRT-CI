@@ -1,0 +1,78 @@
+name: RE Mesh Build (RE-SS-01 + RE-CS-02)
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEBUG_SSH:
+        description: 'Hold failed matrix runners with Tailscale SSH for live debugging'
+        required: false
+        type: boolean
+        default: false
+      RE_SS_01_LAN_IP:
+        description: 'RE-SS-01 LAN IP (e.g. 192.168.10.1)'
+        required: false
+        type: string
+        default: '192.168.10.1'
+      RE_CS_02_LAN_IP:
+        description: 'RE-CS-02 LAN IP (e.g. 192.168.11.1)'
+        required: false
+        type: string
+        default: '192.168.11.1'
+
+permissions:
+  actions: write
+  contents: write
+
+# One dispatch keeps the two Wi-Fi JDCloud builds together in the Actions UI.
+# They deliberately remain separate matrix jobs: their per-device root filesystems
+# and NSS/Wi-Fi package selections differ, so merging them into one .config would
+# contaminate one device's artifact with the other's packages.
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: RE-SS-01
+            config: IPQ60XX-RE-SS-01
+            device: jdcloud_re-ss-01
+            image_name: RE-SS-01
+            ssid: RE-SS-01
+            wrtbak_alias: home-re-ss-01
+            ci_name: RE-SS-01-BUILD
+            lan_input: RE_SS_01_LAN_IP
+          - name: RE-CS-02
+            config: IPQ60XX-RE-CS-02
+            device: jdcloud_re-cs-02
+            image_name: RE-CS-02
+            ssid: RE-CS-02
+            wrtbak_alias: home-re-cs-02
+            ci_name: RE-CS-02-BUILD
+            lan_input: RE_CS_02_LAN_IP
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets: inherit
+    with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      WRT_CONFIG: ${{ matrix.config }}
+      WRT_THEME: argon
+      WRT_NAME: ${{ matrix.image_name }}
+      WRT_SSID: ${{ matrix.ssid }}
+      WRT_IP: ${{ matrix.lan_input == 'RE_SS_01_LAN_IP' && inputs.RE_SS_01_LAN_IP || inputs.RE_CS_02_LAN_IP }}
+      WRT_PW: 无
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_BUILD_ONLY: true
+      WRT_SPLIT_DEVICE_ARTIFACTS: false
+      WRT_EXPECTED_DEVICE: ${{ matrix.device }}
+      WRT_REQUIRED_DEVICE: ${{ matrix.device }}
+      WRT_FEATURE_OVERLAY: true
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
+      WRTBAK_DEVICE_ALIAS: ${{ matrix.wrtbak_alias }}
+      WRTBAK_PROXY_PROFILE: auto
+      CI_NAME: ${{ matrix.ci_name }}
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360

@@ -5,14 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/files/etc/uci-defaults/98-provision-emmc-data"
 CONFIGURER="$ROOT_DIR/Scripts/ConfigureEmmcDataProvisioning.sh"
 CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-RE_SS_WF="$ROOT_DIR/.github/workflows/RE-SS-01-BUILD.yml"
+RE_MESH_WF="$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 [ -x "$SCRIPT" ] || { echo "missing executable first-boot eMMC data provisioner"; exit 1; }
 [ -x "$CONFIGURER" ] || { echo "missing eMMC data workflow configurer"; exit 1; }
 [ -f "$CORE_WF" ] || { echo "missing WRT-CORE workflow"; exit 1; }
-[ -f "$RE_SS_WF" ] || { echo "missing RE-SS-01 workflow"; exit 1; }
+[ -f "$RE_MESH_WF" ] || { echo "missing RE mesh workflow"; exit 1; }
 sh -n "$SCRIPT"
 sh -n "$CONFIGURER"
 
@@ -47,7 +47,7 @@ grep -Fq 'ConfigureEmmcDataProvisioning.sh' "$CORE_WF" || {
 	echo "WRT-CORE does not configure the eMMC provisioning overlay"
 	exit 1
 }
-grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$RE_SS_WF" || {
+grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$RE_MESH_WF" || {
 	echo "RE-SS-01 is not the first guarded device gate"
 	exit 1
 }

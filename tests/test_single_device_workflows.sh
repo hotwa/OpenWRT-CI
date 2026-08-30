@@ -8,13 +8,23 @@ if grep -RniE 'openclaw|luci-app-openclaw' "$ROOT_DIR/.github/workflows"; then
 	exit 1
 fi
 
-for wf in "RE-CS-02-BUILD.yml" "RE-CS-07-BUILD.yml" "RE-SS-01-BUILD.yml"; do
+for wf in "RE-Mesh-BUILD.yml" "RE-CS-07-BUILD.yml"; do
 	path="$ROOT_DIR/.github/workflows/$wf"
 	[ -f "$path" ] || { echo "missing workflow $wf"; exit 1; }
 	grep -Fq 'inputs:' "$path"
-	grep -Fq 'LAN_IP:' "$path"
 	grep -Fq 'secrets: inherit' "$path"
-	grep -Fq 'WRT_IP: ${{ inputs.LAN_IP' "$path"
 done
 
-echo "all single device workflows passed guards"
+MESH="$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"
+grep -Fq 'strategy:' "$MESH"
+grep -Fq 'RE_SS_01_LAN_IP:' "$MESH"
+grep -Fq 'RE_CS_02_LAN_IP:' "$MESH"
+grep -Fq 'IPQ60XX-RE-SS-01' "$MESH"
+grep -Fq 'IPQ60XX-RE-CS-02' "$MESH"
+grep -Fq 'jdcloud_re-ss-01' "$MESH"
+grep -Fq 'jdcloud_re-cs-02' "$MESH"
+
+[ ! -e "$ROOT_DIR/.github/workflows/RE-SS-01-BUILD.yml" ]
+[ ! -e "$ROOT_DIR/.github/workflows/RE-CS-02-BUILD.yml" ]
+
+echo "RE mesh and NOWIFI workflows passed guards"

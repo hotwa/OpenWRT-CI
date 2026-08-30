@@ -360,7 +360,6 @@ jobs:
       - name: Initialization Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
-          echo "WRT_CACHE_DATE=$(TZ=UTC-8 date +"%y.%m.%d")" >> $GITHUB_ENV
           echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
           echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
           WRT_INFO_VALUE="${WRT_SOURCE%%/*}"
@@ -428,7 +427,36 @@ jobs:
             bash "$test_file"
           done
 
+      - name: Compute Build Cache Identity
+        run: |
+          set -euo pipefail
+          device_config="$GITHUB_WORKSPACE/Config/${WRT_CONFIG}.txt"
+          cache_inputs=(
+            "$GITHUB_WORKSPACE/repo_flag"
+            "$GITHUB_WORKSPACE/Config/GENERAL.txt"
+            "$device_config"
+            "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+            "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+          )
+
+          for cache_input in "${cache_inputs[@]}"; do
+            [ -s "$cache_input" ] || {
+              echo "ERROR: cache identity input is missing: $cache_input" >&2
+              exit 1
+            }
+          done
+
+          cache_scope="$(sha256sum "${cache_inputs[@]}" | sha256sum | awk '{print $1}')" || {
+            echo "ERROR: failed to compute the build cache identity" >&2
+            exit 1
+          }
+          cache_key="${WRT_ARCH}-${cache_scope}"
+          echo "WRT_CACHE_KEY=$cache_key" >> "$GITHUB_ENV"
+          echo "Build cache identity: $cache_key"
+
       - name: Cache Dependencies
+        id: cache_dependencies
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
@@ -436,9 +464,7 @@ jobs:
             ./wrt/staging_dir
             ./wrt/dl/go-mod-cache
             ./wrt/tmp/go-build
-          key: ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-${{ env.WRT_CACHE_DATE }}
-          restore-keys: |
-            ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}-
+          key: ${{ env.WRT_CACHE_KEY }}
 
       - name: Refresh the cache
         run: |
@@ -630,18 +656,11 @@ jobs:
 
       - name: Delete Old Cache
         run: |
-          # 获取缓存列表并删除；缓存清理失败不应阻断已完成的构建
-          cache_keys="$(gh cache list --key ${{ env.WRT_ARCH }}-${{ hashFiles('repo_flag') }}- --json key --jq '.[] | .key')" || {
-            echo "WARN: failed to list caches"
-            cache_keys=""
-          }
-
-          if [ -n "$cache_keys" ]; then
-            printf '%s\n' "$cache_keys" | while read -r key; do
-              [ -n "$key" ] || continue
-              gh cache delete "$key" || echo "WARN: failed to delete cache $key"
-            done
-          fi
+          # Cache entries are immutable. Remove only this completed build's
+          # identity so actions/cache saves its refreshed ccache/staging data
+          # in the post step. Do not evict other device profiles from a matrix.
+          gh cache delete "$WRT_CACHE_KEY" || \
+            echo "INFO: no existing cache entry to refresh for $WRT_CACHE_KEY"
 
           # 输出缓存状态
           echo "========cache status========"
