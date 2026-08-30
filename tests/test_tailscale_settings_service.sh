@@ -5,11 +5,21 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAILSCALE_CONFIG="$ROOT_DIR/files/etc/config/tailscale"
 TAILSCALE_FALLBACK="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallback"
 TAILSCALE_SETTINGS_ENABLE="$ROOT_DIR/files/etc/uci-defaults/94-tailscale-settings-enable"
+TAILSCALE_SETTINGS_DISABLE="$ROOT_DIR/files/etc/uci-defaults/95-tailscale-settings-disable"
 
 [ -f "$TAILSCALE_CONFIG" ] || { echo "missing tailscale config overlay"; exit 1; }
 [ -f "$TAILSCALE_FALLBACK" ] || { echo "missing tailscale fallback defaults"; exit 1; }
 [ ! -e "$TAILSCALE_SETTINGS_ENABLE" ] || {
   echo "tailscale-settings enable defaults should be absent so the reconciler stays opt-in"
+  exit 1
+}
+[ -f "$TAILSCALE_SETTINGS_DISABLE" ] || {
+  echo "missing tailscale-settings disable defaults"
+  exit 1
+}
+
+grep -Fq '/etc/init.d/tailscale-settings disable' "$TAILSCALE_SETTINGS_DISABLE" || {
+  echo "tailscale-settings disable defaults do not keep the reconciler opt-in"
   exit 1
 }
 

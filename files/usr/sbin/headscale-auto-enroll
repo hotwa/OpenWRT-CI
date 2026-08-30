@@ -28,6 +28,18 @@ bool_arg() {
 	esac
 }
 
+# luci-app-tailscale's optional reconciler starts after this service.  Its
+# current OpenWrt implementation invokes tailscaled --cleanup whenever it
+# starts the main service, which can remove tailscale0's address and table 52
+# routes while the already-running daemon is not recreated.  Enrollment owns
+# these preferences, so keep that reconciler opt-in and out of this boot path.
+disable_tailscale_settings_reconciler() {
+	local settings_init="/etc/init.d/tailscale-settings"
+
+	[ -x "$settings_init" ] || return 0
+	"$settings_init" disable >/dev/null 2>&1
+}
+
 is_ipv4() {
 	local ip="$1" octet
 	local old_ifs="$IFS"
@@ -465,6 +477,9 @@ main() {
 
 	command -v tailscale >/dev/null 2>&1 || { log "tailscale command not found"; exit 0; }
 	acquire_enroll_lock || exit 0
+	if ! disable_tailscale_settings_reconciler; then
+		log "warning: could not disable optional tailscale-settings reconciler"
+	fi
 
 	login_server="$(cfg login_server https://headscale.jmsu.top)"
 	auth_key_file="$(cfg auth_key_file /etc/tailscale/headscale.authkey)"

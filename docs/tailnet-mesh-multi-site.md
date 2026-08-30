@@ -78,6 +78,13 @@ and prefix from ubus, with UCI as a fallback. The advertised route must exactly
 equal that active LAN prefix and must remain within `/24`-`/30`. This validation
 runs both for new enrollment and `tailscale set` on an already-enrolled node.
 
+For a `192.168.0.0/16` multi-site plan, assign each router one unique `/24` and
+approve that exact CIDR for that router's site tag. A router must never
+advertise the whole `/16`: that would overlap every other site and turn a
+single compromised router into a route for the entire private address pool.
+With `accept_routes=1` and the private-Mesh forwardings enabled, every
+controller-approved site `/24` is reachable in both directions after flash.
+
 The wrtbak gate remains authoritative: restored Tailscale state is reloaded
 before a new key is consumed. Successful new, restored and already-enrolled
 paths all remove a residual writable auth-key file and reapply DNS/Nikki health

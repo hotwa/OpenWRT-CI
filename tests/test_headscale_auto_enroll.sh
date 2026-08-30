@@ -131,6 +131,16 @@ grep -q 'tailscale set' "$SCRIPT" || {
   exit 1
 }
 
+grep -q 'disable_tailscale_settings_reconciler' "$SCRIPT" || {
+  echo "script does not disable the optional tailscale-settings reconciler"
+  exit 1
+}
+
+grep -Fq '"$settings_init" disable' "$SCRIPT" || {
+  echo "script does not keep the tailscale-settings reconciler opt-in"
+  exit 1
+}
+
 grep -q 'tailscale already enrolled; runtime preferences applied' "$SCRIPT" || {
   echo "script does not log runtime preference application on already-enrolled nodes"
   exit 1

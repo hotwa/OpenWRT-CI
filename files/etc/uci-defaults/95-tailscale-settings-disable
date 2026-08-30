@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Keep luci-app-tailscale's reconciler opt-in.  On current package versions it
+# runs tailscaled --cleanup during service start; a still-running daemon can
+# then lose tailscale0's address and policy routes until a full restart.
+if [ -x /etc/init.d/tailscale-settings ]; then
+	/etc/init.d/tailscale-settings disable >/dev/null 2>&1 || true
+fi
+
+exit 0

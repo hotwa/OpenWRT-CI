@@ -9,6 +9,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
 - The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Its private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
+- Keep the optional `tailscale-settings` LuCI reconciler disabled. Its current package service runs `tailscaled --cleanup` during service startup; with an already-running daemon this can remove `tailscale0`'s address and table 52 routes. `headscale-auto-enroll` owns the persistent `tailscale set` preferences instead.
 
 ## Files
 
@@ -18,6 +19,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
 - `/etc/tailscale/headscale.authkey` is the optional one-line auth key file.
 - `/etc/tailscale/auto-enroll.done` marks a successful enrollment.
+- `/etc/uci-defaults/95-tailscale-settings-disable` prevents the optional LuCI reconciler from being enabled at first boot; the auto-enroll script applies the same defensive disable for sysupgrade remnants.
 - `/root/wrtbak/firstboot/gate.json` is the wrtbak recovery gate used to stop a factory image from registering a temporary node before a saved Tailscale state has been restored.
 - `/etc/uci-defaults/90-tailscale-dropbear-access` keeps Dropbear reachable through `tailscale0` and creates a fw4 `tailscale` zone with router input allowed and forwarding rejected.
 - `/etc/dropbear/authorized_keys` can be injected into private firmware builds through GitHub Actions.
