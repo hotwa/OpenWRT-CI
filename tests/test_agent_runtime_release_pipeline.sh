@@ -82,6 +82,38 @@ if (!/^[a-f0-9]{64}$/.test(provenance.source_sha256['package.json'])) process.ex
 if (!/^[a-f0-9]{64}$/.test(m.critical_elf_sha256['node/bin/node'])) process.exit(7);
 NODE
 
+# The current finalized manifest intentionally uses `architecture`; jsonfilter
+# returns success for a missing legacy `arch` path, so the compatibility check
+# must fall back on empty output rather than shell status alone.
+MANAGER="$ROOT_DIR/files/usr/sbin/agent-runtime"
+RUNTIME_FIXTURE="$WORK/runtime-health"
+mkdir -p "$RUNTIME_FIXTURE/node/bin" "$RUNTIME_FIXTURE/uv" "$RUNTIME_FIXTURE/bin"
+printf '#!/bin/sh\nprintf "137\\n"\n' >"$RUNTIME_FIXTURE/node/bin/node"
+printf '#!/bin/sh\nexit 0\n' >"$RUNTIME_FIXTURE/uv/uv"
+printf '#!/bin/sh\nexit 0\n' >"$RUNTIME_FIXTURE/bin/multica"
+chmod 755 "$RUNTIME_FIXTURE/node/bin/node" "$RUNTIME_FIXTURE/uv/uv" "$RUNTIME_FIXTURE/bin/multica"
+cat >"$RUNTIME_FIXTURE/manifest.json" <<'EOF'
+{"architecture":"arm64","libc":"musl","runtime_contract":{"node_abi":137}}
+EOF
+sed '/^case "\$#" in$/,$d' "$MANAGER" >"$WORK/agent-runtime-lib.sh"
+(
+  set -u
+  AGENT_RUNTIME_BASELINE="$RUNTIME_FIXTURE"
+  # shellcheck disable=SC1090
+  . "$WORK/agent-runtime-lib.sh"
+  machine_arch() { printf '%s' arm64; }
+  jsonfilter() {
+    case "${4:-}" in
+      '@.arch') return 0 ;;
+      '@.architecture') printf '%s\n' arm64 ;;
+      '@.libc') printf '%s\n' musl ;;
+      '@.runtime_contract.node_abi') printf '%s\n' 137 ;;
+      *) return 1 ;;
+    esac
+  }
+  manifest_compatible "$RUNTIME_FIXTURE"
+) || fail "agent-runtime rejects a canonical architecture-only manifest"
+
 cp -a "$WORK/generation" "$WORK/generation-x64"
 sed -i 's/"architecture":"arm64"/"architecture":"x64"/' "$WORK/generation-x64/hermes-core.json"
 bash "$PACKAGE" --source "$WORK/generation-x64" --output "$WORK/release" --arch x64 --runtime-release 42 >/dev/null

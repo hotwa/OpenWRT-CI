@@ -40,6 +40,37 @@ for term in \
   grep -q "$term" "$BUILDER" || { echo "Core builder missing gate: $term"; exit 1; }
 done
 
+# `uv venv` writes its interpreter as an absolute link into the build overlay.
+# The final image needs the corresponding immutable /opt link, but rebasing it
+# before qemu verification would make it unavailable on the CI host. Exercise
+# the extracted helper with a realistic staging-layout fixture.
+grep -q 'rebase_venv_python_link' "$BUILDER" || {
+  echo "Core builder does not rebase the staged Python symlink"
+  exit 1
+}
+LINK_FIXTURE="$(mktemp -d)"
+mkdir -p "$LINK_FIXTURE/files/opt/uv/python/cpython-3.11.16-linux-aarch64-musl/bin" \
+  "$LINK_FIXTURE/files/opt/node/runtime/venv/bin"
+printf '#!/bin/sh\nexit 0\n' >"$LINK_FIXTURE/files/opt/uv/python/cpython-3.11.16-linux-aarch64-musl/bin/python3.11"
+chmod 0755 "$LINK_FIXTURE/files/opt/uv/python/cpython-3.11.16-linux-aarch64-musl/bin/python3.11"
+ln -s "$LINK_FIXTURE/files/opt/uv/python/cpython-3.11.16-linux-aarch64-musl/bin/python3.11" \
+  "$LINK_FIXTURE/files/opt/node/runtime/venv/bin/python"
+sed -n '/^rebase_venv_python_link() {/,/^}/p' "$BUILDER" >"$LINK_FIXTURE/rebase.sh"
+(
+  die() { echo "unexpected rebase failure: $*" >&2; exit 1; }
+  TARGET_FILES="$LINK_FIXTURE/files"
+  VENV_DIR="$LINK_FIXTURE/files/opt/node/runtime/venv"
+  # shellcheck disable=SC1090
+  . "$LINK_FIXTURE/rebase.sh"
+  rebase_venv_python_link
+)
+[ "$(readlink "$LINK_FIXTURE/files/opt/node/runtime/venv/bin/python")" = \
+  '/opt/uv/python/cpython-3.11.16-linux-aarch64-musl/bin/python3.11' ] || {
+  echo "Core builder kept a staging-only Python interpreter symlink"
+  exit 1
+}
+rm -rf "$LINK_FIXTURE"
+
 # A fixture proves the source/layout checks fail before creating a runtime when
 # the offline CPython contract is absent. It does not need an actual target ELF.
 FIXTURE="$(mktemp -d)"

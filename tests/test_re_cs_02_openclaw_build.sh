@@ -20,11 +20,11 @@ grep -q '^CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-
 for setting in CONFIG_ATH11K_MEM_PROFILE_512M=y CONFIG_NSS_FIRMWARE_VERSION_12_2=y CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y CONFIG_PACKAGE_kmod-fs-ext4=y CONFIG_PACKAGE_kmod-usb-storage=y; do
 	grep -qx "$setting" "$CONFIG"
 done
-grep -qx 'CONFIG_PACKAGE_luci-app-openclaw=y' "$GENERAL"
-if grep -q '^CONFIG_PACKAGE_luci-app-openclaw=y$' "$CONFIG"; then
-	echo "OpenClaw must be inherited from GENERAL.txt"
+if grep -q '^CONFIG_PACKAGE_luci-app-openclaw=y$' "$GENERAL"; then
+	echo "OpenClaw must not be enabled by GENERAL.txt"
 	exit 1
 fi
+grep -qx 'CONFIG_PACKAGE_luci-app-openclaw=y' "$CONFIG"
 
 grep -Fq 'name: RE-CS-02 OpenClaw Build Only' "$WORKFLOW"
 grep -Fq 'workflow_dispatch:' "$WORKFLOW"
@@ -37,6 +37,7 @@ grep -Fq 'WRT_SPLIT_DEVICE_ARTIFACTS: false' "$WORKFLOW"
 grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_REQUIRED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
 grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$WORKFLOW"
+grep -Fq 'WRT_OPENCLAW: true' "$WORKFLOW"
 grep -Fq "WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'" "$WORKFLOW"
 grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.11.1'\'' }}' "$WORKFLOW"
 if grep -Fq 'WRT_WORD:' "$WORKFLOW"; then

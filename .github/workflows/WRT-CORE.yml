@@ -64,6 +64,10 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_OPENCLAW:
+        required: false
+        type: boolean
+        default: false
       WRT_CPE_5G:
         required: false
         type: boolean
@@ -199,6 +203,7 @@ env:
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_EMMC_DATA_PROVISIONING: ${{inputs.WRT_EMMC_DATA_PROVISIONING}}
+  WRT_OPENCLAW: ${{inputs.WRT_OPENCLAW}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}

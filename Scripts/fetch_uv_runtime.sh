@@ -168,7 +168,12 @@ download_uv_binary() (
 		echo "ERROR: failed to locate extracted uv binary for $uv_target" >&2
 		return 1
 	}
-	install -m 0755 "$uv_binary" "$UV_BIN_DIR/uv"
+	# The immutable agent-runtime baseline and signed generations carry /opt/uv,
+	# while the OpenWrt command path is /usr/bin/uv. Keep one inode in the
+	# overlay so both paths stay executable without an escaping symlink.
+	install -m 0755 "$uv_binary" "$UV_ROOT_DIR/uv"
+	rm -f "$UV_BIN_DIR/uv"
+	ln "$UV_ROOT_DIR/uv" "$UV_BIN_DIR/uv"
 )
 
 prepare_mirror_manifest() {

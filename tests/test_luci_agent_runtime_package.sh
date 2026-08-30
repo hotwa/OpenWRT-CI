@@ -21,8 +21,8 @@ grep -q 'Agent Runtime' "$VIEW"
 grep -q 'Baked baseline' "$VIEW"
 grep -q 'Latest signed release' "$VIEW"
 grep -q 'Components and runtime contract' "$VIEW"
-grep -q 'OpenClaw is managed separately' "$VIEW"
-grep -q "L.url('admin/services/openclaw')" "$VIEW"
+! grep -q 'OpenClaw is managed separately' "$VIEW"
+! grep -q "admin/services/openclaw" "$VIEW"
 
 # The ubus API must remain a fixed allow-list, with no generic execute endpoint.
 for action in status list check upgrade rollback verify gc job_status operation_log; do

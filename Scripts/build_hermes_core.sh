@@ -77,6 +77,26 @@ elf_machine_id() {
   printf '%s\n' "$((lo + hi * 256))"
 }
 
+# uv creates the virtual-environment interpreter as an absolute symlink into
+# the staging overlay. Text-file normalization below cannot rewrite a symlink,
+# so rebase it only after all target-execution gates have completed. Keeping
+# the build-host link intact until then is required for qemu to execute it.
+rebase_venv_python_link() {
+  local resolved image_target
+  resolved="$(readlink -f "$VENV_DIR/bin/python" 2>/dev/null || true)"
+  case "$resolved" in
+    "$TARGET_FILES"/opt/uv/python/*/bin/python*) ;;
+    *) die "Hermes Core Python interpreter is outside the staged /opt/uv prefix" ;;
+  esac
+  [ -x "$resolved" ] || die "Hermes Core Python interpreter is not executable before rebasing"
+  image_target="${resolved#"$TARGET_FILES"}"
+  case "$image_target" in /opt/uv/python/*/bin/python*) ;; *) die "invalid rebased Hermes Core Python path" ;; esac
+  rm -f "$VENV_DIR/bin/python"
+  ln -s "$image_target" "$VENV_DIR/bin/python"
+  [ "$(readlink "$VENV_DIR/bin/python" 2>/dev/null || true)" = "$image_target" ] ||
+    die "failed to rebase Hermes Core Python interpreter"
+}
+
 json_value() {
   local expression="$1"
   if command -v node >/dev/null 2>&1; then
@@ -270,6 +290,10 @@ target_uv_version="$(target_exec "$UV_BIN" --version | awk '{print $2}')"
 target_exec "$VENV_DIR/bin/python" -c 'import hermes_cli.main' >/dev/null
 target_exec "$VENV_DIR/bin/python" "$VENV_DIR/bin/hermes" --version >/dev/null
 
+# Target checks above deliberately ran through the staging path. Ship the
+# interpreter link with the immutable image path so first boot has no CI path.
+rebase_venv_python_link
+
 # `uv venv` has now expanded the exact 3.11 interpreter into the shared
 # /opt/uv/python prefix. Keeping its install_only archive in python-mirror
 # would ship the same interpreter twice.  Keep the other pinned series for
@@ -298,7 +322,7 @@ rmdir "$MIRROR_DIR/$mirror_build" 2>/dev/null || true
 sed -i "/^${python_series}[[:space:]]/d" "$MIRROR_DIR/manifest.txt"
 
 core_lock_sha256="$(sha256sum "$RUNTIME_DIR/uv.lock" | awk '{print $1}')"
-python_sha256="$(sha256sum "$VENV_DIR/bin/python" | awk '{print $1}')"
+python_sha256="$(sha256sum "$python_target" | awk '{print $1}')"
 mkdir -p "$METADATA_DIR"
 cat >"$METADATA_FILE" <<EOF
 {

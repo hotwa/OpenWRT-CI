@@ -170,10 +170,8 @@ return view.extend({
 			generationBox,
 			E('h3', {}, _('Operation log (last 16 KiB)')),
 			jobBox,
-			E('p', { 'class': 'cbi-section-descr' }, [
-				_('OpenClaw is managed separately. '),
-				E('a', { 'href': L.url('admin/services/openclaw') }, _('Open OpenClaw management'))
-			])
+			E('p', { 'class': 'cbi-section-descr' },
+				_('This page manages only signed agent-runtime generations.'))
 		]);
 	},
 

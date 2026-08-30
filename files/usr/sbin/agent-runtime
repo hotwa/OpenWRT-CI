@@ -215,7 +215,10 @@ manifest_compatible() {
 	local runtime="$1" manifest arch libc abi baseline_abi baseline_node
 	manifest="$runtime/manifest.json"
 	[ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
-	arch="$(json_value "$manifest" arch 2>/dev/null || json_value "$manifest" architecture 2>/dev/null || true)"
+	# jsonfilter reports success for a missing path with empty output, so an
+	# `||` fallback would never reach the canonical `architecture` field.
+	arch="$(json_value "$manifest" arch 2>/dev/null || true)"
+	[ -n "$arch" ] || arch="$(json_value "$manifest" architecture 2>/dev/null || true)"
 	libc="$(json_value "$manifest" libc 2>/dev/null || true)"
 	[ "$arch" = "$(machine_arch)" ] && [ "$libc" = musl ] || return 1
 	abi="$(json_value "$manifest" node_abi 2>/dev/null || true)"

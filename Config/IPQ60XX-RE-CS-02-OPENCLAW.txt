@@ -4,6 +4,7 @@ CONFIG_TARGET_qualcommax_ipq60xx=y
 CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
 CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02="ipq-wifi-jdcloud_re-cs-02 kmod-ath11k-pci athena-led luci-app-athena-led"
+CONFIG_PACKAGE_luci-app-openclaw=y
 
 # NSS and 512 MiB Wi-Fi memory profile
 CONFIG_ATH11K_MEM_PROFILE_512M=y

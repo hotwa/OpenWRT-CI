@@ -59,6 +59,18 @@ grep -q 'uv-x86_64-unknown-linux-musl' "$FETCH_SCRIPT" || {
   exit 1
 }
 
+# Agent-runtime generations contain /opt/uv rather than /usr/bin. The staged
+# uv executable must therefore live in /opt/uv, with /usr/bin/uv a hard link;
+# an absolute symlink would be invalid inside signed generation archives.
+grep -q '"\$UV_ROOT_DIR/uv"' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not stage uv inside /opt/uv for generations"
+  exit 1
+}
+grep -q 'ln "\$UV_ROOT_DIR/uv" "\$UV_BIN_DIR/uv"' "$FETCH_SCRIPT" || {
+  echo "fetch_uv_runtime.sh does not hard-link the command-path uv binary"
+  exit 1
+}
+
 grep -q 'UV_PYTHON_INSTALL_MIRROR' "$FETCH_SCRIPT" || {
   echo "fetch_uv_runtime.sh does not prepare a local Python install mirror"
   exit 1
