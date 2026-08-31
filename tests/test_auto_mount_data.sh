@@ -45,7 +45,20 @@ run_fixture() {
 		AUTO_MOUNT_LOCK_BASE="$case_root/lock" \
 		AUTO_MOUNT_BLOCK_INFO="$case_root/block.info" \
 		AUTO_MOUNT_FSTAB_RECORD="$case_root/fstab.record" \
+		AUTO_MOUNT_DATA_BOARD_FILE="$case_root/board" \
+		AUTO_MOUNT_LEGACY_APPROVAL_FILE="$case_root/legacy-approved" \
 		"$@" sh "$SCRIPT"
+}
+
+approve_legacy_p27() {
+	local case_root="$1" fstype="${2:-ext4}"
+	printf '%s\n' \
+		'disk=/dev/mmcblk0' \
+		'number=27' \
+		'partlabel=data' \
+		'uuid=legacy-uuid' \
+		'partuuid=legacy-part' \
+		"fstype=$fstype" >"$case_root/legacy-approved"
 }
 
 # No opted-in candidate: a generic userdata partition must be ignored.
@@ -136,6 +149,68 @@ grep -Fxq 'uuid=ok-uuid' "$CASE_OK/fstab.record" || {
 	echo "fstab fixture was not persisted by filesystem UUID"
 	exit 1
 }
+
+# A previously formatted JDCloud p27 with the historical GPT PARTLABEL=data
+# must be adopted once, but only on the reviewed boards. Its anonymous
+# /mnt/mmcblk0p27 mount is detached before the UUID-backed /data mount.
+CASE_LEGACY="$TMP_ROOT/legacy-p27"
+mkdir -p "$CASE_LEGACY/root"
+printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_LEGACY/board"
+printf '%s\n' '/dev/mmcblk0p27 /mnt/mmcblk0p27 ext4 rw 0 0' >"$CASE_LEGACY/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY/block.info"
+approve_legacy_p27 "$CASE_LEGACY"
+run_fixture "$CASE_LEGACY"
+grep -Fq "/dev/mmcblk0p27 $CASE_LEGACY/data ext4" "$CASE_LEGACY/mounts" || {
+	echo "reviewed legacy p27 was not mounted at /data"
+	exit 1
+}
+if grep -Fq '/mnt/mmcblk0p27' "$CASE_LEGACY/mounts"; then
+	echo "legacy anonymous p27 mount was not safely detached"
+	exit 1
+fi
+grep -Fxq 'uuid=legacy-uuid' "$CASE_LEGACY/fstab.record" || {
+	echo "legacy p27 was not persisted by UUID"
+	exit 1
+}
+
+# The same label is never a generic opt-in. It must not be touched on another
+# board or when it is mounted at an administrator-chosen path.
+CASE_LEGACY_BOARD="$TMP_ROOT/legacy-wrong-board"
+mkdir -p "$CASE_LEGACY_BOARD/root"
+printf '%s\n' 'generic,unsafe' >"$CASE_LEGACY_BOARD/board"
+: >"$CASE_LEGACY_BOARD/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_BOARD/block.info"
+if run_fixture "$CASE_LEGACY_BOARD"; then
+	echo "legacy p27 was accepted on an unreviewed board"
+	exit 1
+fi
+
+CASE_LEGACY_BUSY="$TMP_ROOT/legacy-busy"
+mkdir -p "$CASE_LEGACY_BUSY/root"
+printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_LEGACY_BUSY/board"
+printf '%s\n' '/dev/mmcblk0p27 /mnt/administrator-data ext4 rw 0 0' >"$CASE_LEGACY_BUSY/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_BUSY/block.info"
+approve_legacy_p27 "$CASE_LEGACY_BUSY"
+if run_fixture "$CASE_LEGACY_BUSY"; then
+	echo "administrator-mounted legacy p27 was remounted"
+	exit 1
+fi
+[ ! -e "$CASE_LEGACY_BUSY/data/multica" ] || {
+	echo "busy legacy p27 caused state migration"
+	exit 1
+}
+
+# A p27 with the old label but no approval bound to its UUID/PARTUUID is not
+# sufficient to migrate state. This catches a copied or unexpected layout.
+CASE_LEGACY_UNAPPROVED="$TMP_ROOT/legacy-unapproved"
+mkdir -p "$CASE_LEGACY_UNAPPROVED/root"
+printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_LEGACY_UNAPPROVED/board"
+: >"$CASE_LEGACY_UNAPPROVED/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_UNAPPROVED/block.info"
+if run_fixture "$CASE_LEGACY_UNAPPROVED"; then
+	echo "unapproved legacy p27 was adopted"
+	exit 1
+fi
 
 for setting in 'PNPM_HOME=/data/pnpm/bin' 'PNPM_STORE_DIR=/data/pnpm/store' 'npm_config_cache=/data/npm'; do
 grep -Fq "$setting" "$PROFILE" || {

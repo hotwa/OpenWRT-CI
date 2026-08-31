@@ -82,6 +82,11 @@ write_table() {
 		"  26         3125282         $last_end   512.0 MiB  FFFF  swap" >"$path"
 }
 
+append_reviewed_p27() {
+	local path="$1"
+	printf '%s\n' '  27         4175872        15269854   5.3 GiB    8300  data' >>"$path"
+}
+
 run_fixture() {
 	local case_root="$1"
 	shift
@@ -96,6 +101,7 @@ run_fixture() {
 		EMMC_DATA_MOUNTS_FILE="$case_root/mounts" \
 		EMMC_DATA_OVERLAY_DIR="$case_root/overlay" \
 		EMMC_DATA_PENDING_FILE="$case_root/overlay/pending" \
+		EMMC_DATA_FAILED_FILE="$case_root/overlay/failed" \
 		EMMC_DATA_TEST_TABLE_FILE="$case_root/table" \
 		EMMC_DATA_TEST_STATE_DIR="$case_root/state" \
 		"$@" sh "$SCRIPT"
@@ -228,6 +234,162 @@ EMMC_DATA_TEST_EXISTING_DATA=1 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=1
 	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_EXISTING"
 [ ! -e "$CASE_EXISTING/state/sgdisk.calls" ] && [ ! -e "$CASE_EXISTING/state/mkfs.calls" ] || {
 	echo "existing openwrt-data storage was touched"
+	exit 1
+}
+
+# A real legacy p27 may be formatted ext4 but have only the historical GPT
+# PARTLABEL=data. The provisioner must leave it intact for UUID migration,
+# never attempt a new tail partition or rewrite its filesystem.
+CASE_LEGACY="$TMP_ROOT/legacy-p27"
+setup_case "$CASE_LEGACY" jdcloud,re-cs-02 4173857
+append_reviewed_p27 "$CASE_LEGACY/table"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=ext4 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_LEGACY"
+
+if [ -e "$CASE_LEGACY/state/sgdisk.calls" ] && \
+	grep -Eq -- '--backup=|--new=|^-e( |$)' "$CASE_LEGACY/state/sgdisk.calls"; then
+	echo "healthy legacy p27 reached a GPT mutation path"
+	exit 1
+fi
+[ ! -e "$CASE_LEGACY/state/mkfs.calls" ] || {
+	echo "healthy legacy p27 was formatted"
+	exit 1
+}
+[ -f "$CASE_LEGACY/overlay/.emmc-data-provision.legacy-p27-approved" ] || {
+	echo "healthy legacy p27 was not approved for UUID migration"
+	exit 1
+}
+
+CASE_LEGACY_BAD_TYPE="$TMP_ROOT/legacy-p27-bad-gpt-type"
+setup_case "$CASE_LEGACY_BAD_TYPE" jdcloud,re-cs-02 4173857
+append_reviewed_p27 "$CASE_LEGACY_BAD_TYPE/table"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=ext4 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=FFFF \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_LEGACY_BAD_TYPE"
+[ ! -e "$CASE_LEGACY_BAD_TYPE/overlay/.emmc-data-provision.legacy-p27-approved" ] || {
+	echo "legacy p27 with an unreviewed GPT type was approved"
+	exit 1
+}
+[ ! -e "$CASE_LEGACY_BAD_TYPE/state/mkfs.calls" ] || {
+	echo "legacy p27 with an unreviewed GPT type was formatted"
+	exit 1
+}
+
+# A completely raw reviewed p27 is the one repairable case: it is initialized
+# once as ext4/openwrt-data. A non-ext4/f2fs filesystem is ambiguous and must
+# remain untouched.
+CASE_RAW="$TMP_ROOT/raw-p27"
+setup_case "$CASE_RAW" jdcloud,re-cs-07 4173857
+append_reviewed_p27 "$CASE_RAW/table"
+EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=8300 run_fixture "$CASE_RAW"
+grep -Fq -- '-F -L openwrt-data' "$CASE_RAW/state/mkfs.calls" || {
+	echo "raw reviewed p27 was not initialized"
+	exit 1
+}
+
+CASE_UNKNOWN_FS="$TMP_ROOT/unknown-p27-filesystem"
+setup_case "$CASE_UNKNOWN_FS" jdcloud,re-ss-01 4173857
+append_reviewed_p27 "$CASE_UNKNOWN_FS/table"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=xfs EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNKNOWN_FS"
+if [ -e "$CASE_UNKNOWN_FS/state/sgdisk.calls" ] && \
+	grep -Eq -- '--backup=|--new=|^-e( |$)' "$CASE_UNKNOWN_FS/state/sgdisk.calls"; then
+	echo "unknown legacy filesystem reached a GPT mutation path"
+	exit 1
+fi
+[ ! -e "$CASE_UNKNOWN_FS/state/mkfs.calls" ] || {
+	echo "unknown legacy filesystem was reformatted"
+	exit 1
+}
+
+# A hung mkfs is not retried automatically. The provisioner records a local
+# failure marker and exits successfully so uci-defaults does not schedule a
+# destructive repeat on every reboot or sysupgrade.
+CASE_TIMEOUT="$TMP_ROOT/raw-p27-timeout"
+setup_case "$CASE_TIMEOUT" jdcloud,re-ss-01 4173857
+append_reviewed_p27 "$CASE_TIMEOUT/table"
+EMMC_DATA_TEST_FORMAT_TIMEOUT=1 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_TIMEOUT"
+grep -Fxq 'reason=mkfs-timeout' "$CASE_TIMEOUT/overlay/failed" || {
+	echo "timed-out p27 initialization was not recorded as non-retryable"
+	exit 1
+}
+[ ! -e "$CASE_TIMEOUT/state/mkfs.calls" ] || {
+	echo "timed-out p27 initialization continued formatting"
+	exit 1
+}
+EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=8300 run_fixture "$CASE_TIMEOUT"
+[ ! -e "$CASE_TIMEOUT/state/mkfs.calls" ] || {
+	echo "timed-out p27 initialization retried on a later boot"
+	exit 1
+}
+
+# The same deadline handling also applies to a newly-created tail partition.
+# Its exact pending marker remains for diagnosis, while the failed marker
+# blocks any automatic formatter retry on later boot.
+CASE_NEW_TIMEOUT="$TMP_ROOT/new-p27-timeout"
+setup_case "$CASE_NEW_TIMEOUT" jdcloud,re-cs-02 4173857
+EMMC_DATA_TEST_FORMAT_TIMEOUT=1 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_DEVICE_READY=1 EMMC_DATA_TEST_NEW_PARTITION_APPEARS=1 \
+	run_fixture "$CASE_NEW_TIMEOUT"
+grep -Fxq 'reason=mkfs-timeout' "$CASE_NEW_TIMEOUT/overlay/failed" || {
+	echo "timed-out new partition initialization was not recorded"
+	exit 1
+}
+[ -f "$CASE_NEW_TIMEOUT/overlay/pending" ] || {
+	echo "timed-out new partition lost its exact pending geometry record"
+	exit 1
+}
+[ ! -e "$CASE_NEW_TIMEOUT/state/mkfs.calls" ] || {
+	echo "timed-out new partition initialization continued formatting"
+	exit 1
+}
+
+# A GPT read/probe failure or a tail p27 that begins after an unexpected gap
+# is ambiguous. Neither condition may reach mkfs.
+CASE_BLKID_FAILURE="$TMP_ROOT/p27-blkid-failure"
+setup_case "$CASE_BLKID_FAILURE" jdcloud,re-ss-01 4173857
+append_reviewed_p27 "$CASE_BLKID_FAILURE/table"
+if EMMC_DATA_TEST_BLKID_FAILURE=1 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_BLKID_FAILURE"; then
+	echo "blkid probe failure was treated as a raw partition"
+	exit 1
+fi
+[ ! -e "$CASE_BLKID_FAILURE/state/mkfs.calls" ] || {
+	echo "blkid probe failure formatted p27"
+	exit 1
+}
+
+CASE_GAPPED="$TMP_ROOT/p27-gapped"
+setup_case "$CASE_GAPPED" jdcloud,re-cs-07 4173857
+printf '%s\n' '  27         4177920        15269854   5.3 GiB    8300  data' >>"$CASE_GAPPED/table"
+EMMC_DATA_TEST_START=4177920 EMMC_DATA_TEST_END=15269854 EMMC_DATA_TEST_INFO_NAME=data \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_GAPPED"
+[ ! -e "$CASE_GAPPED/state/mkfs.calls" ] || {
+	echo "gapped legacy p27 was formatted"
+	exit 1
+}
+
+# The timeout test uses an exec-style long-running mkfs stand-in. The 1s
+# deadline must terminate that real child quickly, not merely a parent shell.
+CASE_REAL_TIMEOUT="$TMP_ROOT/p27-real-timeout"
+setup_case "$CASE_REAL_TIMEOUT" jdcloud,re-ss-01 4173857
+append_reviewed_p27 "$CASE_REAL_TIMEOUT/table"
+timeout_started="$(date +%s)"
+EMMC_DATA_INIT_TIMEOUT_SECONDS=1 EMMC_DATA_TEST_MKFS_SLEEP=5 \
+	EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 EMMC_DATA_TEST_INFO_NAME=data \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_REAL_TIMEOUT"
+timeout_elapsed=$(( $(date +%s) - timeout_started ))
+[ "$timeout_elapsed" -lt 4 ] || {
+	echo "mkfs deadline did not terminate the exec child promptly"
+	exit 1
+}
+grep -Fxq 'reason=mkfs-timeout' "$CASE_REAL_TIMEOUT/overlay/failed" || {
+	echo "real mkfs timeout was not persisted"
 	exit 1
 }
 

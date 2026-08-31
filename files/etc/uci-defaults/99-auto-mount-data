@@ -13,6 +13,8 @@ LOCK_DIR="$LOCK_BASE/openwrt-data-mount.lock"
 BLOCK_INFO_FIXTURE="${AUTO_MOUNT_BLOCK_INFO:-}"
 FSTAB_RECORD="${AUTO_MOUNT_FSTAB_RECORD:-}"
 TESTING="${AUTO_MOUNT_DATA_TESTING:-0}"
+BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
+LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-p27-approved}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
@@ -67,6 +69,13 @@ valid_identifier() {
 	esac
 }
 
+supported_legacy_board() {
+	case "$1" in
+		jdcloud,re-ss-01|jdcloud,re-cs-02|jdcloud,re-cs-07) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 find_devices() {
 	local key="$1"
 	local expected="$2"
@@ -91,6 +100,46 @@ device_line() {
 			break
 		}
 	done
+}
+
+select_legacy_p27() {
+	local board line partlabel fstype fs_uuid partuuid
+	board="$(cat "$BOARD_FILE" 2>/dev/null || true)"
+	supported_legacy_board "$board" || return 1
+	line="$(device_line /dev/mmcblk0p27)"
+	[ -n "$line" ] || return 1
+	partlabel="$(attribute_from_line "$line" PARTLABEL)"
+	[ "$partlabel" = data ] || return 1
+	fstype="$(attribute_from_line "$line" TYPE)"
+	case "$fstype" in ext4|f2fs) ;; *) return 1 ;; esac
+	fs_uuid="$(attribute_from_line "$line" UUID)"
+	valid_identifier "$fs_uuid" || return 1
+	partuuid="$(attribute_from_line "$line" PARTUUID)"
+	valid_identifier "$partuuid" || return 1
+	legacy_p27_is_approved "$fs_uuid" "$partuuid" "$fstype" || return 1
+
+	# This is a one-time compatibility path for the reviewed end-of-disk p27
+	# layout. It is deliberately not a generic LABEL=data/userdata selector.
+	CANDIDATE_DEVICE=/dev/mmcblk0p27
+	CANDIDATE_FSTYPE="$fstype"
+	CANDIDATE_UUID="$fs_uuid"
+	log_error "adopting reviewed legacy p27 by filesystem UUID"
+}
+
+legacy_p27_is_approved() {
+	local uuid="$1" partuuid="$2" fstype="$3"
+	local disk number partlabel stored_uuid stored_partuuid stored_fstype
+	[ -f "$LEGACY_APPROVAL_FILE" ] || return 1
+	disk="$(sed -n 's/^disk=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	number="$(sed -n 's/^number=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	partlabel="$(sed -n 's/^partlabel=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	stored_uuid="$(sed -n 's/^uuid=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	stored_partuuid="$(sed -n 's/^partuuid=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	stored_fstype="$(sed -n 's/^fstype=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
+	[ "$disk" = /dev/mmcblk0 ] && [ "$number" = 27 ] && [ "$partlabel" = data ] || return 1
+	valid_identifier "$stored_uuid" && valid_identifier "$stored_partuuid" || return 1
+	[ "$stored_uuid" = "$uuid" ] && [ "$stored_partuuid" = "$partuuid" ] && \
+		[ "$stored_fstype" = "$fstype" ]
 }
 
 select_candidate() {
@@ -130,6 +179,10 @@ select_candidate() {
 	fi
 
 	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
+	if [ "$count" -eq 0 ] && [ -z "$requested_uuid" ] && \
+		[ -z "$requested_partuuid" ] && [ -z "$requested_label" ]; then
+		select_legacy_p27 && return 0
+	fi
 	if [ "$count" -ne 1 ]; then
 		log_error "expected exactly one opted-in data partition, found $count"
 		return 1
@@ -162,6 +215,30 @@ select_candidate() {
 	CANDIDATE_UUID="$fs_uuid"
 }
 
+candidate_mount_targets() {
+	awk -v expected="$CANDIDATE_DEVICE" '$1 == expected { print $2 }' "$MOUNTS_FILE" 2>/dev/null
+}
+
+detach_known_automount() {
+	local targets count target expected
+	targets="$(candidate_mount_targets)"
+	count="$(printf '%s\n' "$targets" | awk 'NF { count++ } END { print count + 0 }')"
+	[ "$count" -eq 0 ] && return 0
+	expected="/mnt/${CANDIDATE_DEVICE##*/}"
+	if [ "$count" -ne 1 ] || [ "$targets" != "$expected" ]; then
+		log_error "$CANDIDATE_DEVICE is already mounted outside its known anonymous mountpoint; refusing to remount"
+		return 1
+	fi
+	if [ "$TESTING" = "1" ]; then
+		[ "${AUTO_MOUNT_TEST_UMOUNT_FAIL:-0}" != "1" ] || return 1
+		awk -v source="$CANDIDATE_DEVICE" -v target="$expected" \
+			'!($1 == source && $2 == target)' "$MOUNTS_FILE" >"$MOUNTS_FILE.new.$$" || return 1
+		mv "$MOUNTS_FILE.new.$$" "$MOUNTS_FILE" || return 1
+		return 0
+	fi
+	umount "$expected"
+}
+
 mounted_source() {
 	awk -v target="$DATA_ROOT" '$2 == target { print $1; exit }' "$MOUNTS_FILE" 2>/dev/null
 }
@@ -181,6 +258,7 @@ source_matches_candidate() {
 
 mount_candidate() {
 	mkdir -p "$DATA_ROOT" || return 1
+	detach_known_automount || return 1
 	if [ "$TESTING" = "1" ]; then
 		[ "${AUTO_MOUNT_TEST_MOUNT_FAIL:-0}" != "1" ] || return 1
 		printf '%s %s %s rw,noatime 0 0\n' \

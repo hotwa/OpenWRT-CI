@@ -1,0 +1,34 @@
+#!/bin/sh
+# A pre-agent-runtime sysupgrade could retain this profile while the OpenClaw
+# helper it sources is no longer part of the image.  Remove only that proven
+# dangling shell hook; do not erase a user's old OpenClaw configuration or
+# credentials, which may still be needed for an explicit manual migration.
+
+set -u
+
+PROFILE="${RETIRED_OPENCLAW_PROFILE:-/etc/profile.d/openclaw.sh}"
+HELPER="${RETIRED_OPENCLAW_HELPER:-/usr/libexec/openclaw-paths.sh}"
+STALE_HELPER="/usr/libexec/openclaw-paths.sh"
+SYSUPGRADE_CONF="${RETIRED_OPENCLAW_SYSUPGRADE_CONF:-/etc/sysupgrade.conf}"
+SYSUPGRADE_ENTRY="${RETIRED_OPENCLAW_SYSUPGRADE_ENTRY:-$PROFILE}"
+
+[ -f "$PROFILE" ] || exit 0
+[ -e "$HELPER" ] && exit 0
+grep -Fq "$STALE_HELPER" "$PROFILE" || exit 0
+
+# Stop the same invalid profile from being restored on the next sysupgrade.
+# Keep /etc/config/openclaw untouched: it may hold administrator data even
+# though this image intentionally does not install or start OpenClaw.
+if [ -f "$SYSUPGRADE_CONF" ]; then
+	[ "${RETIRED_OPENCLAW_TEST_REWRITE_FAIL:-0}" != 1 ] || exit 1
+	tmp="$SYSUPGRADE_CONF.new.$$"
+	awk -v profile="$SYSUPGRADE_ENTRY" '$0 != profile { print }' "$SYSUPGRADE_CONF" >"$tmp" || exit 1
+	mv -f "$tmp" "$SYSUPGRADE_CONF" || exit 1
+fi
+
+# The retention list is durable before deleting the overlay profile. If the
+# list rewrite above failed, this script exits nonzero and is retried on the
+# next boot instead of allowing sysupgrade to restore the broken hook later.
+rm -f "$PROFILE" || exit 1
+
+exit 0
