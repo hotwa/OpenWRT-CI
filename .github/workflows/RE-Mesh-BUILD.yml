@@ -9,10 +9,10 @@ on:
         type: boolean
         default: false
       RE_SS_01_LAN_IP:
-        description: 'RE-SS-01 LAN IP (e.g. 192.168.10.1)'
+        description: 'RE-SS-01 LAN IP (e.g. 192.168.12.1)'
         required: false
         type: string
-        default: '192.168.10.1'
+        default: '192.168.12.1'
       RE_CS_02_LAN_IP:
         description: 'RE-CS-02 LAN IP (e.g. 192.168.11.1)'
         required: false

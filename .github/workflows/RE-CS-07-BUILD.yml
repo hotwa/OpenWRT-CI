@@ -9,9 +9,9 @@ on:
         type: boolean
         default: false
       LAN_IP:
-        description: 'Router LAN IP (e.g. 192.168.12.1)'
+        description: 'Router LAN IP (e.g. 192.168.10.1)'
         required: false
-        default: '192.168.12.1'
+        default: '192.168.10.1'
 
 permissions:
   actions: write
@@ -27,7 +27,7 @@ jobs:
       WRT_THEME: argon
       WRT_NAME: RE-CS-07
       WRT_SSID: RE-CS-07
-      WRT_IP: ${{ inputs.LAN_IP || '192.168.12.1' }}
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
