@@ -23,6 +23,12 @@ grep -Fq 'IPQ60XX-RE-SS-01' "$MESH"
 grep -Fq 'IPQ60XX-RE-CS-02' "$MESH"
 grep -Fq 'jdcloud_re-ss-01' "$MESH"
 grep -Fq 'jdcloud_re-cs-02' "$MESH"
+grep -Fq "default: '192.168.12.1'" "$MESH"
+grep -Fq "default: '192.168.11.1'" "$MESH"
+
+CS07="$ROOT_DIR/.github/workflows/RE-CS-07-BUILD.yml"
+grep -Fq "default: '192.168.10.1'" "$CS07"
+grep -Fq 'WRT_IP: ${{ inputs.LAN_IP || '\''192.168.10.1'\'' }}' "$CS07"
 
 [ ! -e "$ROOT_DIR/.github/workflows/RE-SS-01-BUILD.yml" ]
 [ ! -e "$ROOT_DIR/.github/workflows/RE-CS-02-BUILD.yml" ]
