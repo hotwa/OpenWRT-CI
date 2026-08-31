@@ -101,8 +101,13 @@ grep -q 'for asset in "${assets\[@\]}"; do' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'WARN: failed to delete cache \$key' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not tolerate cache deletion failures"
+grep -Fq 'gh cache delete "$WRT_CACHE_KEY" || \' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not make scoped cache deletion non-blocking"
+  exit 1
+}
+
+grep -Fq 'INFO: no existing cache entry to refresh for $WRT_CACHE_KEY' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not report a non-blocking scoped cache deletion failure"
   exit 1
 }
 
