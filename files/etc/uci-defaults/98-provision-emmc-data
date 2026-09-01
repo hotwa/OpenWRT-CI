@@ -19,10 +19,11 @@ MOUNTS_FILE="${EMMC_DATA_MOUNTS_FILE:-/proc/mounts}"
 OVERLAY_DIR="${EMMC_DATA_OVERLAY_DIR:-/overlay}"
 PENDING_FILE="${EMMC_DATA_PENDING_FILE:-$OVERLAY_DIR/.emmc-data-provision.pending}"
 FAILED_FILE="${EMMC_DATA_FAILED_FILE:-$OVERLAY_DIR/.emmc-data-provision.failed}"
-LEGACY_APPROVAL_FILE="${EMMC_DATA_LEGACY_APPROVAL_FILE:-$OVERLAY_DIR/.emmc-data-provision.legacy-p27-approved}"
+LEGACY_APPROVAL_FILE="${EMMC_DATA_LEGACY_APPROVAL_FILE:-$OVERLAY_DIR/.emmc-data-provision.legacy-data-approved}"
 TESTING="${EMMC_DATA_PROVISION_TESTING:-0}"
 TEST_TABLE_FILE="${EMMC_DATA_TEST_TABLE_FILE:-}"
 TEST_STATE_DIR="${EMMC_DATA_TEST_STATE_DIR:-}"
+LEGACY_DATA_NUMBER=""
 
 log() {
 	printf '%s\n' "$TAG: $*" >&2
@@ -303,14 +304,15 @@ record_initialization_timeout() {
 }
 
 write_legacy_approval() {
-	local disk="$1" device="$2" fstype="$3" uuid partuuid tmp
+	local disk="$1" number="$2" device="$3" fstype="$4" uuid partuuid tmp
 	uuid="$(filesystem_uuid "$device")" || return 1
 	partuuid="$(filesystem_partuuid "$device")" || return 1
-	valid_identifier "$uuid" && valid_identifier "$partuuid" || return 1
+	valid_number "$number" && [ "$number" -ge 1 ] && \
+		valid_identifier "$uuid" && valid_identifier "$partuuid" || return 1
 	mkdir -p "$OVERLAY_DIR" || return 1
 	tmp="$LEGACY_APPROVAL_FILE.new.$$"
-	( umask 077; printf 'disk=%s\nnumber=27\npartlabel=data\nuuid=%s\npartuuid=%s\nfstype=%s\n' \
-		"$disk" "$uuid" "$partuuid" "$fstype" >"$tmp" ) || return 1
+	( umask 077; printf 'disk=%s\nnumber=%s\npartlabel=data\nuuid=%s\npartuuid=%s\nfstype=%s\n' \
+		"$disk" "$number" "$uuid" "$partuuid" "$fstype" >"$tmp" ) || return 1
 	mv -f "$tmp" "$LEGACY_APPROVAL_FILE"
 }
 
@@ -432,24 +434,23 @@ format_pending_partition() {
 	log "created and formatted $device as $LABEL"
 }
 
-# Existing JDCloud images may already have a tail p27 called "data".  It is
-# not a generic candidate: all of its number, name, board and end-of-disk
-# geometry must match before it is even considered.  Healthy filesystems are
-# deliberately delegated unchanged to 99-auto-mount-data, which records their
-# UUID in fstab.  Only an unmounted, completely raw exact p27 can be made ext4.
-existing_p27_row() {
-	partition_by_number "$1" 27 2>/dev/null || true
+# Older JDCloud images can carry an unlabeled tail partition named "data".
+# Its partition number differs across historical layouts, so never infer it
+# from a device node.  The row must be the sole GPT name match and must pass
+# the strict end-of-disk geometry checks below before it is adopted.
+existing_legacy_data_row() {
+	partition_by_name "$1" data 2>/dev/null || true
 }
 
-verify_existing_p27_metadata() {
-	local disk="$1" name="$2" start="$3" end="$4" info code
-	info="$(run_sgdisk -i 27 "$disk" 2>&1)" || return 1
+verify_existing_legacy_data_metadata() {
+	local disk="$1" number="$2" name="$3" start="$4" end="$5" info code
+	info="$(run_sgdisk -i "$number" "$disk" 2>&1)" || return 1
 	printf '%s\n' "$info" | grep -Fq "Partition name: '$name'" || return 1
 	printf '%s\n' "$info" | grep -Fq "First sector: $start" || return 1
 	printf '%s\n' "$info" | grep -Fq "Last sector: $end" || return 1
 	code="$(printf '%s\n' "$info" | sed -n 's/^Partition GUID code: \([0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]\).*/\1/p' | head -n 1)"
 	[ -n "$code" ] || return 1
-	EXISTING_P27_GPT_TYPE="$(printf '%s' "$code" | tr '[:lower:]' '[:upper:]')"
+	EXISTING_LEGACY_DATA_GPT_TYPE="$(printf '%s' "$code" | tr '[:lower:]' '[:upper:]')"
 }
 
 table_max_end_before() {
@@ -457,89 +458,91 @@ table_max_end_before() {
 	partition_rows "$disk" | awk -F '\t' -v number="$number" 'BEGIN { max = 0 } $1 != number && $3 > max { max = $3 } END { print max }'
 }
 
-handle_existing_p27() {
+handle_existing_legacy_data() {
 	local disk="$1" row number start end name max_partition max_end last_usable prior_end expected_start device mounted probe_state type label status
-	row="$(existing_p27_row "$disk")"
+	row="$(existing_legacy_data_row "$disk")"
 	[ -n "$row" ] || return 2
 	number="$(printf '%s\n' "$row" | awk -F '\t' '{ print $1 }')"
 	start="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
 	end="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
 	name="$(printf '%s\n' "$row" | awk -F '\t' '{ print $4 }')"
-	case "$name" in data|"$LABEL") ;; *) return 2 ;; esac
+	[ "$name" = data ] || return 2
+	valid_number "$number" && [ "$number" -ge 1 ] || return 0
+	LEGACY_DATA_NUMBER="$number"
 
-	# Seeing a similarly named p27 is enough to stop automatic allocation.  If
+	# Seeing an old data partition is enough to stop automatic allocation. If
 	# its geometry is not the reviewed tail layout, leave it entirely alone.
 	table_has_required_topology "$disk" || {
-		log "p27 '$name' has an unreviewed GPT topology; leaving it unchanged"
+		log "legacy data p${number} has an unreviewed GPT topology; leaving it unchanged"
 		return 0
 	}
 	max_partition="$(table_max_partition "$disk")"
 	max_end="$(table_max_end "$disk")"
 	last_usable="$(table_last_sector "$disk")"
-	prior_end="$(table_max_end_before "$disk" 27)"
+	prior_end="$(table_max_end_before "$disk" "$number")"
 	for value in "$number" "$start" "$end" "$max_partition" "$max_end" "$last_usable" "$prior_end"; do
 		valid_number "$value" || {
-			log "p27 '$name' has unreadable GPT geometry; leaving it unchanged"
+			log "legacy data p${number} has unreadable GPT geometry; leaving it unchanged"
 			return 0
 		}
 	done
 	expected_start=$(( ((prior_end + 1 + 2047) / 2048) * 2048 ))
-	[ "$number" -eq 27 ] && [ "$max_partition" -eq 27 ] && [ "$start" -eq "$expected_start" ] && \
+	[ "$number" -eq "$max_partition" ] && [ "$start" -eq "$expected_start" ] && \
 		[ "$end" -eq "$max_end" ] && [ "$end" -eq "$last_usable" ] || {
-		log "p27 '$name' is not the reviewed tail partition; leaving it unchanged"
+		log "legacy data p${number} is not the reviewed tail partition; leaving it unchanged"
 		return 0
 	}
-	verify_existing_p27_metadata "$disk" "$name" "$start" "$end" || {
-		log "p27 '$name' has unverifiable GPT metadata; leaving it unchanged"
+	verify_existing_legacy_data_metadata "$disk" "$number" "$name" "$start" "$end" || {
+		log "legacy data p${number} has unverifiable GPT metadata; leaving it unchanged"
 		return 0
 	}
 
-	device="$(partition_device "$disk" 27)"
+	device="$(partition_device "$disk" "$number")"
 	device_is_ready "$device" || {
-		log "reviewed p27 device node is unavailable; leaving it unchanged"
+		log "reviewed legacy data p${number} device node is unavailable; leaving it unchanged"
 		return 1
 	}
 	mounted=0
 	device_is_mounted "$device" && mounted=1
 	probe_state="$(filesystem_probe_state "$device")" || {
-		log "reviewed p27 filesystem probe failed; refusing automatic format"
+		log "reviewed legacy data p${number} filesystem probe failed; refusing automatic format"
 		return 1
 	}
 	case "$probe_state" in
 		typed:ext4|typed:f2fs)
 			type="${probe_state#typed:}"
-			[ "$EXISTING_P27_GPT_TYPE" = 8300 ] || {
-				log "reviewed p27 has GPT type $EXISTING_P27_GPT_TYPE, not Linux filesystem; refusing automatic adoption"
+			[ "$EXISTING_LEGACY_DATA_GPT_TYPE" = 8300 ] || {
+				log "reviewed legacy data p${number} has GPT type $EXISTING_LEGACY_DATA_GPT_TYPE, not Linux filesystem; refusing automatic adoption"
 				return 0
 			}
-			log "preserving healthy existing p27 filesystem ($type) for UUID migration"
-			write_legacy_approval "$disk" "$device" "$type" || {
-				log "could not persist reviewed p27 approval; leaving it unchanged"
+			log "preserving healthy existing legacy data p${number} filesystem ($type) for UUID migration"
+			write_legacy_approval "$disk" "$number" "$device" "$type" || {
+				log "could not persist reviewed legacy data approval; leaving it unchanged"
 				return 1
 			}
 			return 0
 			;;
 		raw)
 			[ "$mounted" -eq 0 ] || {
-				log "reviewed raw p27 is already mounted; refusing automatic format"
+				log "reviewed raw legacy data p${number} is already mounted; refusing automatic format"
 				return 0
 			}
-			[ "$EXISTING_P27_GPT_TYPE" = 8300 ] || {
-				log "reviewed raw p27 has GPT type $EXISTING_P27_GPT_TYPE, not Linux filesystem; refusing automatic format"
+			[ "$EXISTING_LEGACY_DATA_GPT_TYPE" = 8300 ] || {
+				log "reviewed raw legacy data p${number} has GPT type $EXISTING_LEGACY_DATA_GPT_TYPE, not Linux filesystem; refusing automatic format"
 				return 0
 			}
-			log "initializing only the reviewed raw p27 as $LABEL"
+			log "initializing only the reviewed raw legacy data p${number} as $LABEL"
 			run_mkfs_with_deadline -F -L "$LABEL" "$device"
 			status=$?
 			[ "$status" -eq 0 ] || return "$status"
 			type="$(filesystem_type "$device")"
 			label="$(filesystem_label "$device")"
 			[ "$type" = ext4 ] && [ "$label" = "$LABEL" ] || return 1
-			log "initialized reviewed p27 as $LABEL"
+			log "initialized reviewed legacy data p${number} as $LABEL"
 			return 0
 			;;
 		typed:*)
-			log "reviewed p27 has unsupported filesystem '${probe_state#typed:}'; refusing automatic format"
+			log "reviewed legacy data p${number} has unsupported filesystem '${probe_state#typed:}'; refusing automatic format"
 			return 0
 			;;
 	esac
@@ -658,18 +661,20 @@ main() {
 		log "expected exactly one approved eMMC GPT topology; refusing to select a disk"
 		return 1
 	}
-	handle_existing_p27 "$disk"
+	handle_existing_legacy_data "$disk"
 	status=$?
 	case "$status" in
 		0) return 0 ;;
 		2) ;;
 		124)
-			record_initialization_timeout "$disk" 27 || true
+			if valid_number "$LEGACY_DATA_NUMBER" && [ "$LEGACY_DATA_NUMBER" -ge 1 ]; then
+				record_initialization_timeout "$disk" "$LEGACY_DATA_NUMBER" || true
+			fi
 			log "data initialization exceeded ${INIT_TIMEOUT_SECONDS}s; skipped without automatic retry"
 			return 0
 			;;
 		*)
-			log "reviewed p27 initialization failed; no other partition will be selected"
+		log "reviewed legacy data initialization failed; no other partition will be selected"
 			return 1
 			;;
 	esac

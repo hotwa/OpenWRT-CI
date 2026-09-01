@@ -6,6 +6,7 @@ CONFIG_FILE="$ROOT_DIR/files/etc/config/multica"
 INIT_SCRIPT="$ROOT_DIR/files/etc/init.d/multica"
 BOOTSTRAP_SCRIPT="$ROOT_DIR/files/usr/sbin/multica-agent-bootstrap"
 PROFILE_SCRIPT="$ROOT_DIR/files/usr/sbin/multica-device-profile"
+PI_APPEND_LINK="$ROOT_DIR/files/usr/sbin/pi-append-system-link"
 AGENT_ETC_MD="$ROOT_DIR/files/etc/multica/openwrt-agent.md"
 ENROLL_SCRIPT="$ROOT_DIR/Scripts/MulticaAutoEnroll.sh"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
@@ -15,6 +16,7 @@ CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 [ -f "$INIT_SCRIPT" ] || { echo "missing multica init script"; exit 1; }
 [ -f "$BOOTSTRAP_SCRIPT" ] || { echo "missing multica-agent-bootstrap"; exit 1; }
 [ -x "$PROFILE_SCRIPT" ] || { echo "missing executable multica-device-profile"; exit 1; }
+[ -x "$PI_APPEND_LINK" ] || { echo "missing executable pi-append-system-link"; exit 1; }
 [ -f "$AGENT_ETC_MD" ] || { echo "missing openwrt-agent.md in etc/multica"; exit 1; }
 [ -f "$ENROLL_SCRIPT" ] || { echo "missing MulticaAutoEnroll.sh"; exit 1; }
 [ -f "$FETCH_SCRIPT" ] || { echo "missing fetch_multica_runtime.sh"; exit 1; }
@@ -49,6 +51,8 @@ grep -Fq 'workspace_id is not configured' "$INIT_SCRIPT"
 grep -Fq "max_concurrent_tasks '1'" "$CONFIG_FILE"
 grep -Fq 'runtime_provider '\''pi'\''' "$CONFIG_FILE"
 grep -Fq "procd_open_instance bootstrap" "$INIT_SCRIPT"
+grep -Fq 'multica-device-profile write' "$INIT_SCRIPT"
+grep -Fq 'pi-append-system-link' "$INIT_SCRIPT"
 grep -Fq 'PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin"' "$INIT_SCRIPT" || {
 	echo "the multica daemon must export a PATH that prefers agent-runtime generations and node upgrades over the read-only baked /opt/node/bin"
 	exit 1
@@ -69,6 +73,7 @@ bash -n "$FETCH_SCRIPT"
 sh -n "$INIT_SCRIPT"
 sh -n "$BOOTSTRAP_SCRIPT"
 sh -n "$PROFILE_SCRIPT"
+sh -n "$PI_APPEND_LINK"
 
 PROFILE_TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "$PROFILE_TEST_ROOT"' EXIT
@@ -88,5 +93,14 @@ if grep -Fq 'must-not-appear-in-agent-instructions' "$PROFILE_TEST_ROOT/data/ope
 	echo "device profile leaked a credential environment value"
 	exit 1
 fi
+
+mkdir -p "$PROFILE_TEST_ROOT/pi/agent"
+PI_AGENT_DIR="$PROFILE_TEST_ROOT/pi/agent" PI_ROLE_CARD="$PROFILE_TEST_ROOT/data/openwrt-agent.md" \
+	sh "$PI_APPEND_LINK"
+[ -L "$PROFILE_TEST_ROOT/pi/agent/APPEND_SYSTEM.md" ] && \
+	[ "$(readlink "$PROFILE_TEST_ROOT/pi/agent/APPEND_SYSTEM.md")" = "$PROFILE_TEST_ROOT/data/openwrt-agent.md" ] || {
+	echo "Pi system prompt is not linked to the rendered Multica role card"
+	exit 1
+}
 
 echo "multica auto-enroll & agent bootstrap guard tests passed"

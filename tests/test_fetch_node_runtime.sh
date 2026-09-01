@@ -61,6 +61,12 @@ const provider = models.providers?.['office-sglang'];
 if (!provider || provider.baseUrl !== 'http://192.168.11.159:8001/v1' || provider.api !== 'openai-completions') process.exit(1);
 if (!provider.models?.some(m => m.id === 'Qwen3.8-27B')) process.exit(2);
 if (settings.defaultProvider !== 'office-sglang' || settings.defaultModel !== 'Qwen3.8-27B') process.exit(3);
+const declaredModels = Object.values(models.providers ?? {}).flatMap(provider => provider.models ?? []);
+if (!declaredModels.length || declaredModels.some(model => model.contextWindow !== 262144)) process.exit(4);
+const fallback = models.providers?.cloudcollector;
+if (!fallback || fallback.baseUrl !== 'https://fhk.org/v1' || fallback.api !== 'openai-completions') process.exit(5);
+if (fallback.apiKey !== '!cat /data/pi/agent/secrets/cloudcollector-api-key') process.exit(6);
+if (!fallback.models?.some(m => m.id === 'automodel' && m.contextWindow === 262144)) process.exit(7);
 NODE
 
 grep -Fq '/data/node/bin' "$PROFILE_NODE" || fail "login PATH does not prefer an active generation"

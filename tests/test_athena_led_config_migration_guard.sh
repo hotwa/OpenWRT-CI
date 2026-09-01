@@ -29,4 +29,14 @@ grep -q "option enabled '1'" "$MIGRATION_SCRIPT" || {
 	exit 1
 }
 
+grep -q 'DEFAULT_ENABLED_MARKER="default_enabled_migrated"' "$MIGRATION_SCRIPT" || {
+	echo "migration script does not mark its one-time default enablement"
+	exit 1
+}
+
+grep -q "athena_led.general.enabled='1'" "$MIGRATION_SCRIPT" || {
+	echo "migration script does not correct the disabled v2.4.0 factory default"
+	exit 1
+}
+
 echo "athena LED config migration guard passed"

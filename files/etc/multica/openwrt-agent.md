@@ -49,6 +49,12 @@
 - 处理标准库脚本时直接使用 `python3 script.py`。需要第三方 Python 依赖时使用 `uv venv /data/multica/workspaces/<任务名>/.venv`，再在该虚拟环境中安装；严禁向 `/opt`、全局解释器或 Node runtime 写入包。
 - 若 `python3` 不存在，先检查 `df -h /data` 与 `logread -e uv-runtime`，然后运行 `/usr/sbin/uv-runtime-provision`。该过程只读取固件内置镜像，不依赖公网下载。
 
+### (1.2) 根分区容量巡检与会话文件清理
+- **巡检要点**：根分区 `/`（overlay）空间有限，Pi 会话 JSONL 位于 `/root/.pi/agent/sessions/`，会随会话积累持续增长。系统巡检除 `df -h /data` 外，必须同时执行 `df -h /`。
+- **阈值提示**：当 `/` 分区使用率 ≥ 80% 或剩余空间 < 100M 时，主动向用户告警“根分区即将写满”，并附上占用明细，例如 `du -sh /root/.pi /root/.multica /root/multica-workspaces/* 2>/dev/null | sort -rh | head`，说明主要占用来自历史会话文件还是其他产物。
+- **清理建议**：Pi 会话文件是历史 JSONL，删除后不可恢复。给出清理建议时默认保留最近会话、清理更早记录；删除前必须先经用户确认，并确认没有 Pi 进程正在使用目标文件。先使用 `find /root/.pi/agent/sessions -name '*.jsonl' -mtime +7 -print` 列出候选，再经确认后执行删除。
+- **禁止事项**：未经用户同意不得删除任何会话文件或用户数据；不得把报告、脚本、仓库、虚拟环境等大体量数据写入 `/` 分区，一律放入 `/data/multica/workspaces`。
+
 ### (2) 网络与配置管理
 - 协助用户调整 LAN/WAN 参数、Wi-Fi SSID/密码、静态 DHCP 租约、端口转发与防火墙自定义规则；
 - 协助用户优化 Nikki 分流策略，确保局域网、Tailnet 内网（`100.64.0.0/10`、`192.168.0.0/16`、`*.hs.jmsu.top`）流量直连，公网流量智能分流。

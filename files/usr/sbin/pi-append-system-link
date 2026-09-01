@@ -1,0 +1,40 @@
+#!/bin/sh
+# Keep Pi's optional system prompt bound to the single, dynamic Multica role
+# card. The role card is rendered into /data/multica at boot, while Pi reads
+# APPEND_SYSTEM.md from its own persistent configuration directory.
+
+set -eu
+
+PI_AGENT_DIR="${PI_AGENT_DIR:-/data/pi/agent}"
+ROLE_CARD="${PI_ROLE_CARD:-/root/.multica/openwrt-agent.md}"
+APPEND_SYSTEM="$PI_AGENT_DIR/APPEND_SYSTEM.md"
+
+log_error() {
+	logger -t pi-append-system-link -- "$*" 2>/dev/null || true
+	printf '%s\n' "pi-append-system-link: $*" >&2
+}
+
+main() {
+	[ -r "$ROLE_CARD" ] || {
+		log_error "role card is unavailable: $ROLE_CARD"
+		return 1
+	}
+	[ -d "$PI_AGENT_DIR" ] && [ ! -L "$PI_AGENT_DIR" ] || {
+		log_error "Pi agent directory is unavailable or symlinked: $PI_AGENT_DIR"
+		return 1
+	}
+	if [ -d "$APPEND_SYSTEM" ] && [ ! -L "$APPEND_SYSTEM" ]; then
+		log_error "refusing to replace directory: $APPEND_SYSTEM"
+		return 1
+	fi
+
+	# A regular legacy file is deliberately replaced: keeping a second role-card
+	# copy would make Pi sessions silently drift from Multica's instructions.
+	ln -sfn "$ROLE_CARD" "$APPEND_SYSTEM" || return 1
+	[ -L "$APPEND_SYSTEM" ] && [ "$(readlink "$APPEND_SYSTEM")" = "$ROLE_CARD" ] || {
+		log_error "failed to set the Pi system-prompt link"
+		return 1
+	}
+}
+
+main "$@"

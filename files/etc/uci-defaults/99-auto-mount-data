@@ -14,7 +14,8 @@ BLOCK_INFO_FIXTURE="${AUTO_MOUNT_BLOCK_INFO:-}"
 FSTAB_RECORD="${AUTO_MOUNT_FSTAB_RECORD:-}"
 TESTING="${AUTO_MOUNT_DATA_TESTING:-0}"
 BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
-LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-p27-approved}"
+LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
+PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
@@ -69,6 +70,13 @@ valid_identifier() {
 	esac
 }
 
+valid_number() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
 supported_legacy_board() {
 	case "$1" in
 		jdcloud,re-ss-01|jdcloud,re-cs-02|jdcloud,re-cs-07) return 0 ;;
@@ -102,11 +110,14 @@ device_line() {
 	done
 }
 
-select_legacy_p27() {
-	local board line partlabel fstype fs_uuid partuuid
+select_legacy_data() {
+	local board number device line partlabel fstype fs_uuid partuuid
 	board="$(cat "$BOARD_FILE" 2>/dev/null || true)"
 	supported_legacy_board "$board" || return 1
-	line="$(device_line /dev/mmcblk0p27)"
+	number="$(legacy_approval_value number)"
+	valid_number "$number" && [ "$number" -ge 1 ] || return 1
+	device="/dev/mmcblk0p${number}"
+	line="$(device_line "$device")"
 	[ -n "$line" ] || return 1
 	partlabel="$(attribute_from_line "$line" PARTLABEL)"
 	[ "$partlabel" = data ] || return 1
@@ -116,27 +127,35 @@ select_legacy_p27() {
 	valid_identifier "$fs_uuid" || return 1
 	partuuid="$(attribute_from_line "$line" PARTUUID)"
 	valid_identifier "$partuuid" || return 1
-	legacy_p27_is_approved "$fs_uuid" "$partuuid" "$fstype" || return 1
+	legacy_data_is_approved "$number" "$fs_uuid" "$partuuid" "$fstype" || return 1
 
-	# This is a one-time compatibility path for the reviewed end-of-disk p27
-	# layout. It is deliberately not a generic LABEL=data/userdata selector.
-	CANDIDATE_DEVICE=/dev/mmcblk0p27
+	# This is a one-time compatibility path for the exact approved tail data
+	# partition. Its number is taken from the reviewed GPT approval record, not
+	# guessed from a historical /dev/mmcblk0p27 convention.
+	CANDIDATE_DEVICE="$device"
 	CANDIDATE_FSTYPE="$fstype"
 	CANDIDATE_UUID="$fs_uuid"
-	log_error "adopting reviewed legacy p27 by filesystem UUID"
+	log_error "adopting reviewed legacy data p${number} by filesystem UUID"
 }
 
-legacy_p27_is_approved() {
-	local uuid="$1" partuuid="$2" fstype="$3"
-	local disk number partlabel stored_uuid stored_partuuid stored_fstype
+legacy_approval_value() {
+	local key="$1"
 	[ -f "$LEGACY_APPROVAL_FILE" ] || return 1
-	disk="$(sed -n 's/^disk=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	number="$(sed -n 's/^number=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	partlabel="$(sed -n 's/^partlabel=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	stored_uuid="$(sed -n 's/^uuid=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	stored_partuuid="$(sed -n 's/^partuuid=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	stored_fstype="$(sed -n 's/^fstype=//p' "$LEGACY_APPROVAL_FILE" | head -n 1)"
-	[ "$disk" = /dev/mmcblk0 ] && [ "$number" = 27 ] && [ "$partlabel" = data ] || return 1
+	sed -n "s/^${key}=//p" "$LEGACY_APPROVAL_FILE" | sed -n '1p'
+}
+
+legacy_data_is_approved() {
+	local number="$1" uuid="$2" partuuid="$3" fstype="$4"
+	local disk stored_number partlabel stored_uuid stored_partuuid stored_fstype
+	[ -f "$LEGACY_APPROVAL_FILE" ] || return 1
+	disk="$(legacy_approval_value disk)"
+	stored_number="$(legacy_approval_value number)"
+	partlabel="$(legacy_approval_value partlabel)"
+	stored_uuid="$(legacy_approval_value uuid)"
+	stored_partuuid="$(legacy_approval_value partuuid)"
+	stored_fstype="$(legacy_approval_value fstype)"
+	[ "$disk" = /dev/mmcblk0 ] && [ "$stored_number" = "$number" ] && \
+		valid_number "$stored_number" && [ "$stored_number" -ge 1 ] && [ "$partlabel" = data ] || return 1
 	valid_identifier "$stored_uuid" && valid_identifier "$stored_partuuid" || return 1
 	[ "$stored_uuid" = "$uuid" ] && [ "$stored_partuuid" = "$partuuid" ] && \
 		[ "$stored_fstype" = "$fstype" ]
@@ -181,7 +200,7 @@ select_candidate() {
 	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
 	if [ "$count" -eq 0 ] && [ -z "$requested_uuid" ] && \
 		[ -z "$requested_partuuid" ] && [ -z "$requested_label" ]; then
-		select_legacy_p27 && return 0
+		select_legacy_data && return 0
 	fi
 	if [ "$count" -ne 1 ]; then
 		log_error "expected exactly one opted-in data partition, found $count"
@@ -470,6 +489,13 @@ prepare_agent_storage() {
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1
 	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || return 1
 	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || return 1
+	# Pi appends this link after its built-in tool prompt. Point it at the
+	# dynamically rendered Multica role card rather than copying a second card,
+	# so interactive Pi and daemon-dispatched sessions share one source.
+	if [ -x "$PI_APPEND_SYSTEM_LINK_BIN" ]; then
+		PI_AGENT_DIR="$DATA_ROOT/pi/agent" PI_ROLE_CARD="$ROOT_HOME/.multica/openwrt-agent.md" \
+			"$PI_APPEND_SYSTEM_LINK_BIN" || return 1
+	fi
 	link_compatibility_path "$DATA_ROOT" "$OPT_ROOT/data" || \
 		log_error "could not create optional compatibility path: $OPT_ROOT/data"
 	link_compatibility_path "$DATA_ROOT/smb" "$OPT_ROOT/smb" || \

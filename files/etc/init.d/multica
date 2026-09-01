@@ -171,6 +171,21 @@ start_service() {
 		log_error "/data is not mounted; refusing to start Multica on the root overlay"
 		return 1
 	}
+	# Render the data-backed role card before Pi can accept a daemon task, then
+	# repair the link that makes Pi append exactly that same card. This also
+	# covers upgraded systems whose first-boot migration predates this convention.
+	if [ -x /usr/sbin/multica-device-profile ]; then
+		MULTICA_DATA_DIR=/data/multica /usr/sbin/multica-device-profile write || {
+			log_error "could not render the Multica role card"
+			return 1
+		}
+	fi
+	if [ -x /usr/sbin/pi-append-system-link ]; then
+		/usr/sbin/pi-append-system-link || {
+			log_error "Pi system-prompt link is unavailable; refusing to start Multica"
+			return 1
+		}
+	fi
 	# Ensure a role can invoke python3 before registering it as a usable Pi
 	# runtime.  The provisioner is offline and idempotent after first success.
 	if [ ! -x /usr/local/bin/python3 ] && [ -x /usr/sbin/uv-runtime-provision ]; then

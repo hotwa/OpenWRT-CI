@@ -4,11 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/files/etc/uci-defaults/99-auto-mount-data"
 PROFILE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
+PI_APPEND_LINK="$ROOT_DIR/files/usr/sbin/pi-append-system-link"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 [ -f "$SCRIPT" ] || { echo "missing 99-auto-mount-data script"; exit 1; }
 [ -f "$PROFILE" ] || { echo "missing 20-node-agent.sh profile script"; exit 1; }
+[ -x "$PI_APPEND_LINK" ] || { echo "missing executable pi-append-system-link"; exit 1; }
 bash -n "$SCRIPT"
 bash -n "$PROFILE"
 
@@ -50,11 +52,11 @@ run_fixture() {
 		"$@" sh "$SCRIPT"
 }
 
-approve_legacy_p27() {
-	local case_root="$1" fstype="${2:-ext4}"
+approve_legacy_data() {
+	local case_root="$1" fstype="${2:-ext4}" number="${3:-27}"
 	printf '%s\n' \
 		'disk=/dev/mmcblk0' \
-		'number=27' \
+		"number=$number" \
 		'partlabel=data' \
 		'uuid=legacy-uuid' \
 		'partuuid=legacy-part' \
@@ -113,17 +115,23 @@ fi
 CASE_OK="$TMP_ROOT/success"
 mkdir -p "$CASE_OK/root/.multica" "$CASE_OK/root/.pi" "$CASE_OK/root/.commandcode"
 printf '%s\n' multica-state >"$CASE_OK/root/.multica/config.json"
+printf '%s\n' role-card >"$CASE_OK/root/.multica/openwrt-agent.md"
 printf '%s\n' pi-state >"$CASE_OK/root/.pi/settings.json"
 printf '%s\n' commandcode-auth >"$CASE_OK/root/.commandcode/auth.json"
 : >"$CASE_OK/mounts"
 printf '%s\n' '/dev/mmcblk0p11: UUID="ok-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="ok-part"' >"$CASE_OK/block.info"
-run_fixture "$CASE_OK"
+run_fixture "$CASE_OK" "AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN=$PI_APPEND_LINK"
 [ -L "$CASE_OK/root/.multica" ] && [ "$(readlink "$CASE_OK/root/.multica")" = "$CASE_OK/data/multica" ] || {
 	echo "Multica state was not linked to verified data storage"
 	exit 1
 }
 [ -L "$CASE_OK/root/.pi" ] && [ "$(readlink "$CASE_OK/root/.pi")" = "$CASE_OK/data/pi" ] || {
 	echo "Pi state was not linked to verified data storage"
+	exit 1
+}
+[ -L "$CASE_OK/root/.pi/agent/APPEND_SYSTEM.md" ] && \
+	[ "$(readlink "$CASE_OK/root/.pi/agent/APPEND_SYSTEM.md")" = "$CASE_OK/root/.multica/openwrt-agent.md" ] || {
+	echo "Pi APPEND_SYSTEM.md was not linked to the Multica role card"
 	exit 1
 }
 [ -L "$CASE_OK/root/.commandcode" ] && [ "$(readlink "$CASE_OK/root/.commandcode")" = "$CASE_OK/data/commandcode" ] || {
@@ -158,7 +166,7 @@ mkdir -p "$CASE_LEGACY/root"
 printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_LEGACY/board"
 printf '%s\n' '/dev/mmcblk0p27 /mnt/mmcblk0p27 ext4 rw 0 0' >"$CASE_LEGACY/mounts"
 printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY/block.info"
-approve_legacy_p27 "$CASE_LEGACY"
+approve_legacy_data "$CASE_LEGACY"
 run_fixture "$CASE_LEGACY"
 grep -Fq "/dev/mmcblk0p27 $CASE_LEGACY/data ext4" "$CASE_LEGACY/mounts" || {
 	echo "reviewed legacy p27 was not mounted at /data"
@@ -190,7 +198,7 @@ mkdir -p "$CASE_LEGACY_BUSY/root"
 printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_LEGACY_BUSY/board"
 printf '%s\n' '/dev/mmcblk0p27 /mnt/administrator-data ext4 rw 0 0' >"$CASE_LEGACY_BUSY/mounts"
 printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_BUSY/block.info"
-approve_legacy_p27 "$CASE_LEGACY_BUSY"
+approve_legacy_data "$CASE_LEGACY_BUSY"
 if run_fixture "$CASE_LEGACY_BUSY"; then
 	echo "administrator-mounted legacy p27 was remounted"
 	exit 1
@@ -211,6 +219,25 @@ if run_fixture "$CASE_LEGACY_UNAPPROVED"; then
 	echo "unapproved legacy p27 was adopted"
 	exit 1
 fi
+
+# Legacy JDCloud layouts do not all use p27. The approval record carries the
+# exact reviewed GPT number, so a different tail number is safe to adopt and
+# no hard-coded /dev/mmcblk0p27 convention can leak into production.
+CASE_LEGACY_ALT="$TMP_ROOT/legacy-alt-number"
+mkdir -p "$CASE_LEGACY_ALT/root"
+printf '%s\n' 'jdcloud,re-cs-07' >"$CASE_LEGACY_ALT/board"
+printf '%s\n' '/dev/mmcblk0p19 /mnt/mmcblk0p19 ext4 rw 0 0' >"$CASE_LEGACY_ALT/mounts"
+printf '%s\n' '/dev/mmcblk0p19: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_ALT/block.info"
+approve_legacy_data "$CASE_LEGACY_ALT" ext4 19
+run_fixture "$CASE_LEGACY_ALT"
+grep -Fq "/dev/mmcblk0p19 $CASE_LEGACY_ALT/data ext4" "$CASE_LEGACY_ALT/mounts" || {
+	echo "approved legacy data partition with a non-p27 number was not mounted at /data"
+	exit 1
+}
+grep -Fxq 'uuid=legacy-uuid' "$CASE_LEGACY_ALT/fstab.record" || {
+	echo "non-p27 legacy data partition was not persisted by UUID"
+	exit 1
+}
 
 for setting in 'PNPM_HOME=/data/pnpm/bin' 'PNPM_STORE_DIR=/data/pnpm/store' 'npm_config_cache=/data/npm'; do
 grep -Fq "$setting" "$PROFILE" || {

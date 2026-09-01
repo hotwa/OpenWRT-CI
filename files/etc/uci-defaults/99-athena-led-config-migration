@@ -3,33 +3,30 @@
 CONFIG="/etc/config/athena_led"
 ROM_CONFIG="/rom/etc/config/athena_led"
 BACKUP_BASE="/etc/config/athena_led.config-migrated"
+DEFAULT_ENABLED_MARKER="default_enabled_migrated"
 
 [ -f "$CONFIG" ] || exit 0
 
 # The older Athena LED package used athena_led.config.enable/lightLevel/tempFlag.
 # luci-app-athena-led 2.x reads athena_led.general.enabled/light_level/temp_sensors
 # instead, so a kept sysupgrade config prevents the service from starting.
-if ! uci -q get athena_led.config.enable >/dev/null 2>&1 &&
-	! grep -q "config athena_led 'config'" "$CONFIG"; then
-	exit 0
-fi
+if uci -q get athena_led.config.enable >/dev/null 2>&1 ||
+	grep -q "config athena_led 'config'" "$CONFIG"; then
+	backup="$BACKUP_BASE"
+	index=0
+	while [ -e "$backup" ]; do
+		index=$((index + 1))
+		backup="${BACKUP_BASE}.${index}"
+	done
 
-backup="$BACKUP_BASE"
-index=0
-while [ -e "$backup" ]; do
-	index=$((index + 1))
-	backup="${BACKUP_BASE}.${index}"
-done
+	cp -a "$CONFIG" "$backup"
+	rm -f "$CONFIG"
 
-cp -a "$CONFIG" "$backup"
-rm -f "$CONFIG"
-
-if [ -s "$ROM_CONFIG" ] &&
-	grep -q "config settings 'general'" "$ROM_CONFIG" &&
-	grep -q "option enabled '1'" "$ROM_CONFIG"; then
-	cp -a "$ROM_CONFIG" "$CONFIG"
-else
-	cat > "$CONFIG" <<'EOF'
+	if [ -s "$ROM_CONFIG" ] &&
+		grep -q "config settings 'general'" "$ROM_CONFIG"; then
+		cp -a "$ROM_CONFIG" "$CONFIG"
+	else
+		cat > "$CONFIG" <<'EOF'
 config settings 'general'
 	option enabled '1'
 	option profile_mode 'single'
@@ -55,6 +52,20 @@ config single_module
 	option module 'time_group'
 	option param 'time_sec'
 EOF
+	fi
+fi
+
+# v2.4.0's package default currently ships disabled.  A fresh AX6600 image
+# would therefore expose a LuCI page but leave the screen blank because procd
+# starts no athena-led instance.  Enable that factory default exactly once.
+# The marker survives normal keep-config sysupgrades, so a later user choice to
+# disable the display is not undone by another firmware refresh.
+if [ "$(uci -q get "athena_led.general.$DEFAULT_ENABLED_MARKER" 2>/dev/null || true)" != "1" ]; then
+	if [ "$(uci -q get athena_led.general.enabled 2>/dev/null || true)" = "0" ]; then
+		uci -q set athena_led.general.enabled='1'
+	fi
+	uci -q set "athena_led.general.$DEFAULT_ENABLED_MARKER=1"
+	uci -q commit athena_led
 fi
 
 if [ -x /etc/init.d/athena_led ]; then

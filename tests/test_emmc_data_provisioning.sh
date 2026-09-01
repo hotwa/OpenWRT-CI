@@ -83,8 +83,8 @@ write_table() {
 }
 
 append_reviewed_p27() {
-	local path="$1"
-	printf '%s\n' '  27         4175872        15269854   5.3 GiB    8300  data' >>"$path"
+	local path="$1" number="${2:-27}"
+	printf '%s\n' "  $number         4175872        15269854   5.3 GiB    8300  data" >>"$path"
 }
 
 run_fixture() {
@@ -255,8 +255,25 @@ fi
 	echo "healthy legacy p27 was formatted"
 	exit 1
 }
-[ -f "$CASE_LEGACY/overlay/.emmc-data-provision.legacy-p27-approved" ] || {
+[ -f "$CASE_LEGACY/overlay/.emmc-data-provision.legacy-data-approved" ] || {
 	echo "healthy legacy p27 was not approved for UUID migration"
+	exit 1
+}
+
+# A reviewed legacy data partition can use a different GPT number. The
+# provisioner derives that number from the sole GPT name match rather than
+# assuming /dev/mmcblk0p27, then writes it into the approval record.
+CASE_LEGACY_ALT="$TMP_ROOT/legacy-alt-number"
+setup_case "$CASE_LEGACY_ALT" jdcloud,re-cs-07 4173857
+append_reviewed_p27 "$CASE_LEGACY_ALT/table" 28
+EMMC_DATA_TEST_FILESYSTEM_TYPE=ext4 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
+	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_LEGACY_ALT"
+grep -Fxq 'number=28' "$CASE_LEGACY_ALT/overlay/.emmc-data-provision.legacy-data-approved" || {
+	echo "legacy data partition number was not derived from GPT"
+	exit 1
+}
+[ ! -e "$CASE_LEGACY_ALT/state/mkfs.calls" ] || {
+	echo "healthy non-p27 legacy data partition was formatted"
 	exit 1
 }
 
@@ -266,7 +283,7 @@ append_reviewed_p27 "$CASE_LEGACY_BAD_TYPE/table"
 EMMC_DATA_TEST_FILESYSTEM_TYPE=ext4 EMMC_DATA_TEST_START=4175872 EMMC_DATA_TEST_END=15269854 \
 	EMMC_DATA_TEST_INFO_NAME=data EMMC_DATA_TEST_PARTITION_TYPE=FFFF \
 	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_LEGACY_BAD_TYPE"
-[ ! -e "$CASE_LEGACY_BAD_TYPE/overlay/.emmc-data-provision.legacy-p27-approved" ] || {
+[ ! -e "$CASE_LEGACY_BAD_TYPE/overlay/.emmc-data-provision.legacy-data-approved" ] || {
 	echo "legacy p27 with an unreviewed GPT type was approved"
 	exit 1
 }
