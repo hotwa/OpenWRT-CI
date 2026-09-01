@@ -76,7 +76,9 @@ tailscale_advertised_routes() {
 
 tailscale_accepted_routes() {
 	local routes
-	routes="$(ip -4 route show table 52 2>/dev/null | awk '$0 ~ /dev tailscale0/ { print $1 }' | sort -u | head -32 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+	# table 52 also has /32 peer host routes.  They are not approved LAN
+	# subnets and would crowd the role prompt, so retain CIDR destinations only.
+	routes="$(ip -4 route show table 52 2>/dev/null | awk '$0 ~ /dev tailscale0/ && $1 ~ /\// { print $1 }' | sort -u | head -32 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
 	[ -n "$routes" ] || routes="none reported"
 	printf '%s' "$routes"
 }

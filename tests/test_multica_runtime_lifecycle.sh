@@ -20,72 +20,41 @@ fi
 	exit 1
 }
 
-# Exercise exact runtime selection without depending on a host jsonfilter/jshn
-# installation. The fixture deliberately puts a wrong-name and offline runtime
-# ahead of the only valid match.
-cat > "$TEST_ROOT/jshn.sh" <<'EOF'
-json_cleanup() { :; }
-json_load() { JSON_FIXTURE="$1"; }
-json_get_keys() {
-	case "$JSON_FIXTURE" in
-		agents) eval "$1='1 2'" ;;
-		*) eval "$1='1 2 3'" ;;
-	esac
-}
-json_select() {
-	if [ "$1" = ".." ]; then CURRENT=""; else CURRENT="$1"; fi
-}
-json_get_var() {
-	local variable="$1" field="$2" value=""
-	case "$JSON_FIXTURE" in
-		agents)
-			case "$CURRENT:$field" in
-				1:id) value='agent-idle' ;;
-				1:name) value='OpenWrt 管家 · RE-SS-01' ;;
-				1:runtime_id) value='rt-correct' ;;
-				1:status) value='idle' ;;
-				2:id) value='agent-archived' ;;
-				2:name) value='Archived Router' ;;
-				2:runtime_id) value='rt-correct' ;;
-				2:status) value='archived' ;;
-			esac
-			;;
-		*)
-			case "$CURRENT:$field" in
-				1:id) value='rt-wrong-name' ;;
-				1:name) value='Other Router' ;;
-				1:provider) value='pi' ;;
-				1:status) value='online' ;;
-				2:id) value='rt-offline' ;;
-				2:name) value='Pi (OpenWrt-Router)' ;;
-				2:provider) value='pi' ;;
-				2:status) value='offline' ;;
-				3:id) value='rt-correct' ;;
-				3:name) value='Pi (OpenWrt-Router)' ;;
-				3:provider) value='pi' ;;
-				3:status) value='online' ;;
-			esac
-			;;
-	esac
-	eval "$variable=\$value"
-}
+# The controller returns top-level JSON arrays.  The fixture deliberately puts
+# a wrong-name and offline runtime ahead of the only exact match.
+cat > "$TEST_ROOT/runtimes.json" <<'EOF'
+[
+  {"id":"rt-wrong-name","name":"Other Router","provider":"pi","status":"online","device_info":"RE-SS-01-12 · 0.84.4"},
+  {"id":"rt-offline","name":"Pi (OpenWrt-Router)","provider":"pi","status":"offline","device_info":"RE-SS-01-12 · 0.84.4"},
+  {"id":"rt-correct","name":"Pi (OpenWrt-Router)","provider":"pi","status":"online","device_info":"Other-Router · 0.84.4"}
+]
 EOF
-: > "$TEST_ROOT/runtimes.json"
+cat > "$TEST_ROOT/agents.json" <<'EOF'
+[
+  {"id":"agent-idle","name":"OpenWrt 管家 · RE-SS-01","runtime_id":"rt-correct","status":"idle"},
+  {"id":"agent-archived","name":"Archived Router","runtime_id":"rt-correct","status":"archived"}
+]
+EOF
 
 export MULTICA_BOOTSTRAP_LIBRARY_ONLY=1
-export MULTICA_JSHN_LIB="$TEST_ROOT/jshn.sh"
+export MULTICA_PYTHON_BIN="$(command -v python3)"
 # shellcheck source=/dev/null
 . "$BOOTSTRAP_SCRIPT"
 
-selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' pi)"
+selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' pi 'RE-SS-01-12')"
 [ "$selected" = 'rt-correct' ] || {
 	echo "exact runtime selector returned: $selected"
 	exit 1
 }
-if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' commandcode >/dev/null; then
+if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' commandcode 'RE-SS-01-12' >/dev/null; then
 	echo "runtime selector accepted the wrong provider"
 	exit 1
 fi
+selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (New Firmware Name)' pi 'RE-SS-01-12')"
+[ "$selected" = 'rt-wrong-name' ] || {
+	echo "runtime selector did not fall back to the stable device identity: $selected"
+	exit 1
+}
 
 # The controller reports normal Agents as idle until they receive a task; idle
 # must not be mistaken for an absent Agent and trigger duplicate registration.
@@ -94,7 +63,6 @@ if agent_is_usable archived; then
 	echo "archived Agent was treated as usable"
 	exit 1
 fi
-printf 'agents' > "$TEST_ROOT/agents.json"
 selected_agent="$(select_agent_id "$TEST_ROOT/agents.json" 'OpenWrt 管家 · RE-SS-01' rt-correct)"
 [ "$selected_agent" = 'agent-idle' ] || {
 	echo "idle Agent selector returned: $selected_agent"
@@ -103,7 +71,7 @@ selected_agent="$(select_agent_id "$TEST_ROOT/agents.json" 'OpenWrt 管家 · RE
 
 # The first-boot worker runs with `set -u`.  A missing optional instructions
 # argument must make one bootstrap attempt retryable, never abort its worker.
-if ! MULTICA_BOOTSTRAP_LIBRARY_ONLY=1 MULTICA_JSHN_LIB="$TEST_ROOT/jshn.sh" \
+if ! MULTICA_BOOTSTRAP_LIBRARY_ONLY=1 MULTICA_PYTHON_BIN="$(command -v python3)" \
 	bash -c '
 		. "$1"
 		server_reachable() { return 1; }

@@ -63,6 +63,7 @@ grep -Fq 'agent update' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'active|idle|busy' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'Tailnet IPv4 地址池为 `100.64.0.0/10`' "$PROFILE_SCRIPT"
 grep -Fq '禁止读取、输出、上传' "$PROFILE_SCRIPT"
+grep -Fq '$1 ~ /\//' "$PROFILE_SCRIPT"
 
 bash -n "$FETCH_SCRIPT"
 sh -n "$INIT_SCRIPT"
