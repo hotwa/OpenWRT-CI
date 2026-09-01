@@ -33,6 +33,10 @@ for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
   'cmdc' 'command-code' 'commandcode'; do
   grep -Fq -- "$term" "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh omits $term"
 done
+# The bump helper re-resolves the lock with --legacy-peer-deps; the firmware
+# cross-install must use the same flag or npm 11 strict peer resolution rejects
+# the resulting lock with EUSAGE ("Missing ... from lock file").
+grep -Fq -- '--legacy-peer-deps' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh must install with --legacy-peer-deps"
 
 if grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt"; then
   fail "feed ripgrep would pull Rust into every firmware build"

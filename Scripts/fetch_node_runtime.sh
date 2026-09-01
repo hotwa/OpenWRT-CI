@@ -297,7 +297,7 @@ preinstall_cli_agents_and_extensions() (
 	npm_config_platform="linux" \
 	npm_config_libc="musl" \
 		npm ci --prefix "$staging_dir" --omit=dev --no-audit --no-fund \
-			--ignore-scripts --os=linux --cpu="$npm_arch" --libc=musl
+			--legacy-peer-deps --ignore-scripts --os=linux --cpu="$npm_arch" --libc=musl
 
 	[ -d "$staging_dir/node_modules" ] || {
 		echo "ERROR: npm ci completed without producing node_modules" >&2
