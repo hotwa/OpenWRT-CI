@@ -504,6 +504,7 @@ configure_pi_extensions() {
   "packages": [
     "@aaronkyriesenbach/pi-package-manager",
     "btw-pi",
+    "pi-commandcode-provider",
     "pi-web-search",
     "pi-wechat-assistant"
   ],

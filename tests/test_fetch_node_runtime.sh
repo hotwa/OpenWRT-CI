@@ -37,6 +37,9 @@ done
 # cross-install must use the same flag or npm 11 strict peer resolution rejects
 # the resulting lock with EUSAGE ("Missing ... from lock file").
 grep -Fq -- '--legacy-peer-deps' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh must install with --legacy-peer-deps"
+# configure_pi_extensions must register every preinstalled package in Pi's
+# settings so pi actually loads them (not just installs them under /opt/node).
+grep -Fq '"pi-commandcode-provider"' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not register pi-commandcode-provider in settings"
 
 if grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt"; then
   fail "feed ripgrep would pull Rust into every firmware build"
@@ -48,7 +51,7 @@ for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
-for pkg in 'command-code' '@earendil-works/pi-coding-agent' '@aaronkyriesenbach/pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' 'pnpm'; do
+for pkg in 'command-code' '@earendil-works/pi-coding-agent' '@aaronkyriesenbach/pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' 'pi-commandcode-provider' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
 for retired in 'opencode-ai' 'hermes-agent' '@tarquinen/opencode-dcp' '@mohak34/opencode-notifier' 'opencode-conductor-plugin'; do
