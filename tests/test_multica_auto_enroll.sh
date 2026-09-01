@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_FILE="$ROOT_DIR/files/etc/config/multica"
 INIT_SCRIPT="$ROOT_DIR/files/etc/init.d/multica"
 BOOTSTRAP_SCRIPT="$ROOT_DIR/files/usr/sbin/multica-agent-bootstrap"
+PROFILE_SCRIPT="$ROOT_DIR/files/usr/sbin/multica-device-profile"
 AGENT_ETC_MD="$ROOT_DIR/files/etc/multica/openwrt-agent.md"
 ENROLL_SCRIPT="$ROOT_DIR/Scripts/MulticaAutoEnroll.sh"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
@@ -13,6 +14,7 @@ CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 [ -f "$CONFIG_FILE" ] || { echo "missing multica config"; exit 1; }
 [ -f "$INIT_SCRIPT" ] || { echo "missing multica init script"; exit 1; }
 [ -f "$BOOTSTRAP_SCRIPT" ] || { echo "missing multica-agent-bootstrap"; exit 1; }
+[ -x "$PROFILE_SCRIPT" ] || { echo "missing executable multica-device-profile"; exit 1; }
 [ -f "$AGENT_ETC_MD" ] || { echo "missing openwrt-agent.md in etc/multica"; exit 1; }
 [ -f "$ENROLL_SCRIPT" ] || { echo "missing MulticaAutoEnroll.sh"; exit 1; }
 [ -f "$FETCH_SCRIPT" ] || { echo "missing fetch_multica_runtime.sh"; exit 1; }
@@ -29,7 +31,7 @@ grep -Fq 'MULTICA_DAEMON_DEVICE_NAME' "$INIT_SCRIPT"
 grep -Fq 'MULTICA_WORKSPACES_ROOT' "$INIT_SCRIPT"
 grep -Fq 'server_reachable' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'agent create' "$BOOTSTRAP_SCRIPT"
-grep -Fq 'Qualcomm IPQ6000' "$AGENT_ETC_MD"
+grep -Fq '本机启动时采集的事实' "$AGENT_ETC_MD"
 grep -Fq 'Headscale' "$AGENT_ETC_MD"
 grep -Fq 'rclone' "$AGENT_ETC_MD"
 grep -Fq 'MULTICA_TOKEN' "$ENROLL_SCRIPT"
@@ -55,9 +57,35 @@ grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
 grep -Fq "matches\" -eq 1" "$BOOTSTRAP_SCRIPT"
 grep -Fq 'procd_set_param respawn 3600 15 0' "$INIT_SCRIPT"
+grep -Fq 'multica-device-profile' "$BOOTSTRAP_SCRIPT"
+grep -Fq '.agent_state' "$BOOTSTRAP_SCRIPT"
+grep -Fq 'agent update' "$BOOTSTRAP_SCRIPT"
+grep -Fq 'active|idle|busy' "$BOOTSTRAP_SCRIPT"
+grep -Fq 'Tailnet IPv4 地址池为 `100.64.0.0/10`' "$PROFILE_SCRIPT"
+grep -Fq '禁止读取、输出、上传' "$PROFILE_SCRIPT"
 
 bash -n "$FETCH_SCRIPT"
 sh -n "$INIT_SCRIPT"
 sh -n "$BOOTSTRAP_SCRIPT"
+sh -n "$PROFILE_SCRIPT"
+
+PROFILE_TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf -- "$PROFILE_TEST_ROOT"' EXIT
+MULTICA_TOKEN='must-not-appear-in-agent-instructions' \
+	MULTICA_DATA_DIR="$PROFILE_TEST_ROOT/data" MULTICA_BASE_INSTRUCTIONS="$AGENT_ETC_MD" \
+	sh "$PROFILE_SCRIPT" write
+[ -s "$PROFILE_TEST_ROOT/data/openwrt-agent.md" ] || {
+	echo "device profile was not rendered"
+	exit 1
+}
+[ -s "$PROFILE_TEST_ROOT/data/.device_identity" ] || {
+	echo "device identity was not rendered"
+	exit 1
+}
+grep -Fq 'Mesh 与凭据安全边界' "$PROFILE_TEST_ROOT/data/openwrt-agent.md"
+if grep -Fq 'must-not-appear-in-agent-instructions' "$PROFILE_TEST_ROOT/data/openwrt-agent.md"; then
+	echo "device profile leaked a credential environment value"
+	exit 1
+fi
 
 echo "multica auto-enroll & agent bootstrap guard tests passed"

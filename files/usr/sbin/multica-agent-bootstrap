@@ -8,6 +8,7 @@ SECTION="main"
 LOG_TAG="multica-bootstrap"
 MULTICA_BIN="${MULTICA_BIN:-/usr/local/bin/multica}"
 DATA_DIR="${MULTICA_DATA_DIR:-/data/multica}"
+PROFILE_BIN="${MULTICA_DEVICE_PROFILE_BIN:-/usr/sbin/multica-device-profile}"
 LOCK_DIR="${MULTICA_BOOTSTRAP_LOCK_DIR:-/var/run/multica-agent-bootstrap.lock}"
 JSHN_LIB="${MULTICA_JSHN_LIB:-/usr/share/libubox/jshn.sh}"
 
@@ -104,30 +105,109 @@ select_runtime_id() {
 	printf '%s' "$matched_id"
 }
 
-agent_exists() {
+agent_is_usable() {
+	case "$1" in
+		active|idle|busy) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+select_agent_id() {
 	local json_file="$1"
 	local expected_name="$2"
 	local expected_runtime_id="$3"
-	local keys key candidate_name candidate_runtime_id candidate_status
+	local keys key candidate_id candidate_name candidate_runtime_id candidate_status
+	local matched_id="" matches=0
 
 	load_json "$json_file" || return 1
 	json_get_keys keys
 	for key in $keys; do
 		json_select "$key" || continue
-		candidate_name=""; candidate_runtime_id=""; candidate_status=""
+		candidate_id=""; candidate_name=""; candidate_runtime_id=""; candidate_status=""
+		json_get_var candidate_id id
 		json_get_var candidate_name name
 		json_get_var candidate_runtime_id runtime_id
 		json_get_var candidate_status status
 		json_select ..
 		if [ "$candidate_name" = "$expected_name" ] && \
 			[ "$candidate_runtime_id" = "$expected_runtime_id" ] && \
-			[ "$candidate_status" = "active" ]; then
+			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			matches=$((matches + 1))
+			matched_id="$candidate_id"
+		fi
+	done
+	json_cleanup 2>/dev/null || true
+	[ "$matches" -eq 1 ] || return 1
+	printf '%s' "$matched_id"
+}
+
+select_agent_id_by_id() {
+	local json_file="$1"
+	local expected_id="$2"
+	local keys key candidate_id candidate_status
+
+	[ -n "$expected_id" ] || return 1
+	load_json "$json_file" || return 1
+	json_get_keys keys
+	for key in $keys; do
+		json_select "$key" || continue
+		candidate_id=""; candidate_status=""
+		json_get_var candidate_id id
+		json_get_var candidate_status status
+		json_select ..
+		if [ "$candidate_id" = "$expected_id" ] && agent_is_usable "$candidate_status"; then
 			json_cleanup 2>/dev/null || true
+			printf '%s' "$candidate_id"
 			return 0
 		fi
 	done
 	json_cleanup 2>/dev/null || true
 	return 1
+}
+
+select_created_agent_id() {
+	local json_file="$1" agent_id
+
+	load_json "$json_file" || return 1
+	agent_id=""
+	json_get_var agent_id id
+	json_cleanup 2>/dev/null || true
+	[ -n "$agent_id" ] || return 1
+	printf '%s' "$agent_id"
+}
+
+state_value() {
+	local state_file="$1" key="$2"
+	[ -r "$state_file" ] || return 1
+	sed -n "s/^${key}=//p" "$state_file" | sed -n '1p'
+}
+
+write_agent_state() {
+	local state_file="$1" agent_id="$2" runtime_id="$3" instructions_hash="$4" agent_name="$5"
+	local temporary="${state_file}.new.$$"
+
+	umask 077
+	{
+		printf 'agent_id=%s\n' "$agent_id"
+		printf 'runtime_id=%s\n' "$runtime_id"
+		printf 'instructions_sha256=%s\n' "$instructions_hash"
+		printf 'agent_name=%s\n' "$agent_name"
+	} > "$temporary"
+	mv -f "$temporary" "$state_file"
+}
+
+instructions_sha256() {
+	sha256sum "$1" 2>/dev/null | awk '{ print $1 }'
+}
+
+render_device_profile() {
+	[ -x "$PROFILE_BIN" ] || return 1
+	MULTICA_DATA_DIR="$DATA_DIR" "$PROFILE_BIN" write
+}
+
+dynamic_agent_name() {
+	[ -x "$PROFILE_BIN" ] || return 1
+	MULTICA_DATA_DIR="$DATA_DIR" "$PROFILE_BIN" agent-name
 }
 
 write_success_flag() {
@@ -147,7 +227,8 @@ try_bootstrap() {
 	# kill the first-boot worker under `set -u`.  The caller below always supplies
 	# the reviewed instructions path, and an absent/unreadable file simply retries.
 	local instructions_file="${5:-}"
-	local runtime_json agent_json runtime_id instructions
+	local runtime_json agent_json runtime_id instructions instructions_hash
+	local state_file state_agent_id state_runtime_id state_hash state_name agent_id
 
 	server_reachable "$server_url" || return 1
 	[ -x "$MULTICA_BIN" ] || return 1
@@ -164,37 +245,66 @@ try_bootstrap() {
 	rm -f "$runtime_json"
 	[ -n "$runtime_id" ] || return 1
 
-	if "$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null && \
-		agent_exists "$agent_json" "$agent_name" "$runtime_id"; then
+	if ! "$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null; then
 		rm -f "$agent_json"
-		return 0
+		return 1
 	fi
-	rm -f "$agent_json"
 
 	[ -r "$instructions_file" ] || return 1
+	instructions_hash="$(instructions_sha256 "$instructions_file" || true)"
+	[ -n "$instructions_hash" ] || {
+		rm -f "$agent_json"
+		return 1
+	}
+	state_file="$DATA_DIR/.agent_state"
+	state_agent_id="$(state_value "$state_file" agent_id || true)"
+	state_runtime_id="$(state_value "$state_file" runtime_id || true)"
+	state_hash="$(state_value "$state_file" instructions_sha256 || true)"
+	state_name="$(state_value "$state_file" agent_name || true)"
+	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	if [ -z "$agent_id" ]; then
+		agent_id="$(select_agent_id "$agent_json" "$agent_name" "$runtime_id" || true)"
+	fi
+	if [ -n "$agent_id" ]; then
+		if [ "$state_runtime_id" != "$runtime_id" ] || \
+			[ "$state_hash" != "$instructions_hash" ] || \
+			[ "$state_name" != "$agent_name" ]; then
+			if ! "$MULTICA_BIN" agent update "$agent_id" \
+				--name "$agent_name" \
+				--runtime-id "$runtime_id" \
+				--description "本机 OpenWrt 网络与系统管理智能体" \
+				--instructions "$(cat "$instructions_file")" \
+				--max-concurrent-tasks 1 >/dev/null 2>&1; then
+				rm -f "$agent_json"
+				return 1
+			fi
+		fi
+		rm -f "$agent_json"
+		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+		return 0
+	fi
+
 	instructions="$(cat "$instructions_file")"
 	[ -n "$instructions" ] || return 1
-	"$MULTICA_BIN" agent create \
+	if ! "$MULTICA_BIN" agent create \
 		--name "$agent_name" \
 		--runtime-id "$runtime_id" \
 		--description "OpenWrt 系统与网络管理智能体" \
-		--instructions "$instructions" >/dev/null 2>&1 || return 1
-
-	# Do not mark success based solely on a zero exit code. Confirm the exact
-	# agent/runtime binding returned by the service.
-	"$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null || return 1
-	local confirmed
-	if agent_exists "$agent_json" "$agent_name" "$runtime_id"; then
-		confirmed=0
-	else
-		confirmed=1
+		--instructions "$instructions" \
+		--max-concurrent-tasks 1 --output json > "$agent_json" 2>/dev/null; then
+		rm -f "$agent_json"
+		return 1
 	fi
+
+	agent_id="$(select_created_agent_id "$agent_json" || true)"
 	rm -f "$agent_json"
-	return "$confirmed"
+	[ -n "$agent_id" ] || return 1
+	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+	return 0
 }
 
 main() {
-	local enabled server_url expected_runtime_name expected_provider agent_name
+	local enabled server_url expected_runtime_name expected_provider configured_agent_name agent_name
 	local instructions_file success_flag delay
 
 	enabled="$(cfg enabled 0)"
@@ -206,21 +316,23 @@ main() {
 	acquire_lock || return 0
 	mkdir -p "$DATA_DIR"
 	success_flag="$DATA_DIR/.agent_initialized"
-	[ ! -f "$success_flag" ] || return 0
 
 	server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
 	expected_runtime_name="$(cfg runtime_name 'Pi (OpenWrt-Router)')"
 	expected_provider="$(cfg runtime_provider 'pi')"
-	agent_name="$(cfg agent_name 'OpenWrt 管家')"
-	instructions_file="$DATA_DIR/openwrt-agent.md"
-	[ -f "$instructions_file" ] || instructions_file="/etc/multica/openwrt-agent.md"
-	[ -f "$instructions_file" ] || {
-		log "agent instructions are unavailable; bootstrap will retry"
-		instructions_file=""
-	}
+	configured_agent_name="$(cfg agent_name 'OpenWrt 管家')"
 
 	delay=5
 	while :; do
+		instructions_file=""
+		agent_name="$configured_agent_name"
+		if render_device_profile; then
+			instructions_file="$DATA_DIR/openwrt-agent.md"
+			agent_name="$(dynamic_agent_name || true)"
+			[ -n "$agent_name" ] || agent_name="$configured_agent_name"
+		else
+			log "device profile is unavailable; bootstrap will retry"
+		fi
 		if [ -n "$instructions_file" ] && \
 			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
 			write_success_flag "$success_flag"

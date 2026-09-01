@@ -1,0 +1,150 @@
+#!/bin/sh
+# Render a non-secret, runtime-derived identity profile for the local Multica
+# OpenWrt administrator Agent.  This runs only after /data is mounted.
+
+set -eu
+
+DATA_DIR="${MULTICA_DATA_DIR:-/data/multica}"
+BASE_INSTRUCTIONS="${MULTICA_BASE_INSTRUCTIONS:-/etc/multica/openwrt-agent.md}"
+PROFILE_FILE="$DATA_DIR/openwrt-agent.md"
+IDENTITY_FILE="$DATA_DIR/.device_identity"
+
+command_path() {
+	command -v "$1" 2>/dev/null || true
+}
+
+first_line() {
+	"$@" 2>/dev/null | sed -n '1p' || true
+}
+
+lan_device() {
+	local device
+	device="$(uci -q get network.lan.device 2>/dev/null || true)"
+	[ -n "$device" ] || device="br-lan"
+	printf '%s' "$device"
+}
+
+lan_address() {
+	local device address
+	device="$(lan_device)"
+	address="$(ip -4 -o addr show dev "$device" scope global 2>/dev/null | awk 'NR == 1 { print $4 }')"
+	if [ -z "$address" ]; then
+		address="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+		[ -n "$address" ] && address="$address/unknown"
+	fi
+	[ -n "$address" ] || address="unavailable"
+	printf '%s' "$address"
+}
+
+lan_mac_suffix() {
+	local device mac
+	device="$(lan_device)"
+	mac="$(cat "/sys/class/net/$device/address" 2>/dev/null || true)"
+	[ -n "$mac" ] || mac="$(uci -q get network.lan.macaddr 2>/dev/null || true)"
+	mac="$(printf '%s' "$mac" | tr -cd '[:xdigit:]' | tail -c 6)"
+	[ -n "$mac" ] || mac="nomac"
+	printf '%s' "$mac"
+}
+
+device_hostname() {
+	local value
+	value="$(uci -q get system.@system[0].hostname 2>/dev/null || true)"
+	[ -n "$value" ] || value="$(hostname 2>/dev/null || true)"
+	[ -n "$value" ] || value="openwrt"
+	printf '%s' "$value"
+}
+
+agent_name() {
+	printf 'OpenWrt 管家 · %s · %s · %s' "$(device_hostname)" "$(lan_address)" "$(lan_mac_suffix)"
+}
+
+board_value() {
+	local key fallback value
+	key="$1"
+	fallback="$2"
+	value="$(ubus call system board 2>/dev/null | jsonfilter -e "@.$key" 2>/dev/null || true)"
+	[ -n "$value" ] || value="$fallback"
+	printf '%s' "$value"
+}
+
+tailscale_advertised_routes() {
+	local routes
+	routes="$(tailscale debug prefs 2>/dev/null | jsonfilter -e '@.AdvertiseRoutes[*]' 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+	[ -n "$routes" ] || routes="none reported"
+	printf '%s' "$routes"
+}
+
+tailscale_accepted_routes() {
+	local routes
+	routes="$(ip -4 route show table 52 2>/dev/null | awk '$0 ~ /dev tailscale0/ { print $1 }' | sort -u | head -32 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+	[ -n "$routes" ] || routes="none reported"
+	printf '%s' "$routes"
+}
+
+tool_line() {
+	local tool path version
+	tool="$1"
+	path="$(command_path "$tool")"
+	[ -n "$path" ] || return 0
+	version=""
+	case "$tool" in
+		pi|cmdc|node|npm|pnpm|python3|uv) version="$(first_line "$tool" --version)" ;;
+	esac
+	if [ -n "$version" ]; then
+		printf -- '- `%s`: `%s` (%s)\n' "$tool" "$path" "$version"
+	else
+		printf -- '- `%s`: `%s`\n' "$tool" "$path"
+	fi
+}
+
+render_profile() {
+	local tmp board model lan tail_ip data_mount memory
+	mkdir -p "$DATA_DIR"
+	tmp="$PROFILE_FILE.new.$$"
+	board="$(board_value board_name unknown)"
+	model="$(board_value model unknown)"
+	lan="$(lan_address)"
+	tail_ip="$(tailscale ip -4 2>/dev/null | sed -n '1p' || true)"
+	[ -n "$tail_ip" ] || tail_ip="unavailable"
+	data_mount="$(df -h /data 2>/dev/null | awk 'NR == 2 { print $1 " " $2 " total, " $4 " free" }')"
+	[ -n "$data_mount" ] || data_mount="unavailable"
+	memory="$(awk '/MemTotal:/ { printf "%.0f MiB", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
+	[ -n "$memory" ] || memory="unavailable"
+
+	{
+		[ -r "$BASE_INSTRUCTIONS" ] && cat "$BASE_INSTRUCTIONS"
+		printf '\n\n---\n\n## 本机启动时采集的事实（优先于通用描述）\n\n'
+		printf -- '- **管理 Agent 身份**：`%s`\n' "$(agent_name)"
+		printf -- '- **OpenWrt 板型**：`%s`；**型号**：`%s`\n' "$board" "$model"
+		printf -- '- **LAN 接口与地址**：`%s`，`%s`\n' "$(lan_device)" "$lan"
+		printf -- '- **Tailscale 地址**：`%s`；本机通告：`%s`\n' "$tail_ip" "$(tailscale_advertised_routes)"
+		printf -- '- **table 52 已接受的 Tailnet 子网**：`%s`\n' "$(tailscale_accepted_routes)"
+		printf -- '- **内存**：`%s`；**数据盘**：`%s`\n' "$memory" "$data_mount"
+		printf -- '- **任务根目录**：`/data/multica/workspaces`（所有项目、下载、虚拟环境和产物均须位于此处）\n'
+		printf '\n### 当前可调用工具（运行时探测）\n\n'
+		for tool in uci ubus ip nft logread pi cmdc node npm pnpm python3 uv; do
+			tool_line "$tool"
+		done
+		printf '\n### Mesh 与凭据安全边界\n\n'
+		printf '%s\n' '- 本机只通告当前 LAN 的精确 CIDR；远端子网是否可达由 Headplane 批准后进入 table 52 决定。可以诊断，但不得自行批准路由或通告整个 `192.168.0.0/16`。'
+		printf '%s\n' '- Tailnet IPv4 地址池为 `100.64.0.0/10`。'
+		printf '%s\n' '- 禁止读取、输出、上传或在任务中使用 Multica Token、Headscale auth key、Tailscale state、SSH 私钥或 `/root/.multica/config.json` 的敏感字段。'
+	} > "$tmp"
+	chmod 600 "$tmp"
+	mv -f "$tmp" "$PROFILE_FILE"
+	printf '%s\n' "$(agent_name)" > "$IDENTITY_FILE.new.$$"
+	chmod 600 "$IDENTITY_FILE.new.$$"
+	mv -f "$IDENTITY_FILE.new.$$" "$IDENTITY_FILE"
+}
+
+main() {
+	case "${1:-write}" in
+		write) render_profile ;;
+		agent-name) agent_name ;;
+		*) echo "usage: $0 [write|agent-name]" >&2; return 2 ;;
+	esac
+}
+
+if [ "${MULTICA_DEVICE_PROFILE_LIBRARY_ONLY:-0}" != "1" ]; then
+	main "$@"
+fi
