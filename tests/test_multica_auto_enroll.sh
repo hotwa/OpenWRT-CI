@@ -54,6 +54,7 @@ grep -Fq 'PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current
 grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
 grep -Fq "matches\" -eq 1" "$BOOTSTRAP_SCRIPT"
+grep -Fq 'procd_set_param respawn 3600 15 0' "$INIT_SCRIPT"
 
 bash -n "$FETCH_SCRIPT"
 sh -n "$INIT_SCRIPT"

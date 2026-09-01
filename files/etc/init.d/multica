@@ -226,7 +226,10 @@ EOF
 		MULTICA_DAEMON_MAX_CONCURRENT_TASKS="$max_tasks" \
 		MULTICA_DAEMON_POLL_INTERVAL="$poll_interval" \
 		MULTICA_DAEMON_HEARTBEAT_INTERVAL="$heartbeat_interval"
-	procd_set_param respawn 3600 5 5
+	# DNS and the default route can legitimately become ready after this service
+	# at first boot.  A nonzero retry cap makes procd permanently stop Multica
+	# after a brief early DNS outage; retry=0 keeps the supervised daemon retrying.
+	procd_set_param respawn 3600 15 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_close_instance

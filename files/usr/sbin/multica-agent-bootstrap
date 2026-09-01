@@ -143,7 +143,10 @@ try_bootstrap() {
 	local expected_runtime_name="$2"
 	local expected_provider="$3"
 	local agent_name="$4"
-	local instructions_file="$5"
+	# Keep this optional at the function boundary so an integration mistake cannot
+	# kill the first-boot worker under `set -u`.  The caller below always supplies
+	# the reviewed instructions path, and an absent/unreadable file simply retries.
+	local instructions_file="${5:-}"
 	local runtime_json agent_json runtime_id instructions
 
 	server_reachable "$server_url" || return 1
@@ -168,6 +171,7 @@ try_bootstrap() {
 	fi
 	rm -f "$agent_json"
 
+	[ -r "$instructions_file" ] || return 1
 	instructions="$(cat "$instructions_file")"
 	[ -n "$instructions" ] || return 1
 	"$MULTICA_BIN" agent create \
@@ -218,7 +222,7 @@ main() {
 	delay=5
 	while :; do
 		if [ -n "$instructions_file" ] && \
-			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name"; then
+			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
 			write_success_flag "$success_flag"
 			log "default agent is registered on the expected online runtime"
 			return 0

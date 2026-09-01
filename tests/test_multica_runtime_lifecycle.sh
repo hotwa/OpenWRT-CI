@@ -66,4 +66,23 @@ if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' commandcod
 	exit 1
 fi
 
+# The first-boot worker runs with `set -u`.  A missing optional instructions
+# argument must make one bootstrap attempt retryable, never abort its worker.
+if ! MULTICA_BOOTSTRAP_LIBRARY_ONLY=1 MULTICA_JSHN_LIB="$TEST_ROOT/jshn.sh" \
+	bash -c '
+		. "$1"
+		server_reachable() { return 1; }
+		if try_bootstrap "https://multica.example" "Pi" pi "router"; then
+			exit 1
+		fi
+	' bash "$BOOTSTRAP_SCRIPT"; then
+	echo "bootstrap aborts when an optional instructions path is absent"
+	exit 1
+fi
+
+grep -Fq 'try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"' "$BOOTSTRAP_SCRIPT" || {
+	echo "bootstrap main does not pass its reviewed instructions file"
+	exit 1
+}
+
 echo "multica runtime lifecycle behavior tests passed"
