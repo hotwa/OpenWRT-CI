@@ -302,7 +302,8 @@ publish_node_link() {
 }
 
 publish_pi_extension_link() {
-	local runtime="$1" node_dir source link="/tmp/agent-runtime-pi-plan-mode.ts" temporary="${link}.new.$$"
+	local runtime="$1" node_dir source link="/tmp/agent-runtime-pi-plan-mode.ts"
+	local temporary="${link}.new.$$"
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
 	[ -n "$node_dir" ] || return 1
 	source="$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts"
@@ -311,6 +312,52 @@ publish_pi_extension_link() {
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$source" "$temporary" || return 1
 	mv -f "$temporary" "$link"
+}
+
+publish_pi_models() {
+	# Idempotently merge the remote vLLM provider into the persistent Pi model
+	# catalog.  The firmware ships vllm-qwen38 in /etc/pi/agent/models.json and
+	# 99-auto-mount-data copies it to /data/pi/agent only on first boot, so a
+	# re-flash or a user edit that drops the provider must be repaired here.
+	# The merge is intentionally provider-additive: other providers and unknown
+	# fields are preserved, and a missing or invalid catalog is rebuilt from the
+	# firmware default.  Pi reloads /model on every open, no daemon restart needed.
+	local runtime="$1" node_dir models_file default_catalog catalog present provider
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	[ -n "$node_dir" ] && [ -x "$node_dir/bin/node" ] || return 0
+	[ -d "$DATA_ROOT/pi/agent" ] && [ ! -L "$DATA_ROOT/pi/agent" ] || return 0
+	models_file="$DATA_ROOT/pi/agent/models.json"
+	default_catalog="/etc/pi/agent/models.json"
+	[ -r "$default_catalog" ] && [ -f "$default_catalog" ] && [ ! -L "$default_catalog" ] || return 0
+	present="$(command -v jsonfilter >/dev/null 2>&1 && jsonfilter -i "$models_file" -e '@.providers["vllm-qwen38"]' 2>/dev/null || true)"
+	[ -n "$present" ] && return 0
+	# Node is guaranteed by runtime_health and is the only robust JSON editor on
+	# the router; use it for a strictly additive, atomic merge.
+	"$node_dir/bin/node" - "$models_file" "$default_catalog" <<'NODE' || return 1
+const fs = require('node:fs');
+const [target, defaultPath] = process.argv.slice(2);
+const defaultCatalog = JSON.parse(fs.readFileSync(defaultPath, 'utf8'));
+let catalog = {};
+if (fs.existsSync(target)) {
+  try { catalog = JSON.parse(fs.readFileSync(target, 'utf8')); }
+  catch (e) { catalog = {}; }
+}
+if (!catalog || Array.isArray(catalog) || typeof catalog !== 'object') catalog = {};
+if (!catalog.providers || typeof catalog.providers !== 'object') catalog.providers = {};
+if (!catalog.providers['vllm-qwen38']) {
+  catalog.providers['vllm-qwen38'] = defaultCatalog.providers['vllm-qwen38'];
+}
+const mode = fs.existsSync(target) ? fs.statSync(target).mode & 0o777 : 0o600;
+const tmp = target + '.vllm-qwen38.' + process.pid;
+try {
+  fs.writeFileSync(tmp, JSON.stringify(catalog, null, 2) + '\n', {mode});
+  fs.chmodSync(tmp, mode);
+  fs.renameSync(tmp, target);
+} finally {
+  if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+}
+NODE
+	[ -n "$(command -v jsonfilter >/dev/null 2>&1 && jsonfilter -i "$models_file" -e '@.providers["vllm-qwen38"]' 2>/dev/null || true)" ]
 }
 
 set_current() {
@@ -458,6 +505,10 @@ reconcile_runtime() {
 		publish_pi_extension_link "$current" || return 1
 		log "retained newer compatible data release $current_num"
 	fi
+	# Repair the persistent Pi model catalog for the active runtime after the
+	# node binary is available, so vllm-qwen38 survives re-flash and user edits.
+	publish_pi_models "$(current_runtime)" || \
+		log 'could not reconcile the remote vLLM provider into the Pi model catalog'
 	return 0
 }
 

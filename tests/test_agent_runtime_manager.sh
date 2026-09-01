@@ -29,6 +29,9 @@ grep -Fq 'agent-runtime reconcile --json' "$INIT" || fail "runtime reconcile mis
 for term in 'generations' 'quarantine' 'flock -n 9' 'usign -V' 'archive_is_safe' 'links_are_safe' 'verify_critical_hashes' 'runtime_health' 'runtime_uv_dir' 'critical_uv'; do
   grep -Fq "$term" "$MANAGER" || fail "manager omits $term"
 done
+for term in 'publish_pi_models' "local runtime=\"\$1\" node_dir source link=\"/tmp/agent-runtime-pi-plan-mode.ts\"" 'local temporary="${link}.new.$$"' "vllm-qwen38"; do
+  grep -Fq "$term" "$MANAGER" || fail "manager omits $term"
+done
 for command in pi cmdc multica; do
   grep -Fq "for command in pi cmdc multica" "$MANAGER" || fail "runtime health does not cover Pi, CommandCode and Multica"
 done

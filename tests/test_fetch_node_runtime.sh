@@ -62,11 +62,19 @@ if (!provider || provider.baseUrl !== 'http://192.168.11.159:8001/v1' || provide
 if (!provider.models?.some(m => m.id === 'Qwen3.8-27B')) process.exit(2);
 if (settings.defaultProvider !== 'office-sglang' || settings.defaultModel !== 'Qwen3.8-27B') process.exit(3);
 const declaredModels = Object.values(models.providers ?? {}).flatMap(provider => provider.models ?? []);
-if (!declaredModels.length || declaredModels.some(model => model.contextWindow !== 262144)) process.exit(4);
+if (!declaredModels.length) process.exit(4);
+for (const m of declaredModels) {
+  if (m.id === 'automodel' && m.contextWindow === 128000) continue;
+  if (m.contextWindow !== 262144) process.exit(4);
+}
 const fallback = models.providers?.cloudcollector;
 if (!fallback || fallback.baseUrl !== 'https://fhk.org/v1' || fallback.api !== 'openai-completions') process.exit(5);
 if (fallback.apiKey !== '!cat /data/pi/agent/secrets/cloudcollector-api-key') process.exit(6);
 if (!fallback.models?.some(m => m.id === 'automodel' && m.contextWindow === 262144)) process.exit(7);
+const vllm = models.providers?.['vllm-qwen38'];
+if (!vllm || vllm.baseUrl !== 'http://x9700x.hs.jmsu.top:8000/v1' || vllm.api !== 'openai-completions') process.exit(8);
+if (vllm.apiKey !== 'not-needed') process.exit(9);
+if (!vllm.models?.some(m => m.id === 'automodel' && m.contextWindow === 128000 && m.reasoning === true)) process.exit(10);
 NODE
 
 grep -Fq '/data/node/bin' "$PROFILE_NODE" || fail "login PATH does not prefer an active generation"

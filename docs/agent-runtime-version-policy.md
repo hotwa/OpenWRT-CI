@@ -77,6 +77,9 @@ procd 不加载 `profile.d`，所以 `multica` 必须显式设置
 显示状态和 `agent-runtime upgrade`/verify/rollback 指引，不修改版本。
 
 Pi 的模型设置从固件 `/etc/pi/agent/` 首次复制到 `/data/pi/agent/`；
+`agent-runtime reconcile` 每次启动会以 provider 追加方式把固件默认的
+`vllm-qwen38`（远程 vLLM @x9700x / `x9700x.hs.jmsu.top:8000`）幂等合并进
+`/data/pi/agent/models.json`，用户对其它 provider 的编辑保留、不整文件覆盖。
 CommandCode 的用户认证持久化在 `/data/commandcode/`。固件不预置任何用户
 OAuth token。`uv-runtime` 在 `/data` 已挂载后仅从 `/opt/uv/python-mirror`
 离线部署 CPython 到 `/data/uv/python` 并发布 `python3`；无 `/data` 时不会

@@ -53,6 +53,35 @@
           }
         }
       ]
+    },
+    "vllm-qwen38": {
+      "name": "vllm-qwen38",
+      "baseUrl": "http://x9700x.hs.jmsu.top:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "not-needed",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsFinishReason": false,
+        "supportsUsageInStreaming": false,
+        "requiresThinkingAsText": true
+      },
+      "models": [
+        {
+          "id": "automodel",
+          "name": "Auto Model (远程 vLLM @x9700x)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 128000,
+          "maxTokens": 8192,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
     }
   }
 }
