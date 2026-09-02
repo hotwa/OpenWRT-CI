@@ -23,6 +23,8 @@ grep -Eq "cron: ['\"]?0 \* \* \* \*['\"]?" "$WORKFLOW" || fail "workflow is not 
 for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests'; do
   grep -Fq "$term" "$WORKFLOW" || fail "workflow omits $term"
 done
+grep -Fq 'apk add --no-cache libgcc' "$WORKFLOW" ||
+  fail "musl generation probe must install libgcc for the Node runtime"
 if grep -Eqi 'HERMES_TARGET_RUNNER|opencode-dcp' "$WORKFLOW"; then
 	fail "workflow still probes a retired runtime"
 fi
