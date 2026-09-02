@@ -15,6 +15,7 @@ for term in \
   '.conclusion == "timed_out"' \
   '.conclusion == "startup_failure"' \
   '.conclusion == "action_required"' \
+  '.conclusion == "cancelled"' \
   'gh api --method DELETE' \
   'workflows_keep_day: 30'; do
   grep -Fq "$term" "$WORKFLOW" || fail "missing $term"

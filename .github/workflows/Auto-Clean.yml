@@ -22,11 +22,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Keep successful and cancelled runs for the normal retention period,
-          # but remove completed failures immediately.  In-progress and queued
-          # runs are excluded by the API status filter and are never cancelled.
+          # Keep successful runs for the normal retention period, but remove
+          # completed failures and cancellations immediately. In-progress and
+          # queued runs are excluded by the API status filter and are never
+          # cancelled.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100" \
-            --jq '.workflow_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required") | .id' \
+            --jq '.workflow_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required" or .conclusion == "cancelled") | .id' \
             > "$RUNNER_TEMP/failed-workflow-runs"
 
           while IFS= read -r run_id; do
