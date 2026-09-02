@@ -22,12 +22,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Keep successful runs for the normal retention period, but remove
-          # completed failures and cancellations immediately. In-progress and
-          # queued runs are excluded by the API status filter and are never
-          # cancelled.
+          # Preserve Auto-Clean as an audit trail. Keep other successful runs
+          # for the normal retention period, but remove completed failures and
+          # cancellations immediately. In-progress and queued runs are
+          # excluded by the API status filter and are never cancelled.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100" \
-            --jq '.workflow_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required" or .conclusion == "cancelled") | .id' \
+            --jq '.workflow_runs[] | select(.name != "Auto-Clean") | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required" or .conclusion == "cancelled") | .id' \
             > "$RUNNER_TEMP/failed-workflow-runs"
 
           while IFS= read -r run_id; do
@@ -44,3 +44,5 @@ jobs:
           delete_workflows: true
           # Deleting a workflow run also deletes its private firmware artifacts.
           workflows_keep_day: 30
+          # Retain the cleanup job history even after the normal retention period.
+          workflows_keep_keyword: 'Auto-Clean'

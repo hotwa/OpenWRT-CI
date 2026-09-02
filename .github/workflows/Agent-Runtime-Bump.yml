@@ -159,10 +159,10 @@ jobs:
           for arch in arm64 x64; do
             case "$arch" in arm64) platform=linux/arm64 ;; x64) platform=linux/amd64 ;; esac
             docker run --rm --platform "$platform" -v "$RUNNER_TEMP/generation/$arch:/generation:ro" alpine:3.20 /bin/sh -ec '
-              # The official musl Node binary links libgcc_s.so.1.  OpenWrt
-              # provides it through its libgcc package, while the bare Alpine
-              # probe image does not.
-              apk add --no-cache libgcc
+              # The official musl Node binary links libgcc_s.so.1 and
+              # libstdc++.so.6. OpenWrt provides both runtime libraries,
+              # while the bare Alpine probe image does not.
+              apk add --no-cache libgcc libstdc++
               export PATH=/generation/node/bin:/generation/uv:/generation/bin:$PATH
               node -p "process.versions.modules"
               uv --version
