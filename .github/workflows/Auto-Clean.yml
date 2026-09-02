@@ -17,6 +17,24 @@ jobs:
   auto_clean:
     runs-on: ubuntu-22.04
     steps:
+      - name: Delete completed failed workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Keep successful and cancelled runs for the normal retention period,
+          # but remove completed failures immediately.  In-progress and queued
+          # runs are excluded by the API status filter and are never cancelled.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100" \
+            --jq '.workflow_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" or .conclusion == "action_required") | .id' \
+            > "$RUNNER_TEMP/failed-workflow-runs"
+
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            echo "Deleting completed failed workflow run $run_id"
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+          done < "$RUNNER_TEMP/failed-workflow-runs"
+
       - name: Delete old workflow runs
         uses: ophub/delete-releases-workflows@185ead47518014ad09d25f358e70353483bdb22f # v0.1.0
         with:
