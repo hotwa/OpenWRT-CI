@@ -107,6 +107,19 @@ for expected in \
 		echo "gateway script missing firewall guard: $expected"
 		exit 1
 	}
+	done
+
+for expected in \
+	'firewall.allow_tailscale_udp' \
+	'firewall.allow_tailscale_udp.name" "Allow-Tailscale-UDP"' \
+	'firewall.allow_tailscale_udp.src" "wan"' \
+	'firewall.allow_tailscale_udp.proto" "udp"' \
+	'firewall.allow_tailscale_udp.dest_port" "41641"' \
+	'firewall.allow_tailscale_udp.target" "ACCEPT"'; do
+	grep -F "$expected" "$GATEWAY_INIT" >/dev/null || {
+		echo "gateway script missing Tailscale WAN UDP rule: $expected"
+		exit 1
+	}
 done
 
 grep -q 'firewall.tailscale_tailnet_to_lan.src" "tailscale"' "$GATEWAY_INIT" || {

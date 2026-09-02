@@ -141,6 +141,18 @@ apply_firewall() {
 	ensure_option "firewall.tailscale.forward" "REJECT"
 	ensure_option "firewall.tailscale.masq" "$masq"
 
+	# tailscaled listens on the fixed UCI port (41641 by default).  Permit
+	# only that UDP port from WAN so peers can complete NAT traversal and
+	# promote a DERP connection to direct.  Keep this as a named, managed
+	# section: the reconciler also repairs preserved pre-rule firewall configs
+	# after sysupgrade without creating duplicate UCI rules.
+	ensure_option "firewall.allow_tailscale_udp" "rule"
+	ensure_option "firewall.allow_tailscale_udp.name" "Allow-Tailscale-UDP"
+	ensure_option "firewall.allow_tailscale_udp.src" "wan"
+	ensure_option "firewall.allow_tailscale_udp.proto" "udp"
+	ensure_option "firewall.allow_tailscale_udp.dest_port" "41641"
+	ensure_option "firewall.allow_tailscale_udp.target" "ACCEPT"
+
 	ensure_option "firewall.tailscale_lan_to_tailnet" "forwarding"
 	ensure_option "firewall.tailscale_lan_to_tailnet.src" "lan"
 	ensure_option "firewall.tailscale_lan_to_tailnet.dest" "tailscale"
