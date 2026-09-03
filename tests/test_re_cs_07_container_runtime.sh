@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-WORKFLOW="$ROOT_DIR/.github/workflows/RE-CS-07-CONTAINER-TEST.yml"
+WORKFLOW="$ROOT_DIR/.github/workflows/RE-CONTAINER-RUNTIME-TEST.yml"
 OVERLAY="$ROOT_DIR/files-container-runtime-test"
 
 [ -f "$CORE" ] || { echo "missing WRT-CORE workflow" >&2; exit 1; }
@@ -28,17 +28,23 @@ grep -Fq 'type: choice' "$WORKFLOW"
 grep -Fq 'WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || '\''prebuilt'\'' }}' "$WORKFLOW"
 grep -Fq 'WRT_CONTAINER_RUNTIME_VERSION: ${{ inputs.CONTAINER_RUNTIME_VERSION }}' "$WORKFLOW"
 
-CS02_WORKFLOW="$ROOT_DIR/.github/workflows/RE-CS-02-CONTAINER-TEST.yml"
-[ -f "$CS02_WORKFLOW" ] || {
-	echo "missing RE-CS-02 container test workflow" >&2
-	exit 1
-}
-grep -Fq 'WRT_CONFIG: IPQ60XX-RE-CS-02' "$CS02_WORKFLOW"
-grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$CS02_WORKFLOW"
-grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$CS02_WORKFLOW"
-grep -Fq 'type: choice' "$CS02_WORKFLOW"
-grep -Fq 'WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || '\''prebuilt'\'' }}' "$CS02_WORKFLOW"
-grep -Fq 'WRT_CONTAINER_RUNTIME_VERSION: ${{ inputs.CONTAINER_RUNTIME_VERSION }}' "$CS02_WORKFLOW"
+grep -Fq "if: inputs.TARGET == 'all' || inputs.TARGET == 're-cs-02'" "$WORKFLOW"
+grep -Fq "if: inputs.TARGET == 'all' || inputs.TARGET == 're-cs-07'" "$WORKFLOW"
+grep -Fq 'WRT_CONFIG: IPQ60XX-RE-CS-02' "$WORKFLOW"
+grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-02' "$WORKFLOW"
+grep -Fq 'WRT_CONFIG: IPQ60XX-RE-CS-07-NOWIFI' "$WORKFLOW"
+grep -Fq 'WRT_EXPECTED_DEVICE: jdcloud_re-cs-07' "$WORKFLOW"
+grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$WORKFLOW"
+grep -Fq 'type: choice' "$WORKFLOW"
+grep -Fq 'WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || '\''prebuilt'\'' }}' "$WORKFLOW"
+grep -Fq 'WRT_CONTAINER_RUNTIME_VERSION: ${{ inputs.CONTAINER_RUNTIME_VERSION }}' "$WORKFLOW"
+
+for obsolete in RE-CS-02-CONTAINER-TEST.yml RE-CS-07-CONTAINER-TEST.yml; do
+	[ ! -e "$ROOT_DIR/.github/workflows/$obsolete" ] || {
+		echo "obsolete duplicate workflow remains: $obsolete" >&2
+		exit 1
+	}
+done
 
 if grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"; then
 	echo "normal RE-Mesh workflow must not enable the experimental runtime" >&2

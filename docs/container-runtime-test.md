@@ -1,8 +1,10 @@
-# RE-CS-07 container runtime test
+# RE-CS-02 / RE-CS-07 container runtime test
 
-The experimental workflow is `.github/workflows/RE-CS-07-CONTAINER-TEST.yml`.
-It is intentionally separate from `RE-CS-07-BUILD`, so the normal firmware does
-not acquire container runtime packages until the hardware test is accepted.
+The experimental workflow is `.github/workflows/RE-CONTAINER-RUNTIME-TEST.yml`.
+It is one manual entry point that can build RE-CS-02, RE-CS-07, or both. It is
+intentionally separate from the normal production workflows, so the container
+runtime can be retired by removing this workflow and its overlay without
+changing the normal firmware path or RE-SS-01.
 
 The Action downloads the latest stable official `nerdctl-full` arm64 release,
 verifies its `SHA256SUMS` entry, and copies only the rootful `containerd`,
@@ -12,11 +14,11 @@ compose` is provided by nerdctl; there is no separate `nerdctl-compose` package.
 
 The default runtime source is `prebuilt`. The reusable workflow also accepts
 `auto`, which falls back to the OpenWrt `containerd`/`nerdctl`/`runc` packages
-only when the prebuilt download or validation fails. It is not enabled by the
-two test workflows because a silent source fallback would make a build much
-slower and less obvious.
+only when the prebuilt download or validation fails. It is not enabled by
+default because a silent source fallback would make a build much slower and
+less obvious.
 
-Each test workflow also exposes an optional `CONTAINER_RUNTIME_VERSION` input.
+The test workflow also exposes an optional `CONTAINER_RUNTIME_VERSION` input.
 Leaving it empty follows the latest stable release; setting it to a release
 such as `2.3.5` makes a reproducible rollback image from that bundle.
 
