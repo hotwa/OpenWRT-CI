@@ -86,7 +86,7 @@ check_sha256sums() {
 
 verify_upload() {
 	local upload="$1" device="$2" payload_count expected_count
-	local -a sysupgrades factories manifests configs metadata
+	local -a sysupgrades factories manifests configs metadata runtime_versions
 	validate_device "$device"
 	check_flat_upload "$upload"
 	mapfile -t sysupgrades < <(find "$upload" -maxdepth 1 -type f -name "*${device}*sysupgrade.bin" -printf '%f\n')
@@ -94,14 +94,16 @@ verify_upload() {
 	mapfile -t manifests < <(find "$upload" -maxdepth 1 -type f -name '*.manifest' -printf '%f\n')
 	mapfile -t configs < <(find "$upload" -maxdepth 1 -type f -name 'Config-*.txt' -printf '%f\n')
 	mapfile -t metadata < <(find "$upload" -maxdepth 1 -type f -name 'metadata.json' -printf '%f\n')
+	mapfile -t runtime_versions < <(find "$upload" -maxdepth 1 -type f -name 'ContainerRuntime-versions.txt' -printf '%f\n')
 	[ "${#sysupgrades[@]}" -ge 1 ] || die "artifact must contain matching sysupgrade"
 	[ "${#factories[@]}" -ge 1 ] || die "artifact must contain matching factory"
 	[ "${#manifests[@]}" -eq 1 ] || die "artifact must contain one matching manifest"
 	[ "${#configs[@]}" -eq 1 ] || die "artifact must contain one final config"
 	[ "${#metadata[@]}" -le 1 ] || die "artifact must contain at most one metadata file"
+	[ "${#runtime_versions[@]}" -le 1 ] || die "artifact must contain at most one container runtime version file"
 	[ -f "$upload/SHA256SUMS" ] || die "artifact is missing SHA256SUMS"
 	payload_count="$(find "$upload" -maxdepth 1 -type f ! -name SHA256SUMS | wc -l)"
-	expected_count=$((${#sysupgrades[@]} + ${#factories[@]} + 1 + 1 + ${#metadata[@]}))
+	expected_count=$((${#sysupgrades[@]} + ${#factories[@]} + 1 + 1 + ${#metadata[@]} + ${#runtime_versions[@]}))
 	[ "$payload_count" -eq "$expected_count" ] ||
 		die "artifact contains an unrecognized payload"
 	check_manifest "$upload/${manifests[0]}"

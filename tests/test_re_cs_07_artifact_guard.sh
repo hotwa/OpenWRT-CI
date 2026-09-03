@@ -52,7 +52,10 @@ EOT
 cp "$WORK_DIR/.config" "$WORK_DIR/upload/Config-IPQ60XX-RE-CS-07-NOWIFI.txt"
 bash "$SCRIPT" stage "$WORK_DIR/bin/targets" "$WORK_DIR/upload" "$DEVICE"
 bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE"
-[ "$(find "$WORK_DIR/upload" -maxdepth 1 -type f | wc -l)" -eq 5 ]
+printf 'nerdctl=2.3.5\ncontainerd=2.3.3\n' >"$WORK_DIR/upload/ContainerRuntime-versions.txt"
+(cd "$WORK_DIR/upload" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum -- >SHA256SUMS)
+bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE"
+[ "$(find "$WORK_DIR/upload" -maxdepth 1 -type f | wc -l)" -eq 6 ]
 (cd "$WORK_DIR/upload" && sha256sum -c SHA256SUMS >/dev/null)
 
 # Verification rejects a manifest missing the topology-specific package.
