@@ -9,12 +9,12 @@ OVERLAY="$ROOT_DIR/files-container-runtime-test"
 [ -f "$CORE" ] || { echo "missing WRT-CORE workflow" >&2; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing container test workflow" >&2; exit 1; }
 [ -f "$OVERLAY/etc/containerd/containerd-test.toml" ] || exit 1
-[ -x "$OVERLAY/etc/init.d/containerd-test" ] || {
-	echo "containerd test init script must be executable" >&2
+[ "$(git -C "$ROOT_DIR" ls-files --stage -- files-container-runtime-test/etc/init.d/containerd-test | awk '{print $1}')" = 100755 ] || {
+	echo "containerd test init script must be executable in Git" >&2
 	exit 1
 }
-[ -x "$OVERLAY/etc/uci-defaults/97-containerd-test-enable" ] || {
-	echo "containerd test uci-defaults script must be executable" >&2
+[ "$(git -C "$ROOT_DIR" ls-files --stage -- files-container-runtime-test/etc/uci-defaults/97-containerd-test-enable | awk '{print $1}')" = 100755 ] || {
+	echo "containerd test uci-defaults script must be executable in Git" >&2
 	exit 1
 }
 

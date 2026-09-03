@@ -584,15 +584,18 @@ jobs:
                 echo "ERROR: container runtime test overlay is missing" >&2
                 exit 1
               }
-              test -x ./files-container-runtime-test/etc/init.d/containerd-test || {
-                echo "ERROR: containerd test init script is not executable" >&2
+              test "$(git ls-files --stage -- files-container-runtime-test/etc/init.d/containerd-test | awk '{print $1}')" = 100755 || {
+                echo "ERROR: containerd test init script is not executable in Git" >&2
                 exit 1
               }
-              test -x ./files-container-runtime-test/etc/uci-defaults/97-containerd-test-enable || {
-                echo "ERROR: containerd test uci-defaults script is not executable" >&2
+              test "$(git ls-files --stage -- files-container-runtime-test/etc/uci-defaults/97-containerd-test-enable | awk '{print $1}')" = 100755 || {
+                echo "ERROR: containerd test uci-defaults script is not executable in Git" >&2
                 exit 1
               }
               cp -rf ./files-container-runtime-test/. ./wrt/files/
+              chmod +x \
+                ./wrt/files/etc/init.d/containerd-test \
+                ./wrt/files/etc/uci-defaults/97-containerd-test-enable
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
