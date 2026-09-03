@@ -64,6 +64,18 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_CONTAINER_RUNTIME_TEST:
+        required: false
+        type: boolean
+        default: false
+      WRT_CONTAINER_RUNTIME_MODE:
+        required: false
+        type: string
+        default: 'prebuilt'
+      WRT_CONTAINER_RUNTIME_VERSION:
+        required: false
+        type: string
+        default: ''
       WRT_CPE_5G:
         required: false
         type: boolean
@@ -199,6 +211,9 @@ env:
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
   WRT_EMMC_DATA_PROVISIONING: ${{inputs.WRT_EMMC_DATA_PROVISIONING}}
+  WRT_CONTAINER_RUNTIME_TEST: ${{inputs.WRT_CONTAINER_RUNTIME_TEST}}
+  WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
+  WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
@@ -440,6 +455,28 @@ jobs:
             "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           )
 
+          printf '%s\n' "${WRT_PACKAGE:-}" > "$RUNNER_TEMP/wrt-package-input"
+          printf '%s\n' "${WRT_CONTAINER_RUNTIME_TEST:-false}" > "$RUNNER_TEMP/container-runtime-test-input"
+          printf '%s\n' "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}" > "$RUNNER_TEMP/container-runtime-mode-input"
+          printf '%s\n' "${WRT_CONTAINER_RUNTIME_VERSION:-latest}" > "$RUNNER_TEMP/container-runtime-version-input"
+          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
+            (
+              cd "$GITHUB_WORKSPACE/files-container-runtime-test"
+              find . -type f -print0 | sort -z | while IFS= read -r -d '' file; do
+                sha256sum "$file"
+              done
+            ) > "$RUNNER_TEMP/container-runtime-overlay-input"
+          else
+            printf '%s\n' disabled > "$RUNNER_TEMP/container-runtime-overlay-input"
+          fi
+          cache_inputs+=(
+            "$RUNNER_TEMP/wrt-package-input"
+            "$RUNNER_TEMP/container-runtime-test-input"
+            "$RUNNER_TEMP/container-runtime-mode-input"
+            "$RUNNER_TEMP/container-runtime-version-input"
+            "$RUNNER_TEMP/container-runtime-overlay-input"
+          )
+
           for cache_input in "${cache_inputs[@]}"; do
             [ -s "$cache_input" ] || {
               echo "ERROR: cache identity input is missing: $cache_input" >&2
@@ -505,8 +542,58 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
+          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
+            case "${WRT_EXPECTED_DEVICE:-}" in
+              jdcloud_re-cs-02|jdcloud_re-cs-07) ;;
+              *)
+                echo "ERROR: container runtime is allowed only for jdcloud_re-cs-02 and jdcloud_re-cs-07" >&2
+                exit 1
+                ;;
+            esac
+            # ipvlan is optional at runtime, but its matching kernel module is
+            # part of the two container test images. Kernel modules must be
+            # built into the firmware package set, not stored on /data.
+            printf '%s\n' 'CONFIG_PACKAGE_kmod-ipvlan=y' > "$RUNNER_TEMP/container-runtime-kconfig"
+            case "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}" in
+              prebuilt|auto)
+                if ! $GITHUB_WORKSPACE/Scripts/fetch_container_runtime.sh "$GITHUB_WORKSPACE/wrt/files"; then
+                  if [ "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}" = "auto" ]; then
+                    echo "WARN: prebuilt container runtime fetch failed; falling back to OpenWrt packages"
+                    echo "WRT_CONTAINER_RUNTIME_RESOLVED_MODE=openwrt" >> "$GITHUB_ENV"
+                  else
+                    echo "ERROR: prebuilt container runtime fetch failed" >&2
+                    exit 1
+                  fi
+                else
+                  echo "WRT_CONTAINER_RUNTIME_RESOLVED_MODE=prebuilt" >> "$GITHUB_ENV"
+                fi
+                ;;
+              openwrt)
+                echo "WRT_CONTAINER_RUNTIME_RESOLVED_MODE=openwrt" >> "$GITHUB_ENV"
+                ;;
+              *)
+                echo "ERROR: WRT_CONTAINER_RUNTIME_MODE must be prebuilt, auto, or openwrt" >&2
+                exit 1
+                ;;
+            esac
+          fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
+            if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
+              test -d ./files-container-runtime-test || {
+                echo "ERROR: container runtime test overlay is missing" >&2
+                exit 1
+              }
+              test -x ./files-container-runtime-test/etc/init.d/containerd-test || {
+                echo "ERROR: containerd test init script is not executable" >&2
+                exit 1
+              }
+              test -x ./files-container-runtime-test/etc/uci-defaults/97-containerd-test-enable || {
+                echo "ERROR: containerd test uci-defaults script is not executable" >&2
+                exit 1
+              }
+              cp -rf ./files-container-runtime-test/. ./wrt/files/
+            fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
@@ -572,6 +659,18 @@ jobs:
 
           generate_config && cat .config
 
+          if [ -f "$RUNNER_TEMP/container-runtime-kconfig" ]; then
+            cat "$RUNNER_TEMP/container-runtime-kconfig" >> .config
+          fi
+
+          if [ "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-}" = "openwrt" ]; then
+            cat >> .config <<'EOF'
+          CONFIG_PACKAGE_containerd=y
+          CONFIG_PACKAGE_nerdctl=y
+          CONFIG_PACKAGE_runc=y
+          EOF
+          fi
+
           if [ "${WRT_FEATURE_OVERLAY:-true}" != "true" ]; then
             sed -i -E '/^CONFIG_PACKAGE_(luci-app-lucky|luci-app-tailscale-community|luci-app-wrtbak|tailscale)=/d' .config
             cat >> .config <<'EOF'
@@ -585,6 +684,32 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
           make defconfig -j$(nproc)
+          if [ "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-}" = "openwrt" ]; then
+            for package in containerd nerdctl runc; do
+              grep -q "^CONFIG_PACKAGE_${package}=y$" .config || {
+                echo "ERROR: container runtime test package was not retained: ${package}" >&2
+                exit 1
+              }
+            done
+          elif [ "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-}" = "prebuilt" ]; then
+            for binary in \
+              ./files/usr/bin/containerd \
+              ./files/usr/bin/containerd-shim-runc-v2 \
+              ./files/usr/bin/ctr \
+              ./files/usr/bin/nerdctl \
+              ./files/usr/sbin/runc; do
+              test -x "$binary" || {
+                echo "ERROR: prebuilt container runtime binary is missing: $binary" >&2
+                exit 1
+              }
+            done
+          fi
+          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
+            grep -q '^CONFIG_PACKAGE_kmod-ipvlan=y$' .config || {
+              echo "ERROR: ipvlan kernel module was dropped from .config" >&2
+              exit 1
+            }
+          fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
           grep -q '^CONFIG_PACKAGE_tailscale=y$' .config || {
             echo "ERROR: tailscale was dropped from .config after defconfig"
@@ -723,8 +848,12 @@ jobs:
               --arg config "$WRT_CONFIG" \
               --arg required_device "$WRT_REQUIRED_DEVICE" \
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
-              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay}' \
+              --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
+              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,container_runtime_mode:$container_runtime_mode}' \
               > ./upload/metadata.json
+            if [ -f ./files/usr/share/container-runtime/versions ]; then
+              cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt
+            fi
             (cd ./upload && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
             if [[ -n "$WRT_EXPECTED_DEVICE" ]]; then
               "$GITHUB_WORKSPACE/Scripts/GuardReCs07Artifact.sh" verify \

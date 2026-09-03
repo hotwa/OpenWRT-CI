@@ -1,0 +1,7 @@
+#!/bin/sh
+
+# Enable only the test service. It still refuses to start unless /data is a
+# real block filesystem mount, so a failed data mount cannot consume rootfs.
+[ -n "${IPKG_INSTROOT:-}" ] && exit 0
+[ -x /etc/init.d/containerd-test ] && /etc/init.d/containerd-test enable
+exit 0

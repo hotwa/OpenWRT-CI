@@ -58,6 +58,14 @@ Samba 共享本身仍需要在 LuCI 中配置用户和权限；固件不会创�
 的可写状态也会随该 UUID 挂载恢复。若 `/data` 没有成为真实挂载点，uv 会安全地
 显示未就绪并拒绝把 CPython 写入根文件系统，而不是伪装成可用。
 
+容器运行时测试也遵循相同规则：containerd 的可变根目录固定为
+`/data/containerd/root`，nerdctl 的持久元数据固定为 `/data/containerd/nerdctl`；
+运行时 state 和 socket 使用 `/run/containerd`。测试专用 init 脚本只有在 `/data` 是真实的
+`/dev/*` ext4/f2fs 挂载、cgroup v2 控制器可用且运行时二进制齐全时才启动。升级或启动
+时若数据盘没有挂载，containerd 不会退回根文件系统写入镜像层。重要的 Compose 文件和
+应用卷应统一放在 `/data/containers/`，并在刷写前另行备份；整盘重分区或厂刷工具不属于
+sysupgrade 保留契约，仍可能销毁整个 `/data`。
+
 ## 启用策略
 
 公共/通用 WRT-CORE 默认关闭此功能。私有 RE Mesh（RE-SS-01、RE-CS-02）和

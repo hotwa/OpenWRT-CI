@@ -1,0 +1,56 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+USE_PROCD=1
+
+CONFIG_FILE="/etc/containerd/containerd-test.toml"
+
+data_mount_ready() {
+	awk '$2 == "/data" && $1 ~ /^\/dev\// && ($3 == "ext4" || $3 == "f2fs") { found = 1 } END { exit !found }' /proc/mounts
+}
+
+cgroup_ready() {
+	local controller
+	[ -f /sys/fs/cgroup/cgroup.controllers ] || return 1
+	[ -f /sys/fs/cgroup/cgroup.subtree_control ] || return 1
+	for controller in cpu memory pids; do
+		grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers || {
+			logger -t containerd-test "required cgroup controller is unavailable: $controller"
+			return 1
+		}
+		grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || \
+			echo "+$controller" >> /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+		grep -qw "$controller" /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || {
+			logger -t containerd-test "required cgroup controller is not enabled: $controller"
+			return 1
+		}
+	done
+}
+
+start_service() {
+	if ! data_mount_ready; then
+		logger -t containerd-test "refusing to start: /data is not a real ext4/f2fs block mount"
+		return 0
+	fi
+	if ! cgroup_ready; then
+		logger -t containerd-test "refusing to start: cgroup v2 controllers are not ready"
+		return 0
+	fi
+	for binary in /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/ctr /usr/bin/nerdctl /usr/sbin/runc; do
+		[ -x "$binary" ] || {
+			logger -t containerd-test "refusing to start: missing runtime binary $binary"
+			return 0
+		}
+	done
+
+	mkdir -p /data/containerd/root /data/containerd/nerdctl /run/containerd || return 1
+
+	procd_open_instance
+	procd_set_param command /usr/bin/containerd --config "$CONFIG_FILE"
+	procd_set_param env PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}

@@ -1,0 +1,9 @@
+version = 3
+
+# All mutable image, snapshot and metadata state lives on the reviewed eMMC
+# data partition. /run is tmpfs and is safe to recreate on every boot.
+root = "/data/containerd/root"
+state = "/run/containerd"
+
+[grpc]
+address = "/run/containerd/containerd.sock"

@@ -1,0 +1,4 @@
+# Rootful nerdctl configuration for the experimental OpenWrt image.
+address = "unix:///run/containerd/containerd.sock"
+data_root = "/data/containerd/nerdctl"
+cni_path = "/usr/libexec/cni"
