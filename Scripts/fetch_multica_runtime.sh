@@ -11,7 +11,7 @@ ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TARGET_FILES="${1:-${ROOT_DIR}/wrt/files}"
 [ -d "$TARGET_FILES" ] || TARGET_FILES="$ROOT_DIR/files"
 
-MULTICA_VERSION="${MULTICA_VERSION:-0.4.38}"
+MULTICA_VERSION="${MULTICA_VERSION:-0.4.39}"
 MULTICA_REPO="multica-ai/multica"
 MULTICA_RELEASE_BASE_URL="https://github.com/${MULTICA_REPO}/releases/download/v${MULTICA_VERSION}"
 

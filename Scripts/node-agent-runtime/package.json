@@ -11,6 +11,6 @@
     "pi-web-search": "1.4.0",
     "pi-wechat-assistant": "0.3.0",
     "pnpm": "11.25.0",
-    "pi-commandcode-provider": "0.6.3"
+    "pi-commandcode-provider": "0.6.4"
   }
 }
