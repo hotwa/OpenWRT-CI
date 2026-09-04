@@ -46,6 +46,13 @@ config lan_to_tailnet 'lan_to_tailnet'
 	option dns_domain 'hs.jmsu.top'
 	option magicdns '100.100.100.100'
 	option masq '1'
+
+config route_reconcile 'route_reconcile'
+	option enabled '1'
+	option check_interval '300'
+	option failure_threshold '2'
+	option restart_cooldown '1800'
+	option netmap_wait '8'
 EOF
 fi
 

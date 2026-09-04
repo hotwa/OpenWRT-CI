@@ -575,6 +575,17 @@ jobs:
           fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
+            # Tailscale route self-healing is part of the common feature
+            # overlay, so every firmware workflow that enables the overlay
+            # receives it (not only the container-runtime test images).
+            test -x ./wrt/files/usr/sbin/tailscale-route-reconcile || {
+              echo "ERROR: tailscale route reconcile helper is missing from the firmware overlay" >&2
+              exit 1
+            }
+            test -x ./wrt/files/etc/init.d/tailscale-route-reconcile || {
+              echo "ERROR: tailscale route reconcile init script is missing from the firmware overlay" >&2
+              exit 1
+            }
             if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
               test -d ./files-container-runtime-test || {
                 echo "ERROR: container runtime test overlay is missing" >&2

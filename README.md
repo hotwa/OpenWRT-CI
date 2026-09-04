@@ -115,6 +115,7 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 - **私有 Mesh 网关默认开启**（`tailscale.lan_to_tailnet.enabled='1'`）：路由器开机自动下发明确的 `lan -> tailscale` 与 `tailscale -> lan` 防火墙转发规则，局域网所有客户端无需额外客户端即可访问获 Headscale ACL 授权的远端 Tailnet 与站点网段；`tailscale` 区仍保持 `forward=REJECT`。
 - **子网路由接收开启**（`tailscale.settings.accept_routes='1'`）：默认接收其他节点通告的局域网网段（如 `192.168.8.x`, `192.168.9.x`）。
+- **动态路由自愈**：`tailscale-route-reconcile` 根据在线 Peer 的 `PrimaryRoutes` 核对 policy-routing table 52，先做无损 netmap 刷新，连续确认失败且经过冷却后才重启 Tailscale；不会写死网段或手工添加路由。详见 `docs/tailscale-route-reconcile.md`。
 - **Nikki 规则直连联动**：在 `nikki-sub-merge` 规则中置顶 `100.64.0.0/10` 与 MagicDNS 直连，彻底解决 Fake-IP 劫持私有节点的问题。
 
 # 设备支持与推广验证路线

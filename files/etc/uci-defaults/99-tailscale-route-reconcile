@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# Start the lightweight route observer after the normal Tailscale guards.
+# It checks every few minutes but only performs a service restart after
+# consecutive, dynamically confirmed route loss and a long cooldown.
+[ -x /etc/init.d/tailscale-route-reconcile ] || exit 0
+
+# Sysupgrade can retain an older /etc/config/tailscale without the new
+# section. Add only missing values; never overwrite an administrator's tuning.
+if command -v uci >/dev/null 2>&1; then
+	if ! uci -q get tailscale.route_reconcile.enabled >/dev/null 2>&1; then
+		uci set tailscale.route_reconcile='route_reconcile'
+		uci set tailscale.route_reconcile.enabled='1'
+		uci set tailscale.route_reconcile.check_interval='300'
+		uci set tailscale.route_reconcile.failure_threshold='2'
+		uci set tailscale.route_reconcile.restart_cooldown='1800'
+		uci set tailscale.route_reconcile.netmap_wait='8'
+		uci commit tailscale >/dev/null 2>&1 || true
+	fi
+fi
+
+/etc/init.d/tailscale-route-reconcile enable >/dev/null 2>&1 || true
+/etc/init.d/tailscale-route-reconcile start >/dev/null 2>&1 || true
+
+exit 0
