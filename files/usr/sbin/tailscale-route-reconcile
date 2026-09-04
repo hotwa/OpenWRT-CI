@@ -1,341 +1,363 @@
 #!/bin/sh
+# Tailscale kernel-state route reconciler for OpenWrt.
+# Only observes state, requests netmap refresh, or restarts Tailscale.
+# It never adds/deletes routes and never contains a site-specific allowlist.
 
-# Tailscale route self-healing guard for OpenWrt.
-#
-# The route list is deliberately discovered from tailscaled's current netmap;
-# never add a site route by hand and never maintain a static subnet allowlist.
-# A route repair consists of:
-#   1. waiting for the control plane to be Running;
-#   2. checking every PrimaryRoutes entry advertised by an online peer against
-#      policy-routing table 52;
-#   3. asking tailscaled for a no-op netmap refresh; and only then
-#   4. restarting the Tailscale service after repeated, confirmed failure.
-#
-# This avoids the common failure mode where a stale tailscale0/table-52 state
-# survives a transient network or LuCI settings race. The existing
-# tailscale-settings service remains disabled by the firmware overlay because
-# its --cleanup invocation can remove the routes while tailscaled is running.
-
-PATH="${TSRC_PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
+set -u
+export PATH="${TSRC_PATH:-/usr/local/bin:/data/uv/python/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+IPKG_INSTROOT="${IPKG_INSTROOT:-/}"
 
 TAG="tailscale-route-reconcile"
-RUNTIME_DIR="${TSRC_RUNTIME_DIR:-/var/run/tailscale-route-reconcile}"
-STATE_FILE="$RUNTIME_DIR/state"
-LOCK_DIR="$RUNTIME_DIR/lock"
+STATE_FILE="${TSRC_STATE_FILE:-/var/run/tailscale-route-reconcile.state}"
+RUNTIME_DIR="${TSRC_RUNTIME_DIR:-$(dirname "$STATE_FILE")}"
+LOCK_DIR="${TSRC_LOCK_DIR:-/var/run/tailscale-route-reconcile.lock}"
+ENROLL_LOCK_DIR="${HEADSCALE_AUTO_ENROLL_LOCK_DIR:-/var/run/headscale-auto-enroll.lock}"
 TAILSCALE_INIT="${TSRC_TAILSCALE_INIT:-/etc/init.d/tailscale}"
+MAGICDNS="100.100.100.100"
 
-DEFAULT_CHECK_INTERVAL=300
-DEFAULT_FAILURE_THRESHOLD=2
-DEFAULT_RESTART_COOLDOWN=1800
-DEFAULT_NETMAP_WAIT=8
+CHECK_INTERVAL=300
+FAILURE_THRESHOLD=2
+RESTART_COOLDOWN=1800
+NETMAP_WAIT=8
+MODE=loop
+VERBOSE=0
+TABLE=""
+TABLE_WARNED=0
 
-log_msg() {
-	logger -t "$TAG" "$*"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --once|--check) MODE=once ;;
+    --loop) MODE=loop ;;
+    --status) MODE=status ;;
+    --verbose) VERBOSE=1 ;;
+    --interval)
+      shift
+      [ "$#" -gt 0 ] || { echo "usage: $0 [--once|--check|--loop|--status] [--interval N] [--verbose]" >&2; exit 2; }
+      CHECK_INTERVAL="$1"
+      ;;
+    *) echo "usage: $0 [--once|--check|--loop|--status] [--interval N] [--verbose]" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+valid_integer() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac
 }
 
 uci_value() {
-	local option="$1"
-	local fallback="$2"
-	local value
-
-	if ! command -v uci >/dev/null 2>&1; then
-		printf '%s' "$fallback"
-		return 0
-	fi
-
-	value="$(uci -q get "tailscale.route_reconcile.$option" 2>/dev/null || true)"
-	[ -n "$value" ] || value="$fallback"
-	printf '%s' "$value"
-}
-
-valid_integer() {
-	case "$1" in
-		''|*[!0-9]*) return 1 ;;
-		*) return 0 ;;
-	esac
+  option="$1"; fallback="$2"; value=""
+  if command -v uci >/dev/null 2>&1; then
+    value="$(uci -q get "tailscale.route_reconcile.$option" 2>/dev/null || true)"
+  fi
+  [ -n "$value" ] || value="$fallback"
+  printf '%s' "$value"
 }
 
 load_config() {
-	CHECK_INTERVAL="${TSRC_CHECK_INTERVAL:-$(uci_value check_interval "$DEFAULT_CHECK_INTERVAL")}"
-	FAILURE_THRESHOLD="${TSRC_FAILURE_THRESHOLD:-$(uci_value failure_threshold "$DEFAULT_FAILURE_THRESHOLD")}"
-	RESTART_COOLDOWN="${TSRC_RESTART_COOLDOWN:-$(uci_value restart_cooldown "$DEFAULT_RESTART_COOLDOWN")}"
-	NETMAP_WAIT="${TSRC_NETMAP_WAIT:-$(uci_value netmap_wait "$DEFAULT_NETMAP_WAIT")}"
-
-	valid_integer "$CHECK_INTERVAL" || CHECK_INTERVAL="$DEFAULT_CHECK_INTERVAL"
-	valid_integer "$FAILURE_THRESHOLD" || FAILURE_THRESHOLD="$DEFAULT_FAILURE_THRESHOLD"
-	valid_integer "$RESTART_COOLDOWN" || RESTART_COOLDOWN="$DEFAULT_RESTART_COOLDOWN"
-	valid_integer "$NETMAP_WAIT" || NETMAP_WAIT="$DEFAULT_NETMAP_WAIT"
-	[ "$CHECK_INTERVAL" -gt 0 ] || CHECK_INTERVAL="$DEFAULT_CHECK_INTERVAL"
-	[ "$FAILURE_THRESHOLD" -gt 0 ] || FAILURE_THRESHOLD="$DEFAULT_FAILURE_THRESHOLD"
+  CHECK_INTERVAL="${TSRC_CHECK_INTERVAL:-$(uci_value check_interval 300)}"
+  FAILURE_THRESHOLD="${TSRC_FAILURE_THRESHOLD:-$(uci_value failure_threshold 2)}"
+  RESTART_COOLDOWN="${TSRC_RESTART_COOLDOWN:-$(uci_value restart_cooldown 1800)}"
+  NETMAP_WAIT="${TSRC_NETMAP_WAIT:-$(uci_value netmap_wait 8)}"
+  valid_integer "$CHECK_INTERVAL" || CHECK_INTERVAL=300
+  valid_integer "$FAILURE_THRESHOLD" || FAILURE_THRESHOLD=2
+  valid_integer "$RESTART_COOLDOWN" || RESTART_COOLDOWN=1800
+  valid_integer "$NETMAP_WAIT" || NETMAP_WAIT=8
+  [ "$CHECK_INTERVAL" -gt 0 ] || CHECK_INTERVAL=300
+  [ "$FAILURE_THRESHOLD" -gt 0 ] || FAILURE_THRESHOLD=2
 }
 
 enabled() {
-	local value
-	value="$(uci_value enabled 1)"
-	case "$value" in
-		1|true|yes|on) return 0 ;;
-		*) return 1 ;;
-	esac
+  case "$(uci_value enabled 1)" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac
+}
+
+log_msg() {
+  logger -t "$TAG" "$*"
+  [ "$VERBOSE" -eq 1 ] && printf '%s\n' "$*"
+}
+
+run_timeout() {
+  if command -v timeout >/dev/null 2>&1; then timeout "$@"; else shift; "$@"; fi
 }
 
 ensure_runtime_dir() {
-	mkdir -p "$RUNTIME_DIR" 2>/dev/null || return 1
-	chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+  mkdir -p "$RUNTIME_DIR" 2>/dev/null || return 1
+  chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
 }
 
 release_lock() {
-	rm -f "$LOCK_DIR/pid" 2>/dev/null || true
-	rmdir "$LOCK_DIR" 2>/dev/null || true
+  rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
 acquire_lock() {
-	local old_pid
+  old_pid=""
+  mkdir "$LOCK_DIR" 2>/dev/null || {
+    old_pid="$(sed -n '1p' "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if ! valid_integer "$old_pid" || ! kill -0 "$old_pid" 2>/dev/null; then
+      rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+      rmdir "$LOCK_DIR" 2>/dev/null || true
+      mkdir "$LOCK_DIR" 2>/dev/null || return 1
+    else
+      return 1
+    fi
+  }
+  printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || { release_lock; return 1; }
+  trap release_lock EXIT
+  trap 'release_lock; exit 0' INT TERM
+  return 0
+}
 
-	mkdir "$LOCK_DIR" 2>/dev/null || {
-		# Reclaim only a lock whose owner is no longer alive. This keeps a
-		# killed/upgrade-interrupted guard from disabling future checks.
-		old_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-		if ! valid_integer "$old_pid" || ! kill -0 "$old_pid" 2>/dev/null; then
-			rm -f "$LOCK_DIR/pid" 2>/dev/null || true
-			rmdir "$LOCK_DIR" 2>/dev/null || true
-			mkdir "$LOCK_DIR" 2>/dev/null || return 1
-		else
-			return 1
-		fi
-	}
-
-	printf '%s\n' "$$" >"$LOCK_DIR/pid" 2>/dev/null || {
-		release_lock
-		return 1
-	}
-	trap release_lock EXIT
-	trap 'release_lock; exit 0' INT TERM
-	return 0
+enrollment_in_progress() {
+  pid="$(sed -n '1p' "$ENROLL_LOCK_DIR/pid" 2>/dev/null || true)"
+  valid_integer "$pid" || return 1
+  kill -0 "$pid" 2>/dev/null
 }
 
 state_get() {
-	local key="$1"
-	local fallback="$2"
-	local value
-
-	value="$(sed -n "s/^${key}=//p" "$STATE_FILE" 2>/dev/null | head -n 1)"
-	[ -n "$value" ] || value="$fallback"
-	printf '%s' "$value"
+  key="$1"; fallback="$2"
+  value="$(sed -n "s/^${key}=//p" "$STATE_FILE" 2>/dev/null | head -n 1)"
+  [ -n "$value" ] || value="$fallback"
+  printf '%s' "$value"
 }
 
-state_save() {
-	local failures="$1"
-	local last_action="$2"
-	local tmp="$STATE_FILE.$$"
-
-	umask 077
-	{
-		printf 'failures=%s\n' "$failures"
-		printf 'last_action=%s\n' "$last_action"
-	} >"$tmp" 2>/dev/null || return 1
-	mv -f "$tmp" "$STATE_FILE" 2>/dev/null || {
-		rm -f "$tmp" 2>/dev/null || true
-		return 1
-	}
-	chmod 600 "$STATE_FILE" 2>/dev/null || true
+load_state() {
+  FAIL_ADDR="$(state_get FAIL_ADDR 0)"
+  FAIL_OTHER="$(state_get FAIL_OTHER 0)"
+  UPGRADED="$(state_get UPGRADED 0)"
+  LAST_RESTART="$(state_get LAST_RESTART 0)"
+  valid_integer "$FAIL_ADDR" || FAIL_ADDR=0
+  valid_integer "$FAIL_OTHER" || FAIL_OTHER=0
+  valid_integer "$UPGRADED" || UPGRADED=0
+  valid_integer "$LAST_RESTART" || LAST_RESTART=0
 }
 
-state_reset() {
-	state_save 0 0 || true
+save_state() {
+  tmp="$STATE_FILE.$$"
+  umask 077
+  ensure_runtime_dir || return 1
+  {
+    printf 'FAIL_ADDR=%s\n' "$FAIL_ADDR"
+    printf 'FAIL_OTHER=%s\n' "$FAIL_OTHER"
+    printf 'UPGRADED=%s\n' "$UPGRADED"
+    printf 'LAST_RESTART=%s\n' "$LAST_RESTART"
+  } >"$tmp" 2>/dev/null || return 1
+  mv -f "$tmp" "$STATE_FILE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null || true; return 1; }
+  chmod 600 "$STATE_FILE" 2>/dev/null || true
 }
 
-daemon_running() {
-	if command -v pgrep >/dev/null 2>&1; then
-		pgrep -x tailscaled >/dev/null 2>&1
-		return $?
-	fi
-	if command -v pidof >/dev/null 2>&1; then
-		pidof tailscaled >/dev/null 2>&1
-		return $?
-	fi
-	return 1
+reset_state() {
+  FAIL_ADDR=0; FAIL_OTHER=0; UPGRADED=0
+  save_state || true
 }
 
-tailnet_ready() {
-	command -v tailscale >/dev/null 2>&1 || return 1
-	daemon_running || return 1
-	tailscale status --json 2>/dev/null |
-		grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'
+collect_state() {
+  status_file="$RUNTIME_DIR/status.$$"
+  netmap_file="$RUNTIME_DIR/netmap.$$"
+  ensure_runtime_dir || return 2
+  run_timeout 30 tailscale status --json >"$status_file" 2>/dev/null || { rm -f "$status_file" "$netmap_file"; return 2; }
+  run_timeout 30 tailscale debug netmap >"$netmap_file" 2>/dev/null || { rm -f "$status_file" "$netmap_file"; return 2; }
+  [ -s "$status_file" ] && [ -s "$netmap_file" ] || { rm -f "$status_file" "$netmap_file"; return 2; }
+  python3 - "$status_file" "$netmap_file" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f: status = json.load(f)
+    with open(sys.argv[2], encoding="utf-8") as f: netmap = json.load(f)
+except Exception:
+    raise SystemExit(2)
+print("BACKEND", status.get("BackendState", "Unknown"))
+self4 = ""
+for addr in (status.get("Self") or {}).get("TailscaleIPs", []):
+    if isinstance(addr, str) and ":" not in addr:
+        self4 = addr.split("/", 1)[0]
+        break
+print("SELF4", self4 or "-")
+seen = set()
+for peer in netmap.get("Peers", []):
+    if not isinstance(peer, dict):
+        continue
+    addresses = peer.get("Addresses") or peer.get("TailscaleIPs") or []
+    for addr in addresses:
+        if isinstance(addr, str) and ":" not in addr:
+            route = addr.split("/", 1)[0]
+            if route not in seen:
+                print("ROUTE_EXPECTED", route)
+                seen.add(route)
+            break
+    for route in peer.get("PrimaryRoutes") or []:
+        if isinstance(route, str) and ":" not in route and route not in seen:
+            print("ROUTE_EXPECTED", route)
+            seen.add(route)
+PY
+  rc=$?
+  rm -f "$status_file" "$netmap_file"
+  return "$rc"
 }
 
-online_primary_routes() {
-	local netmap_file="$RUNTIME_DIR/netmap.$$"
-
-	command -v tailscale >/dev/null 2>&1 || return 2
-	command -v jsonfilter >/dev/null 2>&1 || return 2
-	ensure_runtime_dir || return 2
-	if ! tailscale debug netmap >"$netmap_file" 2>/dev/null; then
-		rm -f "$netmap_file" 2>/dev/null || true
-		return 2
-	fi
-
-	jsonfilter -q -i "$netmap_file" \
-		-e '@.Peers[@.Online=true].PrimaryRoutes[*]' 2>/dev/null |
-		sed '/^$/d' | sort -u
-	local result=$?
-	rm -f "$netmap_file" 2>/dev/null || true
-	return "$result"
+select_route_table() {
+  if [ -n "${TSRC_ROUTE_TABLE:-}" ]; then TABLE="$TSRC_ROUTE_TABLE"; printf '%s\n' "$TABLE"; return; fi
+  counts="$(ip -4 route show table all 2>/dev/null | awk '
+    /dev tailscale0([[:space:]]|$)/ {
+      t = ""
+      for (i = 1; i <= NF; i++) if ($i == "table" && $(i + 1) ~ /^[0-9]+$/) t = $(i + 1)
+      if (t != "") count[t]++
+    }
+    END { for (t in count) print count[t], t }
+  ' | sort -rn | head -n 1)"
+  TABLE="$(printf '%s\n' "$counts" | awk 'NF >= 2 {print $2; exit}')"
+  if [ -z "$TABLE" ]; then
+    TABLE="$(ip -4 rule show 2>/dev/null | awk '$0 ~ /from all lookup/ {for (i=1; i<=NF; i++) if ($i == "lookup" && $(i+1) ~ /^[0-9]+$/ && $(i+1) !~ /^(0|253|254|255)$/) {print $(i+1); exit}}')"
+  fi
+  if [ -z "$TABLE" ]; then
+    TABLE=52
+    if [ "$TABLE_WARNED" -eq 0 ]; then log_msg "WARN: unable to detect Tailscale route table; falling back to table 52"; TABLE_WARNED=1; fi
+  fi
+  printf '%s\n' "$TABLE"
 }
 
 route_present() {
-	local route="$1"
-	case "$route" in
-		*:*) ip -6 route show table 52 2>/dev/null | awk -v expected="$route" '$1 == expected { found=1 } END { exit(found ? 0 : 1) }' ;;
-		*) ip -4 route show table 52 2>/dev/null | awk -v expected="$route" '$1 == expected { found=1 } END { exit(found ? 0 : 1) }' ;;
-	esac
+  route="$1"; table="${TABLE:-52}"
+  ip -4 route show table "$table" 2>/dev/null |
+    awk -v expected="$route" '$1 == expected && $0 ~ /dev tailscale0([[:space:]]|$)/ {found=1} END {exit(found ? 0 : 1)}'
 }
 
-check_routes() {
-	local expected route missing=""
-
-	expected="$(online_primary_routes)"
-	[ -n "$expected" ] || return 2
-
-	while IFS= read -r route; do
-		[ -n "$route" ] || continue
-		if ! route_present "$route"; then
-			missing="${missing}${missing:+ }${route}"
-		fi
-	done <<EOF
-$expected
+evaluate_state() {
+  state="$1"
+  BACKEND="$(printf '%s\n' "$state" | awk '$1 == "BACKEND" {print $2; exit}')"
+  SELF4="$(printf '%s\n' "$state" | awk '$1 == "SELF4" {print $2; exit}')"
+  [ "$BACKEND" = Running ] || return 2
+  [ -n "$SELF4" ] && [ "$SELF4" != - ] || return 2
+  TABLE="$(select_route_table)"
+  MISSING_ADDR=0; MISSING_OTHER=0; EXPECTED_COUNT=0
+  if ! ip -4 link show dev tailscale0 >/dev/null 2>&1 ||
+     ! ip -4 addr show dev tailscale0 2>/dev/null | grep -q "inet $SELF4/"; then MISSING_ADDR=1; fi
+  while IFS= read -r line; do
+    route="$(printf '%s\n' "$line" | awk '$1 == "ROUTE_EXPECTED" {print $2; exit}')"
+    [ -n "$route" ] || continue
+    EXPECTED_COUNT=$((EXPECTED_COUNT + 1))
+    route_present "$route" || MISSING_OTHER=$((MISSING_OTHER + 1))
+  done <<EOF
+$state
 EOF
-
-	if [ -n "$missing" ]; then
-		printf '%s' "$missing"
-		return 1
-	fi
-	return 0
+  # A freshly enrolling node can have an empty peer set. Without an expected
+  # route there is not enough evidence to distinguish startup from drift.
+  [ "$EXPECTED_COUNT" -gt 0 ] || return 2
+  route_present "$MAGICDNS" || MISSING_OTHER=$((MISSING_OTHER + 1))
+  if ping -c 1 -W 2 "$MAGICDNS" >/dev/null 2>&1; then PING_OK=1; else PING_OK=0; fi
+  [ "$MISSING_ADDR" -eq 0 ] && [ "$MISSING_OTHER" -eq 0 ] && [ "$PING_OK" -eq 1 ]
 }
 
-try_netmap_refresh() {
-	command -v tailscale >/dev/null 2>&1 || return 1
-	tailscale debug force-netmap-update >/dev/null 2>&1 || return 1
-	[ "$NETMAP_WAIT" -eq 0 ] || sleep "$NETMAP_WAIT"
-	check_routes
+post_repair_verify() {
+  state="$(collect_state 2>/dev/null)" || { log_msg "WARN: post-repair verification FAILED (state unreadable)"; return 1; }
+  if evaluate_state "$state"; then
+    log_msg "INFO: post-repair verification PASSED (table=$TABLE expected_routes=$EXPECTED_COUNT)"
+    reset_state
+    return 0
+  fi
+  log_msg "WARN: post-repair verification FAILED (table=$TABLE missing_addr=$MISSING_ADDR missing_routes=$MISSING_OTHER ping_ok=$PING_OK)"
+  return 1
 }
 
-check_once() {
-	local check_result missing failures last_action now elapsed
-
-	load_config
-	if ! enabled; then
-		state_reset
-		return 0
-	fi
-	ensure_runtime_dir || return 0
-	acquire_lock || return 0
-
-	if ! tailnet_ready; then
-		state_reset
-		release_lock
-		return 0
-	fi
-
-	missing="$(check_routes 2>/dev/null)"
-	check_result=$?
-	if [ "$check_result" -eq 0 ]; then
-		state_reset
-		release_lock
-		return 0
-	fi
-	if [ "$check_result" -eq 2 ]; then
-		# No online subnet-router route is currently observable, or netmap is
-		# not readable yet. Leave route ownership to tailscaled and do not
-		# restart a healthy control plane on inconclusive evidence.
-		release_lock
-		return 0
-	fi
-
-	failures="$(state_get failures 0)"
-	valid_integer "$failures" || failures=0
-	failures=$((failures + 1))
-	now="$(date +%s 2>/dev/null || printf '0')"
-	valid_integer "$now" || now=0
-	last_action="$(state_get last_action 0)"
-	valid_integer "$last_action" || last_action=0
-	state_save "$failures" "$last_action" || true
-
-	if [ "$failures" -lt "$FAILURE_THRESHOLD" ]; then
-		log_msg "table 52 is missing online PrimaryRoutes: $missing (confirmation $failures/$FAILURE_THRESHOLD)"
-		release_lock
-		return 0
-	fi
-
-	elapsed=$((now - last_action))
-	if [ "$last_action" -gt 0 ] && [ "$elapsed" -lt "$RESTART_COOLDOWN" ]; then
-		release_lock
-		return 0
-	fi
-
-	if try_netmap_refresh; then
-		state_reset
-		log_msg "netmap refresh restored table 52 routes: $missing"
-		release_lock
-		return 0
-	fi
-
-	if [ ! -x "$TAILSCALE_INIT" ]; then
-		log_msg "table 52 routes remain missing ($missing), but $TAILSCALE_INIT is unavailable"
-		state_save "$failures" "$now" || true
-		release_lock
-		return 0
-	fi
-
-	log_msg "restarting Tailscale after confirmed table 52 route loss: $missing"
-	if "$TAILSCALE_INIT" restart >/dev/null 2>&1; then
-		log_msg "Tailscale restart requested; next check will verify dynamic routes"
-	else
-		log_msg "Tailscale restart command failed; retry is suppressed for ${RESTART_COOLDOWN}s"
-	fi
-	state_save 0 "$now" || true
-	release_lock
-	return 0
+do_force_update() {
+  log_msg "INFO: executing tailscale debug force-netmap-update"
+  run_timeout 60 tailscale debug force-netmap-update >/dev/null 2>&1
+  rc=$?
+  log_msg "INFO: force-netmap-update exit=$rc"
+  [ "$NETMAP_WAIT" -eq 0 ] || sleep "$NETMAP_WAIT"
+  return "$rc"
 }
 
-run_loop() {
-	while :; do
-		check_once
-		load_config
-		sleep "$CHECK_INTERVAL"
-	done
+do_restart() {
+  now="$(date +%s 2>/dev/null || printf '0')"
+  valid_integer "$now" || now=0
+  valid_integer "$LAST_RESTART" || LAST_RESTART=0
+  if [ "$LAST_RESTART" -gt 0 ] && [ $((now - LAST_RESTART)) -lt "$RESTART_COOLDOWN" ]; then
+    remaining=$((RESTART_COOLDOWN - (now - LAST_RESTART)))
+    log_msg "WARN: restart skipped (cooldown ${remaining}s remaining)"
+    return 1
+  fi
+  log_msg "INFO: restarting Tailscale service"
+  if [ -x "$TAILSCALE_INIT" ]; then "$TAILSCALE_INIT" restart >/dev/null 2>&1; rc=$?; else rc=1; fi
+  LAST_RESTART="$now"
+  save_state || true
+  [ "$NETMAP_WAIT" -eq 0 ] || sleep "$NETMAP_WAIT"
+  [ "$rc" -eq 0 ] || log_msg "WARN: Tailscale restart command failed"
+  return "$rc"
 }
 
-case "${1:---check}" in
-	--check)
-		check_once
-		;;
-	--loop)
-		run_loop
-		;;
-	--status)
-		load_config
-		printf 'enabled=%s\n' "$(uci_value enabled 1)"
-		printf 'check_interval=%s\n' "$CHECK_INTERVAL"
-		printf 'failure_threshold=%s\n' "$FAILURE_THRESHOLD"
-		printf 'restart_cooldown=%s\n' "$RESTART_COOLDOWN"
-		printf 'netmap_wait=%s\n' "$NETMAP_WAIT"
-		if ! tailnet_ready; then
-			printf 'health=not-ready\n'
-			exit 0
-		fi
-		if check_routes >/dev/null 2>&1; then
-			printf 'health=healthy\n'
-		else
-			case "$?" in
-				2) printf 'health=indeterminate\n' ;;
-				*) printf 'health=missing-routes\n' ;;
-			esac
-		fi
-		;;
-	*)
-		echo "usage: $0 [--check|--loop|--status]" >&2
-		exit 2
-		;;
-esac
+run_cycle() {
+  load_state; load_config
+  if ! enabled; then reset_state; return 0; fi
+  ensure_runtime_dir || return 0
+  acquire_lock || return 0
+  if enrollment_in_progress; then
+    [ "$VERBOSE" -eq 1 ] && log_msg "INFO: headscale-auto-enroll is active; skipping reconcile cycle"
+    release_lock
+    return 0
+  fi
+  state="$(collect_state 2>/dev/null)"; rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$state" ]; then
+    log_msg "WARN: tailscale status/netmap unreadable; skipping repair"
+    release_lock
+    return 0
+  fi
+  evaluate_state "$state"
+  eval_rc=$?
+  if [ "$eval_rc" -eq 0 ]; then
+    [ "$VERBOSE" -eq 1 ] && log_msg "INFO: healthy (self4=$SELF4 table=$TABLE expected_routes=$EXPECTED_COUNT)"
+    reset_state
+    release_lock
+    return 0
+  fi
+  if [ "$eval_rc" -eq 2 ]; then
+    log_msg "WARN: Tailscale state is not yet conclusive; skipping repair"
+    release_lock
+    return 0
+  fi
+  if [ "$BACKEND" != Running ] || [ -z "$SELF4" ] || [ "$SELF4" = - ]; then
+    log_msg "WARN: BackendState=$BACKEND or self IPv4 unavailable; skipping repair"
+    release_lock
+    return 0
+  fi
+  if [ "$MISSING_ADDR" -eq 1 ]; then
+    FAIL_ADDR=$((FAIL_ADDR + 1)); FAIL_OTHER=0; UPGRADED=0
+    log_msg "WARN: tailscale0 IPv4 $SELF4 missing ($FAIL_ADDR/$FAILURE_THRESHOLD)"
+    if [ "$FAIL_ADDR" -ge "$FAILURE_THRESHOLD" ]; then
+      do_restart || true
+      post_repair_verify || true
+    fi
+  else
+    FAIL_OTHER=$((FAIL_OTHER + 1)); FAIL_ADDR=0
+    log_msg "WARN: route/ping failure ($FAIL_OTHER/$FAILURE_THRESHOLD; missing_routes=$MISSING_OTHER ping_ok=$PING_OK table=$TABLE)"
+    if [ "$FAIL_OTHER" -ge "$FAILURE_THRESHOLD" ] && [ "$UPGRADED" -eq 0 ]; then
+      UPGRADED=1; save_state || true
+      do_force_update || true
+      post_repair_verify || true
+    elif [ "$FAIL_OTHER" -gt "$FAILURE_THRESHOLD" ] && [ "$UPGRADED" -eq 1 ]; then
+      do_restart || true
+      post_repair_verify || true
+    fi
+  fi
+  save_state || true
+  release_lock
+}
 
-exit 0
+status_report() {
+  load_state; load_config
+  printf 'enabled=%s\ncheck_interval=%s\nfailure_threshold=%s\nrestart_cooldown=%s\nnetmap_wait=%s\n' "$(uci_value enabled 1)" "$CHECK_INTERVAL" "$FAILURE_THRESHOLD" "$RESTART_COOLDOWN" "$NETMAP_WAIT"
+  state="$(collect_state 2>/dev/null)" || { printf 'health=not-ready\n'; return 0; }
+  if evaluate_state "$state"; then
+    printf 'health=healthy\ntable=%s\nexpected_routes=%s\n' "$TABLE" "$EXPECTED_COUNT"
+  else
+    printf 'health=degraded\ntable=%s\nmissing_addr=%s\nmissing_routes=%s\nping_ok=%s\n' "$TABLE" "${MISSING_ADDR:-1}" "${MISSING_OTHER:-0}" "${PING_OK:-0}"
+  fi
+}
+
+load_config
+if [ "$MODE" = status ]; then status_report; exit 0; fi
+if [ "$MODE" = once ]; then run_cycle; exit 0; fi
+log_msg "INFO: started (interval=${CHECK_INTERVAL}s failure_threshold=${FAILURE_THRESHOLD} restart_cooldown=${RESTART_COOLDOWN}s netmap_wait=${NETMAP_WAIT}s)"
+while :; do
+  run_cycle
+  load_config
+  sleep "$CHECK_INTERVAL"
+done

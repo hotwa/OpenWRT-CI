@@ -92,6 +92,29 @@ grep -q 'tailscale route reconcile init script is missing from the firmware over
   exit 1
 }
 
+grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE' "$WORKFLOW" || {
+  echo "WRT-CORE does not expose the universal route reconcile switch"
+  exit 1
+}
+
+for workflow in \
+  RE-Mesh-BUILD.yml \
+  RE-CONTAINER-RUNTIME-TEST.yml \
+  RE-CS-07-BUILD.yml \
+  QCA-6.12-LiBwrt.yml \
+  QCA-6.12-VIKINGYFY.yml \
+  QCA-6.18-VIKINGYFY.yml; do
+  grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: true' "$ROOT_DIR/.github/workflows/$workflow" || {
+    echo "$workflow does not explicitly enable the common route reconciler"
+    exit 1
+  }
+done
+
+grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: false' "$ROOT_DIR/.github/workflows/CPE-5G.yml" || {
+  echo "CPE baseline does not explicitly disable the Tailscale route reconciler"
+  exit 1
+}
+
 grep -q 'for test_file in ./tests/test_\*.sh; do' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not execute repository smoke tests"
   exit 1
@@ -256,6 +279,41 @@ grep -q 'PrimaryRoutes' "$TAILSCALE_ROUTE_RECONCILE" || {
   echo "tailscale route reconcile helper does not follow dynamic netmap routes"
   exit 1
 }
+
+grep -q 'Self' "$TAILSCALE_ROUTE_RECONCILE" || {
+  echo "tailscale route reconcile helper does not check the local Tailscale IPv4"
+  exit 1
+}
+
+grep -q 'route show table all' "$TAILSCALE_ROUTE_RECONCILE" || {
+  echo "tailscale route reconcile helper does not detect the active policy table"
+  exit 1
+}
+
+grep -q 'from all lookup' "$TAILSCALE_ROUTE_RECONCILE" || {
+  echo "tailscale route reconcile helper lacks the ip rule table fallback"
+  exit 1
+}
+
+grep -q 'ping -c 1 -W 2' "$TAILSCALE_ROUTE_RECONCILE" || {
+  echo "tailscale route reconcile helper does not verify the data plane"
+  exit 1
+}
+
+grep -q 'headscale-auto-enroll.lock' "$TAILSCALE_ROUTE_RECONCILE" || {
+  echo "tailscale route reconcile helper does not guard auto-enroll startup"
+  exit 1
+}
+
+if grep -Eq 'Online[ =]' "$TAILSCALE_ROUTE_RECONCILE"; then
+  echo "tailscale route reconcile helper must not trust the unreliable Online flag"
+  exit 1
+fi
+
+if grep -Eq 'route (add|replace|del)' "$TAILSCALE_ROUTE_RECONCILE"; then
+  echo "tailscale route reconcile helper must not mutate kernel routes"
+  exit 1
+fi
 
 grep -q 'force-netmap-update' "$TAILSCALE_ROUTE_RECONCILE" || {
   echo "tailscale route reconcile helper does not try a non-disruptive refresh"

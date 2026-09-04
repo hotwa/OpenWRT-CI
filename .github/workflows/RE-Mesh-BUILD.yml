@@ -69,6 +69,7 @@ jobs:
       WRT_EXPECTED_DEVICE: ${{ matrix.device }}
       WRT_REQUIRED_DEVICE: ${{ matrix.device }}
       WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
       WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
       WRTBAK_DEVICE_ALIAS: ${{ matrix.wrtbak_alias }}

@@ -96,6 +96,8 @@ jobs:
       WRT_SSID: DAE-WRT
       #默认地址
       WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       #私有 Mesh 双向 LAN/Tailnet 网关
       WRT_LAN_TAILNET: ${{ github.event_name != 'workflow_dispatch' || inputs.LAN_TAILNET }}
       #允许 WAN 访问路由器本机 Dropbear SSH

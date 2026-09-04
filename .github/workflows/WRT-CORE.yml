@@ -84,6 +84,10 @@ on:
         required: false
         type: boolean
         default: true
+      WRT_TAILSCALE_ROUTE_RECONCILE:
+        required: false
+        type: boolean
+        default: true
       WRT_REQUIRED_DEVICE:
         required: false
         type: string
@@ -216,6 +220,7 @@ env:
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
+  WRT_TAILSCALE_ROUTE_RECONCILE: ${{inputs.WRT_TAILSCALE_ROUTE_RECONCILE}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
   WRT_WAN_SSH: ${{inputs.WRT_WAN_SSH}}
   WRT_WAN_SSH_PORT: ${{inputs.WRT_WAN_SSH_PORT}}
@@ -575,17 +580,6 @@ jobs:
           fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
-            # Tailscale route self-healing is part of the common feature
-            # overlay, so every firmware workflow that enables the overlay
-            # receives it (not only the container-runtime test images).
-            test -x ./wrt/files/usr/sbin/tailscale-route-reconcile || {
-              echo "ERROR: tailscale route reconcile helper is missing from the firmware overlay" >&2
-              exit 1
-            }
-            test -x ./wrt/files/etc/init.d/tailscale-route-reconcile || {
-              echo "ERROR: tailscale route reconcile init script is missing from the firmware overlay" >&2
-              exit 1
-            }
             if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
               test -d ./files-container-runtime-test || {
                 echo "ERROR: container runtime test overlay is missing" >&2
@@ -608,7 +602,28 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
-          else
+          fi
+
+          # This small overlay is independent from the larger private feature
+          # set. It keeps every Tailscale-enabled firmware covered, including
+          # builds that intentionally disable CPE/Lucky/wrtbak extras.
+          if [ "${WRT_TAILSCALE_ROUTE_RECONCILE:-true}" = "true" ]; then
+            mkdir -p ./wrt/files/etc/config ./wrt/files/etc/init.d ./wrt/files/etc/uci-defaults ./wrt/files/usr/sbin
+            cp -f ./files/etc/config/tailscale ./wrt/files/etc/config/tailscale
+            cp -f ./files/etc/init.d/tailscale-route-reconcile ./wrt/files/etc/init.d/tailscale-route-reconcile
+            cp -f ./files/etc/uci-defaults/96-tailscale-uci-fallback ./wrt/files/etc/uci-defaults/96-tailscale-uci-fallback
+            cp -f ./files/etc/uci-defaults/99-tailscale-route-reconcile ./wrt/files/etc/uci-defaults/99-tailscale-route-reconcile
+            cp -f ./files/usr/sbin/tailscale-route-reconcile ./wrt/files/usr/sbin/tailscale-route-reconcile
+            chmod 0755 ./wrt/files/etc/init.d/tailscale-route-reconcile ./wrt/files/etc/uci-defaults/96-tailscale-uci-fallback ./wrt/files/etc/uci-defaults/99-tailscale-route-reconcile ./wrt/files/usr/sbin/tailscale-route-reconcile
+            test -x ./wrt/files/usr/sbin/tailscale-route-reconcile || {
+              echo "ERROR: tailscale route reconcile helper is missing from the firmware overlay" >&2
+              exit 1
+            }
+            test -x ./wrt/files/etc/init.d/tailscale-route-reconcile || {
+              echo "ERROR: tailscale route reconcile init script is missing from the firmware overlay" >&2
+              exit 1
+            }
+          elif [ "${WRT_FEATURE_OVERLAY:-true}" != "true" ]; then
             echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
           fi
 
@@ -685,6 +700,12 @@ jobs:
           # CONFIG_PACKAGE_luci-app-wrtbak is not set
           # CONFIG_PACKAGE_tailscale is not set
           EOF
+            if [ "${WRT_TAILSCALE_ROUTE_RECONCILE:-true}" = "true" ]; then
+              cat >> .config <<'EOF'
+          CONFIG_PACKAGE_tailscale=y
+          CONFIG_PACKAGE_luci-app-tailscale-community=y
+          EOF
+            fi
           fi
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
@@ -710,7 +731,7 @@ jobs:
               }
             done
           fi
-          if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
+          if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ] || [ "${WRT_TAILSCALE_ROUTE_RECONCILE:-true}" = "true" ]; then
           grep -q '^CONFIG_PACKAGE_tailscale=y$' .config || {
             echo "ERROR: tailscale was dropped from .config after defconfig"
             exit 1
@@ -848,8 +869,9 @@ jobs:
               --arg config "$WRT_CONFIG" \
               --arg required_device "$WRT_REQUIRED_DEVICE" \
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
+              --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
               --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
-              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,container_runtime_mode:$container_runtime_mode}' \
+              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt

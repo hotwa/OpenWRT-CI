@@ -57,6 +57,7 @@ jobs:
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: false
       WRT_FEATURE_OVERLAY: false
+      WRT_TAILSCALE_ROUTE_RECONCILE: false
       WRT_LAN_TAILNET: false
       WRT_WAN_SSH: false
       WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
@@ -85,6 +86,7 @@ jobs:
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
       WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_LAN_TAILNET: true
       WRT_WAN_SSH: false
       WRT_WAN_SSH_PORT: '22'

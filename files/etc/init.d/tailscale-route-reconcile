@@ -10,7 +10,9 @@ start_service() {
 	[ -x "$PROG" ] || return 0
 
 	procd_open_instance
-	procd_set_param command "$PROG" --loop
+	# The helper defaults to its persistent loop; the same binary remains
+	# convenient for manual --once/--status checks.
+	procd_set_param command "$PROG"
 	procd_set_param respawn 3600 5 2
 	procd_set_param stdout 1
 	procd_set_param stderr 1

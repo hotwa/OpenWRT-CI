@@ -28,6 +28,8 @@ jobs:
       WRT_NAME: RE-CS-07
       WRT_SSID: RE-CS-07
       WRT_IP: ${{ inputs.LAN_IP || '192.168.10.1' }}
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main

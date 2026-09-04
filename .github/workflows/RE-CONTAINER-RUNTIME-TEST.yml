@@ -68,6 +68,7 @@ jobs:
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-02
       WRT_REQUIRED_DEVICE: jdcloud_re-cs-02
       WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
       WRT_CONTAINER_RUNTIME_TEST: true
       WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || 'prebuilt' }}
@@ -100,6 +101,7 @@ jobs:
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-07
       WRT_REQUIRED_DEVICE: jdcloud_re-cs-07
       WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
       WRT_CONTAINER_RUNTIME_TEST: true
       WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || 'prebuilt' }}

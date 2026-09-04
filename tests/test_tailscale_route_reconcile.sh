@@ -11,123 +11,178 @@ FALLBACK="$ROOT_DIR/files/etc/uci-defaults/96-tailscale-uci-fallback"
 [ -x "$SCRIPT" ] || { echo "route reconcile helper is not executable"; exit 1; }
 [ -x "$INIT" ] || { echo "route reconcile init script is not executable"; exit 1; }
 [ -x "$DEFAULTS" ] || { echo "route reconcile defaults script is not executable"; exit 1; }
-sh -n "$SCRIPT"
-sh -n "$INIT"
-sh -n "$DEFAULTS"
+sh -n "$SCRIPT" "$INIT" "$DEFAULTS"
 
-grep -q "PrimaryRoutes" "$SCRIPT" || { echo "helper does not derive routes from netmap"; exit 1; }
-grep -q "jsonfilter" "$SCRIPT" || { echo "helper does not use the OpenWrt JSON parser"; exit 1; }
-grep -q "table 52" "$SCRIPT" || { echo "helper does not inspect table 52"; exit 1; }
-grep -q "force-netmap-update" "$SCRIPT" || { echo "helper lacks the non-disruptive refresh step"; exit 1; }
-grep -q "RESTART_COOLDOWN" "$SCRIPT" || { echo "helper lacks restart cooldown"; exit 1; }
-if grep -Eq '192\.168\.(8|9|10|11|12|101)' "$SCRIPT"; then
-	echo "helper hardcodes a production subnet"
-	exit 1
+grep -q 'debug netmap' "$SCRIPT"
+grep -q 'BackendState' "$SCRIPT"
+grep -q 'Self' "$SCRIPT"
+grep -q 'PrimaryRoutes' "$SCRIPT"
+grep -q '100.100.100.100' "$SCRIPT"
+grep -q 'route show table all' "$SCRIPT"
+grep -q 'from all lookup' "$SCRIPT"
+grep -q 'ping -c 1 -W 2' "$SCRIPT"
+grep -q 'headscale-auto-enroll.lock' "$SCRIPT"
+grep -q 'force-netmap-update' "$SCRIPT"
+grep -q 'FAIL_ADDR' "$SCRIPT"
+grep -q 'FAIL_OTHER' "$SCRIPT"
+grep -q 'UPGRADED' "$SCRIPT"
+grep -q 'LAST_RESTART' "$SCRIPT"
+grep -q -- '--once' "$SCRIPT"
+grep -q -- '--check' "$SCRIPT"
+grep -q -- '--status' "$SCRIPT"
+grep -q -- '--loop' "$SCRIPT"
+if grep -Eq 'Online[ =]' "$SCRIPT"; then
+  echo "helper must not use the unreliable netmap/status Online flag"
+  exit 1
 fi
+if grep -Eq 'route (add|replace|del)' "$SCRIPT"; then
+  echo "helper must remain read-only and never mutate kernel routes"
+  exit 1
+fi
+grep -q "config route_reconcile 'route_reconcile'" "$CONFIG"
+grep -q "config route_reconcile 'route_reconcile'" "$FALLBACK"
 
-grep -q "config route_reconcile 'route_reconcile'" "$CONFIG" || {
-	echo "tailscale config does not expose route reconcile settings"
-	exit 1
-}
-grep -q "config route_reconcile 'route_reconcile'" "$FALLBACK" || {
-	echo "tailscale fallback does not expose route reconcile settings"
-	exit 1
-}
-grep -q "/etc/init.d/tailscale-route-reconcile enable" "$DEFAULTS" || {
-	echo "route reconcile defaults do not enable the service"
-	exit 1
-}
-
-# Runtime fixture: use an arbitrary subnet to prove that the helper follows
-# netmap data, waits for two confirmations, then restarts once. A later healthy
-# check clears the failure counter without another restart.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 BIN_DIR="$WORK_DIR/bin"
 mkdir -p "$BIN_DIR"
 
-cat >"$BIN_DIR/pgrep" <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-
 cat >"$BIN_DIR/tailscale" <<'EOF'
 #!/bin/sh
 case "$1:$2" in
-	status:--json)
-		printf '%s\n' '{"BackendState":"Running"}'
-		;;
-	debug:netmap)
-		printf '%s\n' '{"Peers":[{"Online":true,"PrimaryRoutes":["10.42.0.0/16"]}]}'
-		;;
-	debug:force-netmap-update)
-		if [ -f "$FIXTURE_ROOT/refresh-restores" ]; then
-			touch "$FIXTURE_ROOT/routes-ok"
-			exit 0
-		fi
-		exit 1
-		;;
-	*)
-		exit 1
-		;;
+  status:--json)
+    printf '%s
+' '{"BackendState":"Running","Self":{"TailscaleIPs":["100.64.0.2/32"]}}'
+    ;;
+  debug:netmap)
+    if [ "${EMPTY_NETMAP:-0}" = 1 ]; then
+      echo '{"Peers":[]}'
+      exit 0
+    fi
+    printf '%s
+' '{"Peers":[{"Online":false,"Addresses":["100.64.0.3/32"],"PrimaryRoutes":["10.42.0.0/16"]}]}'
+    ;;
+  debug:force-netmap-update)
+    printf '%s
+' force >>"$FIXTURE_ROOT/actions"
+    exit 0
+    ;;
+  *) exit 1 ;;
 esac
-EOF
-
-cat >"$BIN_DIR/jsonfilter" <<'EOF'
-#!/bin/sh
-printf '%s\n' '10.42.0.0/16'
 EOF
 
 cat >"$BIN_DIR/ip" <<'EOF'
 #!/bin/sh
-if [ -f "$FIXTURE_ROOT/routes-ok" ]; then
-	printf '%s\n' '10.42.0.0/16 dev tailscale0'
-fi
+case "$*" in
+  "-4 link show dev tailscale0")
+    exit 0
+    ;;
+  "-4 addr show dev tailscale0")
+    if [ -f "$FIXTURE_ROOT/addr-ok" ]; then
+      printf '%s
+' '    inet 100.64.0.2/32 scope global tailscale0'
+    fi
+    ;;
+  "-4 rule show")
+    printf '%s
+' '100: from all lookup 1234'
+    ;;
+  "-4 route show table all"|"-4 route show table 1234")
+    if [ -f "$FIXTURE_ROOT/routes-ok" ]; then
+      printf '%s
+'         '100.64.0.3 dev tailscale0 table 1234'         '10.42.0.0/16 dev tailscale0 table 1234'         '100.100.100.100 dev tailscale0 table 1234'
+    fi
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat >"$BIN_DIR/ping" <<'EOF'
+#!/bin/sh
+[ -f "$FIXTURE_ROOT/routes-ok" ]
 EOF
 
 cat >"$BIN_DIR/logger" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$*" >>"$FIXTURE_ROOT/log"
+printf '%s
+' "$*" >>"$FIXTURE_ROOT/log"
 EOF
 
 cat >"$BIN_DIR/date" <<'EOF'
 #!/bin/sh
-printf '%s\n' '1000'
+printf '%s
+' 1000
 EOF
 
 cat >"$BIN_DIR/tailscale-init" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$*" >>"$FIXTURE_ROOT/restarts"
+printf '%s
+' restart >>"$FIXTURE_ROOT/actions"
+touch "$FIXTURE_ROOT/routes-ok" "$FIXTURE_ROOT/addr-ok"
 EOF
 
 chmod +x "$BIN_DIR"/*
-
+count_action() {
+  [ -f "$WORK_DIR/actions" ] || { printf '0\n'; return 0; }
+  grep -c "^$1$" "$WORK_DIR/actions" || true
+}
 export FIXTURE_ROOT="$WORK_DIR"
-export TSRC_PATH="$BIN_DIR:/usr/sbin:/usr/bin:/sbin:/bin"
+export TSRC_PATH="$BIN_DIR:/usr/local/bin:/usr/bin:/bin"
+export TSRC_STATE_FILE="$WORK_DIR/tailscale-route-reconcile.state"
 export TSRC_RUNTIME_DIR="$WORK_DIR/runtime"
+export TSRC_LOCK_DIR="$WORK_DIR/route-lock"
 export TSRC_TAILSCALE_INIT="$BIN_DIR/tailscale-init"
 export TSRC_NETMAP_WAIT=0
 export TSRC_FAILURE_THRESHOLD=2
 export TSRC_RESTART_COOLDOWN=1800
+export TSRC_CHECK_INTERVAL=1
+touch "$WORK_DIR/routes-ok" "$WORK_DIR/addr-ok"
 
-"$SCRIPT" --check
-[ ! -e "$WORK_DIR/restarts" ] || { echo "helper restarted before confirmation threshold"; exit 1; }
-"$SCRIPT" --check
-[ "$(wc -l <"$WORK_DIR/restarts")" -eq 1 ] || { echo "helper did not restart exactly once after confirmed loss"; exit 1; }
-grep -q '^failures=0$' "$WORK_DIR/runtime/state" || { echo "restart did not clear failure counter"; exit 1; }
+"$SCRIPT" --status | grep -q '^health=healthy$'
+"$SCRIPT" --once
+[ ! -e "$WORK_DIR/actions" ] || { echo "healthy baseline triggered repair"; exit 1; }
 
-touch "$WORK_DIR/routes-ok"
-"$SCRIPT" --check
-[ "$(wc -l <"$WORK_DIR/restarts")" -eq 1 ] || { echo "healthy route check triggered another restart"; exit 1; }
-grep -q '^last_action=0$' "$WORK_DIR/runtime/state" || { echo "healthy route check did not reset state"; exit 1; }
-
-# A later incident is repaired by the no-op netmap refresh itself; a service
-# restart is not needed when tailscaled repopulates table 52 in place.
 rm -f "$WORK_DIR/routes-ok"
-touch "$WORK_DIR/refresh-restores"
-"$SCRIPT" --check
-"$SCRIPT" --check
-[ "$(wc -l <"$WORK_DIR/restarts")" -eq 1 ] || { echo "netmap refresh path caused an unnecessary restart"; exit 1; }
-grep -q 'netmap refresh restored table 52 routes' "$WORK_DIR/log" || { echo "netmap refresh recovery was not logged"; exit 1; }
+"$SCRIPT" --once
+[ ! -e "$WORK_DIR/actions" ] || { echo "route drift repaired before confirmation"; exit 1; }
+"$SCRIPT" --once
+[ "$(count_action force)" -eq 1 ] || { echo "route drift did not trigger one force update"; exit 1; }
+[ "$(count_action restart)" -eq 0 ] || { echo "route drift restarted too early"; exit 1; }
+"$SCRIPT" --once
+[ "$(count_action restart)" -eq 1 ] || { echo "route drift did not restart on third failure"; exit 1; }
+grep -q 'post-repair verification PASSED' "$WORK_DIR/log"
 
-echo "tailscale route reconcile fixture passed"
+export TSRC_RESTART_COOLDOWN=0
+rm -f "$WORK_DIR/addr-ok" "$WORK_DIR/routes-ok" "$WORK_DIR/actions"
+"$SCRIPT" --once
+[ ! -e "$WORK_DIR/actions" ] || { echo "address drift repaired before confirmation"; exit 1; }
+"$SCRIPT" --once
+[ "$(count_action restart)" -eq 1 ] || { echo "address drift did not restart directly"; exit 1; }
+[ "$(count_action force)" -eq 0 ] || { echo "address drift incorrectly forced netmap update"; exit 1; }
+
+export TSRC_RESTART_COOLDOWN=1800
+rm -f "$WORK_DIR/routes-ok" "$WORK_DIR/addr-ok" "$WORK_DIR/actions"
+"$SCRIPT" --once
+"$SCRIPT" --once
+"$SCRIPT" --once
+[ "$(count_action restart)" -eq 0 ] || { echo "restart cooldown was bypassed"; exit 1; }
+grep -q 'cooldown' "$WORK_DIR/log"
+
+export EMPTY_NETMAP=1
+rm -f "$WORK_DIR/actions"
+"$SCRIPT" --once
+[ ! -e "$WORK_DIR/actions" ] || { echo "empty netmap was treated as a repairable failure"; exit 1; }
+unset EMPTY_NETMAP
+
+mkdir -p "$WORK_DIR/enroll-lock"
+sleep 30 &
+ENROLL_PID=$!
+printf '%s
+' "$ENROLL_PID" >"$WORK_DIR/enroll-lock/pid"
+export HEADSCALE_AUTO_ENROLL_LOCK_DIR="$WORK_DIR/enroll-lock"
+rm -f "$WORK_DIR/actions"
+"$SCRIPT" --once
+kill "$ENROLL_PID" 2>/dev/null || true
+[ ! -e "$WORK_DIR/actions" ] || { echo "active auto-enroll lock was ignored"; exit 1; }
+
+echo "tailscale route reconcile test passed"
