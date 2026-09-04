@@ -111,12 +111,12 @@ for binary in nerdctl containerd containerd-shim-runc-v2 ctr; do
 done
 install -m 0755 "$EXTRACT_DIR/bin/runc" "$DEST_ROOT/usr/sbin/runc"
 
-# Keep only the plugins needed for host, bridge+nft, and ipvlan-l3 experiments.
+# Keep only the plugins needed for host and bridge+nft operation.
 # The full bundle contains many optional CNI drivers and would add tens of
 # megabytes to a firmware whose root partition is already tight. Do not add
 # CNI firewall/portmap to the default staged set: they can invoke iptables-nft
 # while fw4/Nikki/Tailscale own nftables directly.
-for cni_plugin in bridge host-local ipvlan loopback tuning; do
+for cni_plugin in bridge host-local loopback tuning; do
   [ -f "$EXTRACT_DIR/libexec/cni/$cni_plugin" ] || {
     echo "ERROR: official bundle is missing CNI plugin $cni_plugin" >&2
     exit 1

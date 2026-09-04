@@ -45,6 +45,12 @@ start_service() {
 	done
 
 	mkdir -p /data/containerd/root /data/containerd/nerdctl /run/containerd || return 1
+	if [ -x /usr/sbin/container-bridge-nft ]; then
+		/usr/sbin/container-bridge-nft enable || {
+			logger -t containerd-test "refusing to start: bridge+nft policy could not be enabled"
+			return 0
+		}
+	fi
 
 	procd_open_instance
 	procd_set_param command /usr/bin/containerd --config "$CONFIG_FILE"

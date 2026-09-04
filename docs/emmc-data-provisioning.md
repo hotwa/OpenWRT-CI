@@ -63,7 +63,7 @@ Samba 共享本身仍需要在 LuCI 中配置用户和权限；固件不会创�
 运行时 state 和 socket 使用 `/run/containerd`。测试专用 init 脚本只有在 `/data` 是真实的
 `/dev/*` ext4/f2fs 挂载、cgroup v2 控制器可用且运行时二进制齐全时才启动。升级或启动
 时若数据盘没有挂载，containerd 不会退回根文件系统写入镜像层。重要的 Compose 文件和
-应用卷应统一放在 `/data/containers/`，并在刷写前另行备份；整盘重分区或厂刷工具不属于
+Compose 项目和应用卷应统一放在 `/data/compose/<service>/`，并在刷写前另行备份；整盘重分区或厂刷工具不属于
 sysupgrade 保留契约，仍可能销毁整个 `/data`。
 
 ## 启用策略

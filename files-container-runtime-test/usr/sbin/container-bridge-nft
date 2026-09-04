@@ -1,0 +1,319 @@
+#!/bin/sh
+
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+
+TAG="container-bridge-nft"
+BRIDGE="ctrbr-nft0"
+NETWORK="bridge"
+DEFAULT_SUBNET="10.250.0.0/24"
+SUBNET="$DEFAULT_SUBNET"
+ZONE="container_bridge_nft"
+CNI_TEMPLATE="/usr/share/container-runtime/nerdctl-bridge.conflist.in"
+CNI_ACTIVE="/etc/cni/net.d/nerdctl-bridge.conflist"
+NFT_TEMPLATE="/usr/share/container-runtime/container-bridge-nft.nft"
+NFT_ACTIVE="/etc/nftables.d/99-container-bridge-nft.nft"
+STATE_DIR="/data/containerd/nerdctl"
+SUBNET_FILE="$STATE_DIR/bridge-subnet"
+
+log() {
+	logger -t "$TAG" "$*" 2>/dev/null || true
+	echo "$TAG: $*"
+}
+
+data_mount_ready() {
+	awk '$2 == "/data" && $1 ~ /^\/dev\// && ($3 == "ext4" || $3 == "f2fs") { found = 1 } END { exit !found }' /proc/mounts
+}
+
+lan_device() {
+	local device
+	device="$(uci -q get network.lan.device 2>/dev/null || true)"
+	[ -n "$device" ] || device="$(uci -q get network.lan.ifname 2>/dev/null || true)"
+	[ -n "$device" ] || device="br-lan"
+	printf '%s' "$device"
+}
+
+candidate_route_is_safe() {
+	local subnet="$1" gateway="$2" route query lan
+	lan="$(lan_device)"
+
+	# A candidate must not be routed into LAN, Tailnet, Nikki, or another
+	# directly connected interface. A normal default route is safe because the
+	# nft policy owns the later masquerade/mark decision.
+	for query in ""; do
+		route="$(ip -4 route get "$gateway" $query 2>/dev/null || true)"
+		[ -n "$route" ] || return 1
+		case "$route" in
+			unreachable*|blackhole*|prohibit*|throw*) return 1 ;;
+			*" dev $lan "*|*" dev br-lan "*|*" dev tailscale0 "*|*" dev nikki "*|*" dev tun*"*)
+				return 1
+				;;
+			*" dev $BRIDGE "*)
+				# Reusing the persisted subnet after reboot is allowed.
+				;;
+			*" via "*)
+				# The candidate follows a routed default path.
+				;;
+			*)
+				# A connected route on any other interface is ambiguous and is
+				# safer to reject than to overlap silently.
+				return 1
+				;;
+		esac
+	done
+
+	# Avoid colliding with another CNI network even if that network has not
+	# created its link yet. The generated default file is the only exception.
+	for config in /etc/cni/net.d/*; do
+		[ -f "$config" ] || continue
+		[ "$config" = "$CNI_ACTIVE" ] && continue
+		grep -Fq "\"$subnet\"" "$config" 2>/dev/null && return 1
+	done
+}
+
+select_subnet() {
+	local saved candidate subnet gateway
+
+	[ -r "$SUBNET_FILE" ] && {
+		saved="$(sed -n '1p' "$SUBNET_FILE")"
+		case "$saved" in
+			10.*.0.0/24|172.30.0.0/24|172.31.0.0/24)
+				subnet="$saved"
+				gateway="${subnet%0/24}1"
+				if candidate_route_is_safe "$subnet" "$gateway"; then
+					SUBNET="$subnet"
+					return 0
+				fi
+				log "persisted subnet $subnet overlaps an active route; selecting a new subnet"
+				;;
+		esac
+	}
+
+	for candidate in \
+		"10.250.0.0/24" \
+		"10.251.0.0/24" \
+		"10.252.0.0/24" \
+		"10.253.0.0/24" \
+		"10.254.0.0/24" \
+		"172.30.0.0/24" \
+		"172.31.0.0/24"; do
+		gateway="${candidate%0/24}1"
+		if candidate_route_is_safe "$candidate" "$gateway"; then
+			SUBNET="$candidate"
+			return 0
+		fi
+	done
+
+	log "no unused container subnet is available"
+	return 1
+}
+
+persist_subnet() {
+	local temporary="$SUBNET_FILE.new.$$"
+	mkdir -p "$STATE_DIR" || return 1
+	printf '%s\n' "$SUBNET" > "$temporary" || return 1
+	chmod 0600 "$temporary" 2>/dev/null || true
+	mv -f "$temporary" "$SUBNET_FILE" || {
+		rm -f "$temporary"
+		return 1
+	}
+}
+
+render_cni_config() {
+	local temporary
+	[ -r "$CNI_TEMPLATE" ] || {
+		log "missing CNI template: $CNI_TEMPLATE"
+		return 1
+	}
+	if [ -L "$CNI_ACTIVE" ]; then
+		log "refusing to replace symlinked CNI config: $CNI_ACTIVE"
+		return 1
+	fi
+	mkdir -p "$(dirname "$CNI_ACTIVE")" || return 1
+	temporary="$CNI_ACTIVE.new.$$"
+	sed "s|__CONTAINER_SUBNET__|$SUBNET|g" "$CNI_TEMPLATE" > "$temporary" || {
+		rm -f "$temporary"
+		return 1
+	}
+	chmod 0644 "$temporary" || {
+		rm -f "$temporary"
+		return 1
+	}
+	mv -f "$temporary" "$CNI_ACTIVE" || {
+		rm -f "$temporary"
+		return 1
+	}
+}
+
+remove_cni_config() {
+	if [ -f "$CNI_ACTIVE" ] && \
+		grep -Fq '"bridge": "ctrbr-nft0"' "$CNI_ACTIVE" && \
+		grep -Fq '"nerdctl/default-network": "true"' "$CNI_ACTIVE"; then
+		rm -f "$CNI_ACTIVE"
+	fi
+}
+
+ensure_firewall_zone() {
+	uci -q get "firewall.$ZONE" >/dev/null 2>&1 || \
+		uci set "firewall.$ZONE=zone"
+	uci set "firewall.$ZONE.name=$ZONE"
+	uci set "firewall.$ZONE.device=$BRIDGE"
+	uci set "firewall.$ZONE.input=ACCEPT"
+	uci set "firewall.$ZONE.output=ACCEPT"
+	uci set "firewall.$ZONE.forward=ACCEPT"
+}
+
+ensure_forwarding() {
+	local section="$1"
+	local source="$2"
+	local destination="$3"
+	uci -q get "firewall.$section" >/dev/null 2>&1 || \
+		uci set "firewall.$section=forwarding"
+	uci set "firewall.$section.src=$source"
+	uci set "firewall.$section.dest=$destination"
+}
+
+install_nft_policy() {
+	local temporary
+	[ -r "$NFT_TEMPLATE" ] || {
+		log "missing nft policy template: $NFT_TEMPLATE"
+		return 1
+	}
+	if [ -e "$NFT_ACTIVE" ] && ! grep -Fq 'container bridge return-path NAT' "$NFT_ACTIVE"; then
+		log "refusing to replace unrelated nft file: $NFT_ACTIVE"
+		return 1
+	fi
+	mkdir -p "$(dirname "$NFT_ACTIVE")" || return 1
+	temporary="$NFT_ACTIVE.new.$$"
+	sed "s|__CONTAINER_SUBNET__|$SUBNET|g" "$NFT_TEMPLATE" > "$temporary" || {
+		rm -f "$temporary"
+		return 1
+	}
+	chmod 0644 "$temporary" || {
+		rm -f "$temporary"
+		return 1
+	}
+	mv -f "$temporary" "$NFT_ACTIVE" || {
+		rm -f "$temporary"
+		return 1
+	}
+}
+
+remove_nft_policy() {
+	if [ -f "$NFT_ACTIVE" ] && grep -Fq 'container bridge return-path NAT' "$NFT_ACTIVE"; then
+		rm -f "$NFT_ACTIVE"
+	fi
+}
+
+reload_firewall() {
+	if [ -x /etc/init.d/firewall ]; then
+		/etc/init.d/firewall reload >/dev/null 2>&1 || return 1
+	else
+		fw4 reload >/dev/null 2>&1 || return 1
+	fi
+}
+
+remove_firewall_config() {
+	uci -q delete "firewall.$ZONE" 2>/dev/null || true
+	uci -q delete "firewall.${ZONE}_to_wan" 2>/dev/null || true
+	uci -q delete "firewall.${ZONE}_to_lan" 2>/dev/null || true
+	uci -q delete "firewall.${ZONE}_to_tailscale" 2>/dev/null || true
+	uci -q delete "firewall.lan_to_${ZONE}" 2>/dev/null || true
+	uci -q delete "firewall.tailscale_to_${ZONE}" 2>/dev/null || true
+	uci commit firewall
+}
+
+configure_uci() {
+	ensure_firewall_zone
+
+	ensure_forwarding "${ZONE}_to_wan" "$ZONE" wan
+	ensure_forwarding "${ZONE}_to_lan" "$ZONE" lan
+	ensure_forwarding "${ZONE}_to_tailscale" "$ZONE" tailscale
+	ensure_forwarding "lan_to_${ZONE}" lan "$ZONE"
+	ensure_forwarding "tailscale_to_${ZONE}" tailscale "$ZONE"
+
+	uci commit firewall
+}
+
+enable_bridge() {
+	data_mount_ready || {
+		log "refusing to enable: /data is not a real ext4/f2fs block mount"
+		return 1
+	}
+	select_subnet || return 1
+	persist_subnet || {
+		log "failed to persist selected subnet $SUBNET"
+		return 1
+	}
+	render_cni_config || return 1
+	install_nft_policy || {
+		remove_cni_config
+		return 1
+	}
+	configure_uci || {
+		remove_nft_policy
+		remove_cni_config
+		log "failed to write UCI configuration"
+		return 1
+	}
+
+	# This only reloads firewall; it does not reload netifd or Nikki, so CNI's
+	# bridge remains solely owned by the bridge plugin and existing links are
+	# not brought down by the boot-time enable operation.
+	if ! reload_firewall; then
+		log "firewall reload failed; rolling back bridge+nft policy"
+		remove_nft_policy
+		remove_cni_config
+		remove_firewall_config
+		reload_firewall || true
+		return 1
+	fi
+	log "enabled: default nerdctl network is $NETWORK (subnet $SUBNET, ipMasq=false)"
+}
+
+disable_bridge() {
+	remove_firewall_config
+	remove_nft_policy
+	remove_cni_config
+	reload_firewall || log "firewall reload failed during disable"
+	log "disabled: generated default bridge config and policy removed"
+}
+
+show_status() {
+	local active_subnet=""
+	[ -r "$SUBNET_FILE" ] && active_subnet="$(sed -n '1p' "$SUBNET_FILE")"
+	[ -n "$active_subnet" ] || active_subnet="$DEFAULT_SUBNET (not selected yet)"
+	echo "network=$NETWORK"
+	echo "bridge=$BRIDGE"
+	echo "subnet=$active_subnet"
+	echo "cni_config=$CNI_ACTIVE"
+	echo "--- UCI network ---"
+	echo "not managed (CNI owns $BRIDGE)"
+	echo "--- UCI firewall ---"
+	uci -q show "firewall.$ZONE" 2>/dev/null || echo "not configured"
+	echo "--- bridge link ---"
+	ip -br addr show "$BRIDGE" 2>/dev/null || echo "bridge not created"
+	echo "--- nft policy ---"
+	[ -f "$NFT_ACTIVE" ] && echo "enabled: $NFT_ACTIVE" || echo "disabled"
+}
+
+case "${1:-status}" in
+	enable|start)
+		enable_bridge
+		;;
+	disable|stop)
+		disable_bridge
+		;;
+	status)
+		show_status
+		;;
+	apply|reload)
+		reload_firewall || log "firewall reload failed during apply"
+		;;
+	*)
+		echo "Usage: $0 {enable|disable|status|apply}" >&2
+		exit 2
+		;;
+esac

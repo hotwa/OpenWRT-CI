@@ -1,17 +1,20 @@
 #!/bin/sh
 
-# Read-only runtime probe for a currently running OpenWrt device. Pass --run
-# to additionally pull and run the small host-network smoke container, or
-# --compose to exercise nerdctl compose with a temporary host-network service.
+# Runtime probe for a currently running OpenWrt device. Pass --run to exercise
+# the default bridge+nft network, or --compose to exercise nerdctl compose with
+# a temporary external bridge service. Pass --host only for an explicit final
+# fallback check after bridge+nft has failed.
 
 set +e
 failures=0
 run_smoke=0
 run_compose=0
+use_host=0
 for argument in "$@"; do
 	case "$argument" in
 		--run) run_smoke=1 ;;
 		--compose) run_compose=1 ;;
+		--host) use_host=1 ;;
 		*) printf '%s\n' "unknown argument: $argument"; failures=$((failures + 1)) ;;
 	esac
 done
@@ -69,23 +72,46 @@ iptables -V 2>&1 | sed -n '1,2p'
 nft list tables 2>&1 | sed -n '1,30p'
 
 if [ "$run_smoke" -eq 1 ] && command -v nerdctl >/dev/null 2>&1; then
-	report "== host-network smoke run =="
-	nerdctl run --network host --rm alpine:latest echo ok 2>&1
+	if [ "$use_host" -eq 1 ]; then
+		network_name=host
+	else
+		network_name=bridge
+		if ! command -v container-bridge-nft >/dev/null 2>&1; then
+			report "MISS bridge+nft helper: container-bridge-nft"
+			failures=$((failures + 1))
+		fi
+	fi
+	report "== ${network_name}-network smoke run =="
+	nerdctl run --network "$network_name" --memory=128m --rm alpine:latest sh -c \
+		'wget -T 15 -qO- https://www.google.com/generate_204 >/dev/null && wget -T 15 -qO- https://chatgpt.com/cdn-cgi/trace | grep -q "fl=" && proxy_ip=$(wget -T 15 -qO- https://api.ipify.org) && test -n "$proxy_ip" && echo "proxy_ip=$proxy_ip"' 2>&1
 	[ "$?" -eq 0 ] || failures=$((failures + 1))
 fi
 
 if [ "$run_compose" -eq 1 ] && command -v nerdctl >/dev/null 2>&1; then
-	compose_dir="/tmp/nerdctl-compose-probe"
+	compose_dir="/data/compose/.runtime-probe"
 	compose_file="$compose_dir/compose.yaml"
 	rm -rf "$compose_dir"
 	mkdir -p "$compose_dir"
-	cat > "$compose_file" <<'EOF'
+	if [ "$use_host" -eq 1 ]; then
+		cat > "$compose_file" <<'EOF'
 services:
   smoke:
     image: alpine:latest
     network_mode: host
-    command: ["sh", "-c", "echo compose-ok"]
+    command: ["sh", "-c", "wget -T 15 -qO- https://www.google.com/generate_204 >/dev/null && wget -T 15 -qO- https://chatgpt.com/cdn-cgi/trace | grep -q fl= && wget -T 15 -qO- https://api.ipify.org"]
 EOF
+	else
+		cat > "$compose_file" <<'EOF'
+services:
+  smoke:
+    image: alpine:latest
+    command: ["sh", "-c", "wget -T 15 -qO- https://www.google.com/generate_204 >/dev/null && wget -T 15 -qO- https://chatgpt.com/cdn-cgi/trace | grep -q fl= && wget -T 15 -qO- https://api.ipify.org"]
+networks:
+  default:
+    external: true
+    name: bridge
+EOF
+	fi
 	report "== nerdctl compose smoke run =="
 	nerdctl compose -f "$compose_file" up 2>&1
 	[ "$?" -eq 0 ] || failures=$((failures + 1))

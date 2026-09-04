@@ -36,6 +36,15 @@
 - **运行时**：Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）和由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13（`python3`、`uv`）。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
 
+### (3) 容器运行环境与 Compose 约定（RE-CS-02 / RE-CS-07）
+- **运行时**：本机若存在 `nerdctl`、`containerd` 与 `container-bridge-nft`，说明已安装 rootful `containerd + nerdctl + nerdctl compose`；镜像、快照和容器元数据必须落在 `/data`，不得因 `/data` 未挂载而回写根分区。
+- **项目目录**：以后每个容器服务必须使用 `/data/compose/<service>/compose.yaml` 管理；相对路径卷放在同一服务目录下。不要用临时 `nerdctl run` 代替长期 Compose 配置。
+- **网络选择顺序**：优先使用默认 `bridge` 网络（`bridge+nft`），其次才考虑已经明确验证过的专用网络；`host` 只能作为 bridge+nft 失败后的最后回退。host 容器共享路由器的端口命名空间，启动前必须检查监听地址、端口冲突和 WAN 暴露风险。
+- **bridge+nft 健康门槛**：启动服务前运行 `container-bridge-nft status`，确认 `/data` 已是真实 ext4/f2fs 挂载且已选出未与 LAN/Tailnet 冲突的子网。Compose 的默认网络必须显式引用外部网络：`networks.default.external: true`、`networks.default.name: bridge`，避免创建 iptables 管理的项目网桥。
+- **代理验证**：bridge+nft 容器必须验证 DNS、Google HTTPS、`chatgpt.com/cdn-cgi/trace`、`api.ipify.org`，并检查 nft/Nikki 计数器或日志确实增长；公网流量应由 Nikki 分流，LAN/Tailnet 私网目标应保持直连。验证失败时只清理本次服务的容器、网络和临时规则，记录原因后再回退 host。
+- **CNI 限制**：默认 CNI 不使用 `ipMasq`、`portmap` 或 `firewall` 插件，禁止为解决问题直接执行 `iptables -t nat` 或切换 iptables 后端；端口发布优先用容器 IP 或反向代理。当前固件不固化 `ipvlan-l3`（目标内核的虚拟网关不可达），也不自动选择 `macvlan`（宿主网关可达性和 Wi-Fi 兼容性未满足通用服务要求），除非用户明确要求单独实验。
+- **资源限制**：本机通常无 swap，每个服务应设置合理的内存上限（例如 Compose 的资源限制），并在 `/` 与 `/data` 上同时检查空间；容器产生的数据不得写入 `/root`、`/tmp` 或 `/opt`。
+
 ---
 
 ## 3. 核心职责与任务工作流

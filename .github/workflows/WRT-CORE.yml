@@ -550,10 +550,6 @@ jobs:
                 exit 1
                 ;;
             esac
-            # ipvlan is optional at runtime, but its matching kernel module is
-            # part of the two container test images. Kernel modules must be
-            # built into the firmware package set, not stored on /data.
-            printf '%s\n' 'CONFIG_PACKAGE_kmod-ipvlan=y' > "$RUNNER_TEMP/container-runtime-kconfig"
             case "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}" in
               prebuilt|auto)
                 if ! $GITHUB_WORKSPACE/Scripts/fetch_container_runtime.sh "$GITHUB_WORKSPACE/wrt/files"; then
@@ -662,10 +658,6 @@ jobs:
 
           generate_config && cat .config
 
-          if [ -f "$RUNNER_TEMP/container-runtime-kconfig" ]; then
-            cat "$RUNNER_TEMP/container-runtime-kconfig" >> .config
-          fi
-
           if [ "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-}" = "openwrt" ]; then
             cat >> .config <<'EOF'
           CONFIG_PACKAGE_containerd=y
@@ -706,12 +698,6 @@ jobs:
                 exit 1
               }
             done
-          fi
-          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
-            grep -q '^CONFIG_PACKAGE_kmod-ipvlan=y$' .config || {
-              echo "ERROR: ipvlan kernel module was dropped from .config" >&2
-              exit 1
-            }
           fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
           grep -q '^CONFIG_PACKAGE_tailscale=y$' .config || {

@@ -124,9 +124,15 @@ render_profile() {
 		printf -- '- **内存**：`%s`；**数据盘**：`%s`\n' "$memory" "$data_mount"
 		printf -- '- **任务根目录**：`/data/multica/workspaces`（所有项目、下载、虚拟环境和产物均须位于此处）\n'
 		printf '\n### 当前可调用工具（运行时探测）\n\n'
-		for tool in uci ubus ip nft logread pi cmdc node npm pnpm python3 uv; do
+		for tool in uci ubus ip nft logread pi cmdc node npm pnpm python3 uv nerdctl containerd; do
 			tool_line "$tool"
 		done
+		if [ -x /usr/sbin/container-bridge-nft ] && command_path nerdctl >/dev/null 2>&1; then
+			printf '\n### 容器运行时策略（运行时探测）\n\n'
+			printf '%s\n' '- 默认模式：`bridge+nft`（nerdctl 网络名 `bridge`，策略由 `container-bridge-nft` 管理）。'
+			printf '%s\n' '- Compose 根目录：`/data/compose/<service>/compose.yaml`。'
+			printf '%s\n' '- 回退模式：bridge+nft 健康检查失败后才使用 `host`；当前固件不自动使用 ipvlan-l3/macvlan。'
+		fi
 		printf '\n### Mesh 与凭据安全边界\n\n'
 		printf '%s\n' '- 本机只通告当前 LAN 的精确 CIDR；远端子网是否可达由 Headplane 批准后进入 table 52 决定。可以诊断，但不得自行批准路由或通告整个 `192.168.0.0/16`。'
 		printf '%s\n' '- Tailnet IPv4 地址池为 `100.64.0.0/10`。'
