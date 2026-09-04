@@ -1,0 +1,18 @@
+# Disabled by default. Configure the named rclone remote out of band; do not put
+# its credentials in this file or firmware image.
+config backup 'main'
+	option enabled '0'
+	option remote 'backup'
+	option remote_path 'openwrt-data'
+	option device_alias ''
+	option timeout_seconds '7200'
+	option jitter_max_minutes '20'
+	option retain_successful '3'
+	option include_manifest '/etc/rclone-data-backup/include.conf'
+	option state_dir '/data/.rclone-data-backup'
+	option lock_dir '/var/lock/rclone-data-backup.lock'
+	option defer_if_writer '1'
+
+# A listed lock path means an active local writer.  Add only locks that are
+# held for the entire write transaction; a present lock defers this run.
+# list writer_lock '/var/lock/example-writer.lock'

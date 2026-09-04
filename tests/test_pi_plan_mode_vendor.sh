@@ -117,8 +117,16 @@ grep -Fq 'from "@earendil-works/pi-coding-agent"' "$VENDOR_DIR/plan-mode.ts" ||
   fail "vendor extension does not import the maintained Pi agent"
 grep -Fq 'from "@earendil-works/pi-ai"' "$VENDOR_DIR/plan-mode.ts" ||
   fail "vendor extension does not import the maintained Pi AI package"
+grep -Fq 'let planModeEnabled = true;' "$VENDOR_DIR/plan-mode.ts" ||
+  fail "firmware vendor extension does not default new Pi sessions to plan mode"
+grep -Fq 'Router agents begin each new session in plan mode' "$VENDOR_DIR/plan-mode.ts" ||
+  fail "firmware vendor extension does not document the explicit write escape"
+grep -Fq 'pi.setActiveTools(["read", "bash"]);' "$VENDOR_DIR/plan-mode.ts" ||
+  fail "plan mode does not hide write tools before agent start"
+grep -Fq 'event.toolName === "write" || event.toolName === "edit"' "$VENDOR_DIR/plan-mode.ts" ||
+  fail "plan mode does not block direct write/edit calls"
 
-for term in 'UPSTREAM_PULL_REQUEST=9' 'EXPECTED_SCOPE_PR_HEAD="8bf61ebb34647c1d22848fb951a2234965693cef"' 'dist.integrity' 'source_sha256' 'unexpected archive layout' 'scope migration'; do
+for term in 'UPSTREAM_PULL_REQUEST=9' 'EXPECTED_SCOPE_PR_HEAD="8bf61ebb34647c1d22848fb951a2234965693cef"' 'dist.integrity' 'source_sha256' 'unexpected archive layout' 'scope migration' 'OpenWrt devices run untrusted/remote agent work'; do
   grep -Fq "$term" "$REFRESH_SCRIPT" || fail "refresh script lacks fail-closed guard: $term"
 done
 bash -n "$REFRESH_SCRIPT" || fail "refresh script does not parse"

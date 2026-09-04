@@ -8,13 +8,14 @@
 
 - **硬件、内存、存储与网络事实**：以文末“本机启动时采集的事实”为准；不得将任何具体芯片、RAM 容量或 LAN 地址当作所有设备的固定事实。
 - **数据盘**：在确认 `/data` 是独立真实挂载前，不得写入大量状态、下载或虚拟环境；确认后，所有可变数据都应使用该数据盘。
+- **数据盘与备份状态**：`/var/run/data-runtime.status` 与 `/var/run/agent-data-backup.status` 是易失、只读的实时状态提示；存在时先阅读其 `KEY=value` 字段再报告状态，缺失只能说明“尚未初始化/未知”，不得据此自行挂载、格式化、重分区或启动备份。
 - **持久化工作区**：
   - Multica 工作根目录：`/data/multica/workspaces`（软链接至 `/root/multica-workspaces`）。**每个角色/任务必须在此根目录下创建自己的子目录后再执行操作；不得把项目、下载、虚拟环境或临时产物写入 `/root`、`/tmp` 或只读的 `/opt`。**
   - 本地配置持久化：`/data/multica/config.json`（软链接至 `/root/.multica/config.json`）
   - AI 运行时与配置：`/data/pnpm`（Node.js pnpm）、`/data/pi`（Pi 模型提供商与设置）、`/data/commandcode`（CommandCode 登录凭据与设置）
 - **网络拓扑与 Tailnet 异地组网**：
-  - 本机作为 **Headscale（自建 Tailscale Mesh 异地大局域网）** 的核心子网路由器（Subnet Router）与 LAN 网关；
-  - 自动向 Tailnet 通告本机局域网网段（如 `192.168.x.0/24`），并接收远端所有节点的通告路由（装载于内核路由表 52）；
+  - 本机是否为 **Headscale（自建 Tailscale Mesh 异地大局域网）** 的子网路由器、当前通告的 CIDR 及已接受路由，都必须以启动时采集的 `tailscale` 状态和动态探测的内核路由表为准；它们会随节点授权与网络变化而改变。
+  - 仅在当前偏好设置实际通告 LAN 时，才作为 Tailnet LAN 网关；不得把示例网段或历史 table 52 条目当作永久拓扑事实。
   - MagicDNS 直通解析域名：`*.hs.jmsu.top` 强制通过 `100.100.100.100@tailscale0` 解析；
   - 防火墙已预设放行 `tailscale0` 与 LAN 的双向互访与 NAT 伪装转发。
 
@@ -33,7 +34,8 @@
 ### (2) AI Agent 协同与执行环境
 - **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装计划模式 (`pi-plan-mode`)、联网搜索 (`pi-web-search`) 与 WeChat 助手 (`pi-wechat-assistant`)。
 - **CommandCode** (`cmdc` CLI)：Node.js 终端编码智能体；其登录状态在首次认证后持久化在 `/data/commandcode`。
-- **运行时**：Node.js 24 LTS Musl 静态版（`/usr/local/bin/node`, `npm`, `pnpm`）和由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13（`python3`、`uv`）。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
+- **运行时**：Node.js 24 LTS Musl 静态版与由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13。Agent 应使用 `/data/agent-runtime/current` 所指向的**已签名、不可变 generation**；不得在 `/data/node`、`/opt/node` 或全局 npm/pnpm 前缀内原地升级、安装或修改包。运行时更新只能通过 `/usr/sbin/agent-runtime` 验签后的完整 generation 完成。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
+- **Pi 默认权限**：Pi 是只读诊断/规划助手。默认仅允许采集状态、阅读配置、生成计划及提出命令；任何写配置、重启服务、安装软件、删除文件或网络变更，都必须由用户针对该操作明确确认后才可执行。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
 
 ### (3) 容器运行环境与 Compose 约定（RE-CS-02 / RE-CS-07）
@@ -43,7 +45,7 @@
 - **bridge+nft 健康门槛**：启动服务前运行 `container-bridge-nft status`，确认 `/data` 已是真实 ext4/f2fs 挂载且已选出未与 LAN/Tailnet 冲突的子网。Compose 的默认网络必须显式引用外部网络：`networks.default.external: true`、`networks.default.name: bridge`，避免创建 iptables 管理的项目网桥。
 - **代理验证**：bridge+nft 容器必须验证 DNS、Google HTTPS、`chatgpt.com/cdn-cgi/trace`、`api.ipify.org`，并检查 nft/Nikki 计数器或日志确实增长；公网流量应由 Nikki 分流，LAN/Tailnet 私网目标应保持直连。验证失败时只清理本次服务的容器、网络和临时规则，记录原因后再回退 host。
 - **CNI 限制**：默认 CNI 不使用 `ipMasq`、`portmap` 或 `firewall` 插件，禁止为解决问题直接执行 `iptables -t nat` 或切换 iptables 后端；端口发布优先用容器 IP 或反向代理。当前固件不固化 `ipvlan-l3`（目标内核的虚拟网关不可达），也不自动选择 `macvlan`（宿主网关可达性和 Wi-Fi 兼容性未满足通用服务要求），除非用户明确要求单独实验。
-- **资源限制**：本机通常无 swap，每个服务应设置合理的内存上限（例如 Compose 的资源限制），并在 `/` 与 `/data` 上同时检查空间；容器产生的数据不得写入 `/root`、`/tmp` 或 `/opt`。
+- **资源限制**：内存缓冲仅使用 zram；不得创建或启用磁盘 swap 分区、swapfile，或以此规避内存/空间问题。每个服务应设置合理的内存上限（例如 Compose 的资源限制），并在 `/` 与 `/data` 上同时检查空间；容器产生的数据不得写入 `/root`、`/tmp` 或 `/opt`。
 
 ---
 
@@ -52,6 +54,7 @@
 ### (1) 系统健康巡检与集群保活
 - **Tailscale 状态监测**：定期运行 `tailscale status` 检查是否在线。若发现离线或处于 NeedLogin 状态，检查 `/etc/config/headscale_auto_enroll` 并触发重连，防止本机从 Multica 集群与 Tailnet 网状拓扑中断开。
 - **系统资源监控**：监控 `/proc/meminfo`、`free -m`、`uptime` 和 `df -h /data`，确保 Agent 运行不会引发 OOM。
+- **数据盘与远程备份告警**：若 `/var/run/data-runtime.status` 或 `/var/run/agent-data-backup.status` 存在，读取其中安全的状态字段并主动报告失败、未挂载、过期或未完成状态；若文件不存在，只报告“状态尚未初始化/未知”，不得猜测服务健康度、伪造成功，或自行修复。
 
 ### (1.1) 角色工作区与脚本执行
 - 开始任何角色任务时，先创建并进入 `/data/multica/workspaces/<任务名>`；所有报告、脚本、仓库和 Python 虚拟环境都保存在这个任务目录。
@@ -73,6 +76,10 @@
 - 结构化整理异常报告（包含：**触发条件、错误日志片段、影响范围、临时缓解措施**）；
 - 该报告将提供给用户并反馈给 GitHub 固件编译仓库的架构 Agent，用于后续迭代更新驱动补丁和重新编译固件。
 
+### (4) GPT、挂载与数据盘诊断
+- 可安全执行的诊断包括 `block info`、`mount`、`df -h`、`lsblk`（若存在）与只读的 `sgdisk -p <disk>`；先核对设备型号、分区表、挂载点、数据内容及实时状态文件。
+- 格式化、重分区、修复 GPT、`mkfs`、挂载未知设备、清空数据或改变 swap 均是高风险写操作。即使诊断提示异常，也必须先向用户展示目标与影响，并取得针对精确磁盘/分区和操作的明确确认；绝不把“/data 未挂载”当作自动初始化授权。
+
 ---
 
 ## 4. 安全红线与操作原则
@@ -83,3 +90,4 @@
    - 执行变更后立即验证（如 `ping`, `curl`, `ubus call`, `service status`）；
    - 若验证未通过，立即执行回滚并向用户说明原因；
    - 每次任务完成后，必须清晰汇报：**【发现问题】、【修改项】、【验证结果】与【应急回滚指令】**。
+4. **确认边界**：Pi 的只读计划、状态文件或日志中的建议均不是执行授权。涉及不可逆存储操作、运行时切换、服务重启、网络策略或用户数据，必须在执行前获得用户明确确认。

@@ -8,6 +8,8 @@ DATA_DIR="${MULTICA_DATA_DIR:-/data/multica}"
 BASE_INSTRUCTIONS="${MULTICA_BASE_INSTRUCTIONS:-/etc/multica/openwrt-agent.md}"
 PROFILE_FILE="$DATA_DIR/openwrt-agent.md"
 IDENTITY_FILE="$DATA_DIR/.device_identity"
+DATA_RUNTIME_STATUS_FILE="${MULTICA_DATA_RUNTIME_STATUS_FILE:-/var/run/data-runtime.status}"
+DATA_BACKUP_STATUS_FILE="${MULTICA_DATA_BACKUP_STATUS_FILE:-/var/run/agent-data-backup.status}"
 
 command_path() {
 	command -v "$1" 2>/dev/null || true
@@ -74,13 +76,53 @@ tailscale_advertised_routes() {
 	printf '%s' "$routes"
 }
 
+tailscale_route_table() {
+	local table
+	# The reconciler is the canonical dynamic detector.  Retain a read-only
+	# route-table fallback for early boot or intentionally minimal images.
+	table="$(tailscale-route-reconcile --status 2>/dev/null | sed -n 's/^table=\([0-9][0-9]*\)$/\1/p' | head -n 1)"
+	case "$table" in ''|*[!0-9]*) ;; *) printf '%s' "$table"; return 0 ;; esac
+	table="$(ip -4 route show table all 2>/dev/null | awk '
+		/dev tailscale0/ {
+			for (i = 1; i < NF; i++) if ($i == "table" && $(i + 1) ~ /^[0-9]+$/) { print $(i + 1); exit }
+		}' | head -n 1)"
+	case "$table" in ''|*[!0-9]*) printf '%s' unknown ;; *) printf '%s' "$table" ;; esac
+}
+
 tailscale_accepted_routes() {
-	local routes
-	# table 52 also has /32 peer host routes.  They are not approved LAN
-	# subnets and would crowd the role prompt, so retain CIDR destinations only.
-	routes="$(ip -4 route show table 52 2>/dev/null | awk '$0 ~ /dev tailscale0/ && $1 ~ /\// { print $1 }' | sort -u | head -32 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+	local routes table
+	table="$(tailscale_route_table)"
+	case "$table" in
+		unknown) routes="" ;;
+		*)
+			# The selected table also has /32 peer host routes. They are not
+			# approved LAN subnets and would crowd the role prompt.
+			routes="$(ip -4 route show table "$table" 2>/dev/null | awk '$0 ~ /dev tailscale0/ && $1 ~ /\// { print $1 }' | sort -u | head -32 | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+			;;
+	esac
 	[ -n "$routes" ] || routes="none reported"
 	printf '%s' "$routes"
+}
+
+runtime_status_summary() {
+	local label path field value found
+	label="$1"
+	path="$2"
+	found=0
+	if [ -r "$path" ]; then
+		while IFS='=' read -r field value; do
+			case "$field" in
+				''|*[!A-Za-z0-9_]* ) continue ;;
+			esac
+			value="$(printf '%s' "$value" | tr -d '\r' | tr '\n' ' ' | cut -c1-160)"
+			[ -n "$value" ] || continue
+			printf '%s=%s; ' "$field" "$value"
+			found=1
+		done < "$path"
+	fi
+	if [ "$found" -eq 0 ]; then
+		printf '尚未初始化/未知'
+	fi
 }
 
 tool_line() {
@@ -120,9 +162,14 @@ render_profile() {
 		printf -- '- **OpenWrt 板型**：`%s`；**型号**：`%s`\n' "$board" "$model"
 		printf -- '- **LAN 接口与地址**：`%s`，`%s`\n' "$(lan_device)" "$lan"
 		printf -- '- **Tailscale 地址**：`%s`；本机通告：`%s`\n' "$tail_ip" "$(tailscale_advertised_routes)"
-		printf -- '- **table 52 已接受的 Tailnet 子网**：`%s`\n' "$(tailscale_accepted_routes)"
+		printf -- '- **动态路由表 `%s` 已接受的 Tailnet 子网**：`%s`\n' "$(tailscale_route_table)" "$(tailscale_accepted_routes)"
+		printf -- '- **Tailnet 提示**：以上通告与动态路由表是本次采集的状态，不是固定拓扑；路由授权或通告变更必须另行确认。\n'
 		printf -- '- **内存**：`%s`；**数据盘**：`%s`\n' "$memory" "$data_mount"
 		printf -- '- **任务根目录**：`/data/multica/workspaces`（所有项目、下载、虚拟环境和产物均须位于此处）\n'
+		printf '\n### 数据盘与备份实时状态（可选）\n\n'
+		printf -- '- **data-runtime**（`/var/run/data-runtime.status`）：`%s`\n' "$(runtime_status_summary data-runtime "$DATA_RUNTIME_STATUS_FILE")"
+		printf -- '- **rclone 配置备份**（`/var/run/agent-data-backup.status`）：`%s`\n' "$(runtime_status_summary agent-data-backup "$DATA_BACKUP_STATUS_FILE")"
+		printf '%s\n' '- 状态文件缺失仅表示尚未初始化/未知；不得自动挂载、格式化、重分区、启动备份或宣称备份成功。'
 		printf '\n### 当前可调用工具（运行时探测）\n\n'
 		for tool in uci ubus ip nft logread pi cmdc node npm pnpm python3 uv nerdctl containerd; do
 			tool_line "$tool"
@@ -134,9 +181,13 @@ render_profile() {
 			printf '%s\n' '- 回退模式：bridge+nft 健康检查失败后才使用 `host`；当前固件不自动使用 ipvlan-l3/macvlan。'
 		fi
 		printf '\n### Mesh 与凭据安全边界\n\n'
-		printf '%s\n' '- 本机只通告当前 LAN 的精确 CIDR；远端子网是否可达由 Headplane 批准后进入 table 52 决定。可以诊断，但不得自行批准路由或通告整个 `192.168.0.0/16`。'
+		printf '%s\n' '- 本机只通告当前 LAN 的精确 CIDR；远端子网是否可达由 Headplane 批准后进入 Tailscale 动态路由表决定。可以诊断，但不得自行批准路由或通告整个 `192.168.0.0/16`。'
 		printf '%s\n' '- Tailnet IPv4 地址池为 `100.64.0.0/10`。'
 		printf '%s\n' '- 禁止读取、输出、上传或在任务中使用 Multica Token、Headscale auth key、Tailscale state、SSH 私钥或 `/root/.multica/config.json` 的敏感字段。'
+		printf '%s\n' '- Pi 默认只读：可诊断、读取配置和制定计划；写配置、重启、安装、删除、网络变更及任何 GPT/格式化/分区操作必须先获得用户明确确认。'
+		printf '%s\n' '- 仅使用 zram 作为内存缓冲；不得创建或启用磁盘 swap 分区或 swapfile。'
+		printf '%s\n' '- Agent 运行时必须使用 `/data/agent-runtime/current` 的已签名、不可变 generation；不得在 `/data/node`、`/opt/node` 或全局 npm/pnpm 前缀内原地更新。'
+		printf '%s\n' '- GPT 仅可先做只读诊断（如 `sgdisk -p`）；格式化、重分区、修复 GPT、挂载未知设备或清空数据前必须展示精确目标与影响并获得明确确认。'
 	} > "$tmp"
 	chmod 600 "$tmp"
 	mv -f "$tmp" "$PROFILE_FILE"

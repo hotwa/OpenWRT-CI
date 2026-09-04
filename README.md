@@ -111,6 +111,8 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 应用层 pin 由 `Agent-Runtime-Bump.yml` 在每小时 UTC 第 0 分钟检查。只有 arm64/x64 musl 完整 generation 均通过 CI probe、仓库守卫、签名及发布后，新的 pin 才会进入 `main`；设备下载并验签完整 generation 后原子切换。这个流程不是任何型号的真机门禁：固件推广仍须完成相应设备的独立刷写、启动、网络与回退验证。详见 `docs/agent-runtime-version-policy.md` 与 `docs/agent-runtime-release.md`。
 
+所有本仓库构建的 OpenWrt 镜像还注入统一的 `/data` 运行时：验证独立挂载后才使用持久缓存，空间不足时进入受限 fallback/emergency 模式；zram 固定为 256 MiB，不启用 eMMC swap。它同时提供只读 GPT/数据盘诊断、动态角色卡状态和默认关闭的 rclone 三快照备份能力。分区、格式化和未知挂载不会在普通启动时自动执行，完整边界见 `docs/data-runtime.md`。
+
 # Tailscale / Headscale 全局开箱即用策略
 
 - **私有 Mesh 网关默认开启**（`tailscale.lan_to_tailnet.enabled='1'`）：路由器开机自动下发明确的 `lan -> tailscale` 与 `tailscale -> lan` 防火墙转发规则，局域网所有客户端无需额外客户端即可访问获 Headscale ACL 授权的远端 Tailnet 与站点网段；`tailscale` 区仍保持 `forward=REJECT`。
@@ -121,8 +123,8 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 # 设备支持与推广验证路线
 
 1. **RE-CS-02 (JDC AX6600-Athena / 雅典娜)**：首发已验证生产基线（默认 LAN IP `192.168.11.1`，WiFi `asdzxc147369`）；
-2. **RE-CS-01 (JDC AX1800-Pro / 亚瑟)**：后续推广测试同款 Agent 运行时固件；
-3. **RE-SS-01 (JDC AX1800 / 哪吒 & CPE-5G)**：推广测试，保持 mwan3 双网接入与 Agent 监控；
+2. **RE-SS-01 (JDC AX1800 Pro / 亚瑟)**：当前已确认的亚瑟板型；推广测试时保持 mwan3 双网接入与 Agent 监控；
+3. **RE-CS-01**：该仓库没有将其与 RE-SS-01 共用 GPT/分区表的契约；部署前必须按实际板型单独核对；
 4. **RE-CS-07 (JDC AX1800 / 太乙 / ER1)**：后续推广测试；
 5. **RE-CP-02 / RE-SP-01B (JDC AX3000 / 百里)**：可选推广测试。
 

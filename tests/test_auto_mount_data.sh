@@ -36,10 +36,14 @@ if grep -Fq 'fstab.data.device=' "$SCRIPT"; then
 fi
 
 run_fixture() {
-	local case_root="$1"
+	local case_root="$1" storage_enabled="${AUTO_MOUNT_DATA_STORAGE_ENABLED:-1}"
 	shift
+	# Label-only cases represent a reviewed RE provisioning workflow unless a
+	# test explicitly supplies another board.
+	[ -e "$case_root/board" ] || printf '%s\n' 'jdcloud,re-cs-02' >"$case_root/board"
 	env \
 		AUTO_MOUNT_DATA_TESTING=1 \
+		AUTO_MOUNT_DATA_STORAGE_ENABLED="$storage_enabled" \
 		AUTO_MOUNT_DATA_ROOT="$case_root/data" \
 		AUTO_MOUNT_ROOT_HOME="$case_root/root" \
 		AUTO_MOUNT_OPT_ROOT="$case_root/opt" \
@@ -50,6 +54,36 @@ run_fixture() {
 		AUTO_MOUNT_DATA_BOARD_FILE="$case_root/board" \
 		AUTO_MOUNT_LEGACY_APPROVAL_FILE="$case_root/legacy-approved" \
 		"$@" sh "$SCRIPT"
+}
+
+# A label alone is not an opt-in on a generic image. Without the reviewed
+# agent-storage gate, no mount, fstab write or state migration may occur.
+CASE_LABEL_DISABLED="$TMP_ROOT/label-disabled"
+mkdir -p "$CASE_LABEL_DISABLED/root"
+: >"$CASE_LABEL_DISABLED/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="label-only-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="label-only-part"' >"$CASE_LABEL_DISABLED/block.info"
+if AUTO_MOUNT_DATA_STORAGE_ENABLED=0 run_fixture "$CASE_LABEL_DISABLED"; then
+	echo "label-only partition mounted while storage policy was disabled"
+	exit 1
+fi
+[ ! -e "$CASE_LABEL_DISABLED/fstab.record" ] || {
+	echo "label-only disabled case persisted fstab"
+	exit 1
+}
+
+# Even an enabled gate cannot make a generic image trust a bare disk label.
+CASE_LABEL_UNREVIEWED="$TMP_ROOT/label-unreviewed"
+mkdir -p "$CASE_LABEL_UNREVIEWED/root"
+printf '%s\n' 'generic,unsafe' >"$CASE_LABEL_UNREVIEWED/board"
+: >"$CASE_LABEL_UNREVIEWED/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="label-unreviewed-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="label-unreviewed-part"' >"$CASE_LABEL_UNREVIEWED/block.info"
+if run_fixture "$CASE_LABEL_UNREVIEWED"; then
+	echo "label-only partition mounted on an unreviewed board"
+	exit 1
+fi
+[ ! -e "$CASE_LABEL_UNREVIEWED/fstab.record" ] || {
+	echo "unreviewed label-only case persisted fstab"
+	exit 1
 }
 
 approve_legacy_data() {
@@ -239,11 +273,20 @@ grep -Fxq 'uuid=legacy-uuid' "$CASE_LEGACY_ALT/fstab.record" || {
 	exit 1
 }
 
-for setting in 'PNPM_HOME=/data/pnpm/bin' 'PNPM_STORE_DIR=/data/pnpm/store' 'npm_config_cache=/data/npm'; do
-grep -Fq "$setting" "$PROFILE" || {
-	echo "node profile does not keep mutable package state on /data: $setting"
+# The profile must consume the verified data-runtime contract instead of
+# blindly selecting /data before the mount/write probe has run. Exact mutable
+# paths are guarded by tests/test_data_runtime.sh.
+grep -Fq '/var/run/data-runtime.env' "$PROFILE" || {
+	echo 'node profile does not consume the verified data-runtime contract'
 	exit 1
 }
-done
+grep -Fq 'persistent:/data' "$PROFILE" || {
+	echo 'node profile does not gate the data runtime on persistent state'
+	exit 1
+}
+if grep -Fq 'PNPM_HOME=/data/pnpm/bin' "$PROFILE"; then
+	echo 'node profile still hardcodes the obsolete unverified PNPM path'
+	exit 1
+fi
 
 echo "auto mount data fixture tests passed"

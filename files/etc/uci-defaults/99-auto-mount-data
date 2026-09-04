@@ -13,6 +13,7 @@ LOCK_DIR="$LOCK_BASE/openwrt-data-mount.lock"
 BLOCK_INFO_FIXTURE="${AUTO_MOUNT_BLOCK_INFO:-}"
 FSTAB_RECORD="${AUTO_MOUNT_FSTAB_RECORD:-}"
 TESTING="${AUTO_MOUNT_DATA_TESTING:-0}"
+STORAGE_ENABLED_OVERRIDE="${AUTO_MOUNT_DATA_STORAGE_ENABLED:-}"
 BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
 LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
@@ -55,6 +56,22 @@ uci_get() {
 	[ "$TESTING" = "1" ] && return 1
 	command -v uci >/dev/null 2>&1 || return 1
 	uci -q get "$1" 2>/dev/null
+}
+
+storage_mount_policy_enabled() {
+	local value
+	if [ -n "$STORAGE_ENABLED_OVERRIDE" ]; then
+		value="$STORAGE_ENABLED_OVERRIDE"
+	else
+		value="$(uci_get agent-storage.main.enabled || true)"
+	fi
+	case "$value" in 1|true|yes|on) return 0 ;; *) return 1 ;; esac
+}
+
+reviewed_label_mount_board() {
+	local board
+	board="$(cat "$BOARD_FILE" 2>/dev/null || true)"
+	supported_legacy_board "$board"
 }
 
 attribute_from_line() {
@@ -188,8 +205,17 @@ select_candidate() {
 		}
 		matches="$(find_devices PARTUUID "$requested_partuuid")"
 	else
-		# Labels such as "data" and "userdata" are too generic to be safe.
-		# The only implicit opt-in is the exact provisioning label below.
+		# A label is not consent on its own. Label lookup may run only after the
+		# reviewed agent-storage gate has been explicitly enabled for a supported
+		# provisioning workflow. Other images need an exact UUID/PARTUUID.
+		storage_mount_policy_enabled || {
+			log_error "no explicit UUID/PARTUUID and storage policy is disabled; refusing label-only mount"
+			return 1
+		}
+		reviewed_label_mount_board || {
+			log_error "no explicit UUID/PARTUUID and board is not approved for label-only mount"
+			return 1
+		}
 		[ -z "$requested_label" ] || [ "$requested_label" = "openwrt-data" ] || {
 			log_error "only LABEL=openwrt-data is accepted"
 			return 1

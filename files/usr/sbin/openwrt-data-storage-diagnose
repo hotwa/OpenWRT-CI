@@ -1,0 +1,84 @@
+#!/bin/sh
+# Read-only evidence collector for an OpenWrt /data decision. This helper
+# never formats, partitions, mounts, enables UCI sections, or picks a
+# "largest" partition. It is suitable for Pi/Multica before requesting a
+# specific storage action from the administrator.
+
+set -u
+
+MOUNTS_FILE="${OPENWRT_DATA_DIAG_MOUNTS_FILE:-/proc/mounts}"
+BOARD_FILE="${OPENWRT_DATA_DIAG_BOARD_FILE:-/tmp/sysinfo/board_name}"
+
+say() { printf '%s\n' "$*"; }
+section() { printf '\n[%s]\n' "$1"; }
+
+show_mount() {
+	section data-mount
+	if awk '$2 == "/data" { print "mounted=" $1 " filesystem=" $3 }' "$MOUNTS_FILE" 2>/dev/null | grep -q .; then
+		awk '$2 == "/data" { print "mounted=" $1 " filesystem=" $3 }' "$MOUNTS_FILE" 2>/dev/null
+	else
+		say 'mounted=none'
+	fi
+}
+
+show_root() {
+	section root-mount
+	awk '$2 == "/" { print "mounted=" $1 " filesystem=" $3 }' "$MOUNTS_FILE" 2>/dev/null || true
+}
+
+show_board() {
+	section device
+	say "board=$(cat "$BOARD_FILE" 2>/dev/null || printf unknown)"
+	if [ -r /sys/block/mmcblk0/size ]; then
+		say "mmcblk0_sectors=$(cat /sys/block/mmcblk0/size 2>/dev/null || true)"
+	fi
+}
+
+show_block_inventory() {
+	section block-inventory
+	if command -v block >/dev/null 2>&1; then
+		block info 2>/dev/null || say 'block_info=unavailable'
+	elif command -v blkid >/dev/null 2>&1; then
+		blkid 2>/dev/null || say 'blkid=unavailable'
+	else
+		say 'inventory=unavailable (install block-mount/blkid)'
+	fi
+}
+
+show_gpt_summary() {
+	section gpt-summary
+	if command -v sgdisk >/dev/null 2>&1 && [ -b /dev/mmcblk0 ]; then
+		# GPT output is evidence only; final free space never implies consent.
+		sgdisk -p /dev/mmcblk0 2>/dev/null || say 'gpt=unreadable'
+	else
+		say 'gpt=unavailable (sgdisk or /dev/mmcblk0 missing)'
+	fi
+}
+
+show_candidate_rules() {
+	section decision-boundary
+	say 'automatic_action=none'
+	say 'safe_existing_candidate=exactly-one filesystem labeled openwrt-data with a valid UUID'
+	say 'legacy_candidate=reviewed board-specific data partition only; see emmc-data-provisioning.md'
+	say 'unknown_partition=report evidence and request explicit user confirmation before any format/mount/GPT action'
+	say 'forbidden_heuristic=selecting the largest, last, userdata, or unlabeled partition'
+}
+
+case "${1:-}" in
+	''|--status) ;;
+	-h|--help)
+		say 'usage: openwrt-data-storage-diagnose [--status]'
+		exit 0
+		;;
+	*)
+		echo 'openwrt-data-storage-diagnose: only --status is supported' >&2
+		exit 2
+		;;
+esac
+
+show_board
+show_root
+show_mount
+show_block_inventory
+show_gpt_summary
+show_candidate_rules

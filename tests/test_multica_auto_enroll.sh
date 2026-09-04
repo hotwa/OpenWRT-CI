@@ -66,8 +66,18 @@ grep -Fq '.agent_state' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'agent update' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'active|idle|busy' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'Tailnet IPv4 地址池为 `100.64.0.0/10`' "$PROFILE_SCRIPT"
+grep -Fq 'tailscale_route_table' "$PROFILE_SCRIPT"
+grep -Fq 'Tailscale 动态路由表' "$PROFILE_SCRIPT"
 grep -Fq '禁止读取、输出、上传' "$PROFILE_SCRIPT"
 grep -Fq '$1 ~ /\//' "$PROFILE_SCRIPT"
+grep -Fq '/var/run/data-runtime.status' "$AGENT_ETC_MD"
+grep -Fq '/var/run/agent-data-backup.status' "$AGENT_ETC_MD"
+grep -Fq 'Pi 是只读诊断/规划助手' "$AGENT_ETC_MD"
+grep -Fq '仅使用 zram' "$AGENT_ETC_MD"
+grep -Fq '已签名、不可变 generation' "$AGENT_ETC_MD"
+grep -Fq '格式化、重分区、修复 GPT' "$AGENT_ETC_MD"
+grep -Fq 'runtime_status_summary' "$PROFILE_SCRIPT"
+grep -Fq '尚未初始化/未知' "$PROFILE_SCRIPT"
 
 bash -n "$FETCH_SCRIPT"
 sh -n "$INIT_SCRIPT"
@@ -89,6 +99,30 @@ MULTICA_TOKEN='must-not-appear-in-agent-instructions' \
 	exit 1
 }
 grep -Fq 'Mesh 与凭据安全边界' "$PROFILE_TEST_ROOT/data/openwrt-agent.md"
+grep -Fq '数据盘与备份实时状态（可选）' "$PROFILE_TEST_ROOT/data/openwrt-agent.md"
+grep -Eq 'data-runtime.*尚未初始化/未知' "$PROFILE_TEST_ROOT/data/openwrt-agent.md" || {
+	echo "missing data-runtime unknown status fallback"
+	exit 1
+}
+grep -Eq 'rclone 配置备份.*尚未初始化/未知' "$PROFILE_TEST_ROOT/data/openwrt-agent.md" || {
+	echo "missing rclone backup unknown status fallback"
+	exit 1
+}
+
+printf '%s\n' 'STATE=mounted' 'DETAIL=ready' > "$PROFILE_TEST_ROOT/data-runtime.status"
+printf '%s\n' 'STATE=failed' 'LAST_RESULT=upload_failed' > "$PROFILE_TEST_ROOT/data-backup.status"
+MULTICA_DATA_DIR="$PROFILE_TEST_ROOT/status-data" MULTICA_BASE_INSTRUCTIONS="$AGENT_ETC_MD" \
+	MULTICA_DATA_RUNTIME_STATUS_FILE="$PROFILE_TEST_ROOT/data-runtime.status" \
+	MULTICA_DATA_BACKUP_STATUS_FILE="$PROFILE_TEST_ROOT/data-backup.status" \
+	sh "$PROFILE_SCRIPT" write
+grep -Fq 'STATE=mounted; DETAIL=ready;' "$PROFILE_TEST_ROOT/status-data/openwrt-agent.md" || {
+	echo "data-runtime status fields were not rendered"
+	exit 1
+}
+grep -Fq 'STATE=failed; LAST_RESULT=upload_failed;' "$PROFILE_TEST_ROOT/status-data/openwrt-agent.md" || {
+	echo "backup status fields were not rendered"
+	exit 1
+}
 if grep -Fq 'must-not-appear-in-agent-instructions' "$PROFILE_TEST_ROOT/data/openwrt-agent.md"; then
 	echo "device profile leaked a credential environment value"
 	exit 1

@@ -1,0 +1,46 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+USE_PROCD=1
+
+NAME=rclone-data-backup
+CRON_FILE=/etc/crontabs/root
+CRON_TAG="# $NAME"
+CRON_LINE="0 3 * * * /usr/sbin/rclone-data-backup --scheduled >/tmp/$NAME.log 2>&1 $CRON_TAG"
+
+enabled() {
+	[ "$(uci -q get rclone-data-backup.main.enabled)" = 1 ]
+}
+
+refresh_cron() {
+	mkdir -p /etc/crontabs
+	touch "$CRON_FILE"
+	grep -Fv "$CRON_TAG" "$CRON_FILE" >"$CRON_FILE.new.$$" || true
+	if enabled; then
+		printf '%s\n' "$CRON_LINE" >>"$CRON_FILE.new.$$"
+	fi
+	mv "$CRON_FILE.new.$$" "$CRON_FILE"
+	crontab "$CRON_FILE"
+}
+
+remove_cron() {
+	mkdir -p /etc/crontabs
+	touch "$CRON_FILE"
+	grep -Fv "$CRON_TAG" "$CRON_FILE" >"$CRON_FILE.new.$$" || true
+	mv "$CRON_FILE.new.$$" "$CRON_FILE"
+	crontab "$CRON_FILE"
+}
+
+start_service() {
+	refresh_cron
+}
+
+reload_service() {
+	refresh_cron
+}
+
+stop_service() {
+	# A manual stop must also stop future scheduled starts. An explicit start
+	# or the next boot recreates the line when the UCI feature remains enabled.
+	remove_cron
+}

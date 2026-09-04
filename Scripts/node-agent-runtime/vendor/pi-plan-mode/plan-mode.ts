@@ -85,7 +85,10 @@ function getBashOverride(entries: any[], command: string): boolean {
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
-	let planModeEnabled = false;
+	// Router agents begin each new session in plan mode. A human can explicitly
+	// type /plan to enable writes for the current session; a prior session's
+	// disabled state is deliberately never restored as the default.
+	let planModeEnabled = true;
 
 	function updateStatus(ctx: ExtensionContext): void {
 		if (planModeEnabled) {

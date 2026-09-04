@@ -70,4 +70,6 @@ sysupgrade 保留契约，仍可能销毁整个 `/data`。
 
 公共/通用 WRT-CORE 默认关闭此功能。私有 RE Mesh（RE-SS-01、RE-CS-02）和
 RE-CS-07 工作流明确启用它；其它机型仍必须先完成分区表、刷写和冷启动验证。
-已经存在 `LABEL=openwrt-data` 的设备不会被重新格式化。
+已经存在 `LABEL=openwrt-data` 的设备不会被重新格式化；但标签自动挂载仍要求
+该 RE 工作流明确启用 `agent-storage.main.enabled=1`，通用镜像不会把标签本身
+视作未知磁盘的挂载授权。

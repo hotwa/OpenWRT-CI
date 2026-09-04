@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Run after the /data first-boot mount/migration default. It is safe on every
+# image: data-runtime chooses bounded fallback or tmpfs emergency storage.
+[ -x /etc/init.d/data-runtime ] || exit 0
+/etc/init.d/data-runtime enable >/dev/null 2>&1 || exit 0
+/etc/init.d/data-runtime start >/dev/null 2>&1 || true
+exit 0

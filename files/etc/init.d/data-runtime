@@ -1,0 +1,114 @@
+#!/bin/sh /etc/rc.common
+
+# Pick one conservative location for mutable agent state on every OpenWrt
+# target. Do not infer this from a board name or eMMC partition number.
+START=90
+STOP=10
+
+DATA_ROOT="${DATA_RUNTIME_DATA_ROOT:-/data}"
+OVERLAY_ROOT="${DATA_RUNTIME_OVERLAY_ROOT:-/overlay}"
+FALLBACK_ROOT="${DATA_RUNTIME_FALLBACK_ROOT:-/root}"
+EMERGENCY_ROOT="${DATA_RUNTIME_EMERGENCY_ROOT:-/tmp}"
+RUN_DIR="${DATA_RUNTIME_RUN_DIR:-/var/run}"
+POLICY_FILE="${DATA_RUNTIME_POLICY_FILE:-/etc/data-runtime.env}"
+STATUS_FILE="$RUN_DIR/data-runtime.status"
+RUNTIME_ENV_FILE="$RUN_DIR/data-runtime.env"
+MOUNTS_FILE="${DATA_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
+MIN_OVERLAY_KIB=51200
+
+log() { logger -t data-runtime -- "$*" 2>/dev/null || true; }
+
+is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+load_policy() {
+	local key value
+	[ -r "$POLICY_FILE" ] || return 0
+	while IFS='=' read -r key value; do
+		case "$key" in DATA_RUNTIME_OVERLAY_MIN_KIB)
+			is_number "$value" && MIN_OVERLAY_KIB="$value" ;;
+		esac
+	done <"$POLICY_FILE"
+}
+
+# A mounted directory could still be overlay, tmpfs, or a bind mount. Require
+# a real block source; data_write_probe independently confirms one bounded
+# byte can be written before any runtime is sent there.
+data_mount_present() {
+	awk -v target="$DATA_ROOT" '$2 == target && $1 ~ /^\/dev\// && $3 !~ /^(overlay|tmpfs|ramfs|squashfs)$/ { found = 1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null
+}
+
+data_write_probe() {
+	local probe size
+	[ -d "$DATA_ROOT" ] || return 1
+	probe="$DATA_ROOT/.data-runtime-probe.$$"
+	(umask 077; set -C; : >"$probe") 2>/dev/null || return 1
+	printf x >"$probe" 2>/dev/null || { rm -f "$probe"; return 1; }
+	[ -f "$probe" ] && [ ! -L "$probe" ] || { rm -f "$probe"; return 1; }
+	size="$(wc -c <"$probe" 2>/dev/null || true)"
+	rm -f "$probe"
+	[ "$size" = 1 ]
+}
+
+overlay_available_kib() { df -Pk "$OVERLAY_ROOT" 2>/dev/null | awk 'NR > 1 && NF >= 4 { value = $4 } END { print value + 0 }'; }
+
+prepare_persistent_root() {
+	mkdir -p "$DATA_ROOT/cache/npm" "$DATA_ROOT/cache/pnpm" "$DATA_ROOT/cache/corepack" "$DATA_ROOT/cache/uv" \
+		"$DATA_ROOT/uv/tools" "$DATA_ROOT/uv/python" "$DATA_ROOT/pi" "$DATA_ROOT/data" "$DATA_ROOT/config" "$DATA_ROOT/tmp" || return 1
+	chmod 700 "$DATA_ROOT/cache" "$DATA_ROOT/data" "$DATA_ROOT/config" "$DATA_ROOT/tmp" 2>/dev/null || true
+}
+
+prepare_fallback_root() {
+	mkdir -p "$FALLBACK_ROOT/.npm" "$FALLBACK_ROOT/.cache/pnpm" "$FALLBACK_ROOT/.cache/corepack" "$FALLBACK_ROOT/.cache/uv" \
+		"$FALLBACK_ROOT/.local/share/uv/tools" "$FALLBACK_ROOT/.local/share/uv/python" "$FALLBACK_ROOT/.pi" \
+		"$FALLBACK_ROOT/.local/share" "$FALLBACK_ROOT/.config" || return 1
+	chmod 700 "$FALLBACK_ROOT/.cache" "$FALLBACK_ROOT/.local/share" "$FALLBACK_ROOT/.config" 2>/dev/null || true
+}
+
+write_state() {
+	local state="$1" root="$2" detail="$3" overlay_kib="$4" tmp_status tmp_env
+	mkdir -p "$RUN_DIR" || return 1
+	tmp_status="$STATUS_FILE.$$"; tmp_env="$RUNTIME_ENV_FILE.$$"
+	umask 022
+	{
+		printf 'state=%s\nroot=%s\ndetail=%s\noverlay_available_kib=%s\n' "$state" "$root" "$detail" "$overlay_kib"
+	} >"$tmp_status" || return 1
+	{
+		printf 'DATA_RUNTIME_STATE=%s\nDATA_RUNTIME_ROOT=%s\n' "$state" "$root"
+		case "$state" in
+			persistent)
+				printf 'XDG_CACHE_HOME=%s/cache\nXDG_DATA_HOME=%s/data\nXDG_CONFIG_HOME=%s/config\nTMPDIR=%s/tmp\n' "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT"
+				printf 'NPM_CONFIG_CACHE=%s/cache/npm\nnpm_config_cache=%s/cache/npm\nPNPM_HOME=%s/cache/pnpm\nPNPM_STORE_DIR=%s/cache/pnpm\nCOREPACK_HOME=%s/cache/corepack\n' "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT"
+				printf 'UV_CACHE_DIR=%s/cache/uv\nUV_TOOL_DIR=%s/uv/tools\nUV_PYTHON_INSTALL_DIR=%s/uv/python\nPI_HOME=%s/pi\n' "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT" "$DATA_ROOT"
+				;;
+			fallback)
+				printf 'XDG_CACHE_HOME=%s/.cache\nXDG_DATA_HOME=%s/.local/share\nXDG_CONFIG_HOME=%s/.config\nTMPDIR=/tmp\n' "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT"
+				printf 'NPM_CONFIG_CACHE=%s/.npm\nnpm_config_cache=%s/.npm\nPNPM_HOME=%s/.cache/pnpm\nPNPM_STORE_DIR=%s/.cache/pnpm\nCOREPACK_HOME=%s/.cache/corepack\n' "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT"
+				printf 'UV_CACHE_DIR=%s/.cache/uv\nUV_TOOL_DIR=%s/.local/share/uv/tools\nUV_PYTHON_INSTALL_DIR=%s/.local/share/uv/python\nPI_HOME=%s/.pi\n' "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT" "$FALLBACK_ROOT"
+				;;
+			emergency)
+				# Do not create cache directories while overlay capacity is critical.
+				printf '%s\n' 'TMPDIR=/tmp'
+				;;
+		esac
+	} >"$tmp_env" || return 1
+	chmod 644 "$tmp_status" "$tmp_env" 2>/dev/null || true
+	mv "$tmp_status" "$STATUS_FILE" && mv "$tmp_env" "$RUNTIME_ENV_FILE"
+}
+
+start() {
+	local state root detail overlay_kib
+	load_policy; overlay_kib="$(overlay_available_kib)"
+	if data_mount_present && data_write_probe && prepare_persistent_root; then
+		state=persistent; root="$DATA_ROOT"; detail=verified-data-mount
+	elif [ "$overlay_kib" -ge "$MIN_OVERLAY_KIB" ] && prepare_fallback_root; then
+		state=fallback; root="$FALLBACK_ROOT"; detail=data-unavailable-overlay-fallback
+	else
+		# Never enables or edits an eMMC swap entry. Do not create cache dirs.
+		state=emergency; root="$EMERGENCY_ROOT"
+		detail=data-unavailable-overlay-low
+	fi
+	write_state "$state" "$root" "$detail" "$overlay_kib" || return 1
+	log "selected $state runtime root $root ($detail)"
+}
+
+restart() { start; }

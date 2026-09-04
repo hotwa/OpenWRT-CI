@@ -108,6 +108,14 @@ printf '%s
 ' "$*" >>"$FIXTURE_ROOT/log"
 EOF
 
+# The test must not inherit a host UCI value. Some CI/WSL images provide
+# `uci` with route_reconcile.enabled=0, which would correctly disable the
+# helper before the route-drift fixture gets exercised.
+cat >"$BIN_DIR/uci" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+
 cat >"$BIN_DIR/date" <<'EOF'
 #!/bin/sh
 printf '%s

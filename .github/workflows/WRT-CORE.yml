@@ -627,6 +627,69 @@ jobs:
             echo "Feature overlay disabled: omitting CPE, Lucky, Tailscale/Headscale and wrtbak overlays"
           fi
 
+          # Data runtime is a separate, safe baseline. It is injected into
+          # every OpenWrt-CI image (including intentionally minimal images),
+          # but destructive GPT provisioning remains disabled by its UCI gate.
+          # The diagnostic helper is read-only; it never guesses a largest or
+          # unlabeled partition.
+          mkdir -p \
+            ./wrt/files/etc/config \
+            ./wrt/files/etc/init.d \
+            ./wrt/files/etc/multica \
+            ./wrt/files/etc/profile.d \
+            ./wrt/files/etc/rclone-data-backup \
+            ./wrt/files/etc/uci-defaults \
+            ./wrt/files/usr/sbin
+          # A reviewed RE workflow may already have enabled this UCI gate
+          # after the full overlay was copied. Preserve that explicit
+          # per-device decision; minimal images receive the safe default.
+          if [ ! -f ./wrt/files/etc/config/agent-storage ]; then
+            cp -f ./files/etc/config/agent-storage ./wrt/files/etc/config/agent-storage
+          fi
+          cp -f ./files/etc/config/rclone-data-backup ./wrt/files/etc/config/rclone-data-backup
+          if [ -n "${WRTBAK_DEVICE_ALIAS:-}" ]; then
+            case "$WRTBAK_DEVICE_ALIAS" in
+              *[!A-Za-z0-9._-]* )
+                echo "ERROR: WRTBAK_DEVICE_ALIAS is not safe for the data backup namespace" >&2
+                exit 1
+                ;;
+            esac
+            sed -i "s/^\(\toption device_alias \).*/\1'$WRTBAK_DEVICE_ALIAS'/" ./wrt/files/etc/config/rclone-data-backup
+          fi
+          cp -f ./files/etc/data-runtime.env ./wrt/files/etc/data-runtime.env
+          cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
+          cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
+          cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
+          cp -f ./files/etc/profile.d/99-data-runtime.sh ./wrt/files/etc/profile.d/99-data-runtime.sh
+          cp -f ./files/etc/rclone-data-backup/include.conf ./wrt/files/etc/rclone-data-backup/include.conf
+          cp -f ./files/etc/uci-defaults/94-zram-swap-defaults ./wrt/files/etc/uci-defaults/94-zram-swap-defaults
+          cp -f ./files/etc/uci-defaults/98-provision-emmc-data ./wrt/files/etc/uci-defaults/98-provision-emmc-data
+          cp -f ./files/etc/uci-defaults/99-auto-mount-data ./wrt/files/etc/uci-defaults/99-auto-mount-data
+          cp -f ./files/etc/uci-defaults/99-enable-data-runtime ./wrt/files/etc/uci-defaults/99-enable-data-runtime
+          cp -f ./files/usr/sbin/multica-device-profile ./wrt/files/usr/sbin/multica-device-profile
+          cp -f ./files/usr/sbin/openwrt-data-storage-diagnose ./wrt/files/usr/sbin/openwrt-data-storage-diagnose
+          cp -f ./files/usr/sbin/pi-append-system-link ./wrt/files/usr/sbin/pi-append-system-link
+          cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
+          chmod 0755 \
+            ./wrt/files/etc/init.d/data-runtime \
+            ./wrt/files/etc/init.d/rclone-data-backup \
+            ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
+            ./wrt/files/etc/uci-defaults/98-provision-emmc-data \
+            ./wrt/files/etc/uci-defaults/99-auto-mount-data \
+            ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
+            ./wrt/files/usr/sbin/multica-device-profile \
+            ./wrt/files/usr/sbin/openwrt-data-storage-diagnose \
+            ./wrt/files/usr/sbin/pi-append-system-link \
+            ./wrt/files/usr/sbin/rclone-data-backup
+          test -x ./wrt/files/usr/sbin/openwrt-data-storage-diagnose || {
+            echo "ERROR: read-only data storage diagnosis helper is missing" >&2
+            exit 1
+          }
+          test -x ./wrt/files/etc/init.d/data-runtime || {
+            echo "ERROR: data runtime init script is missing" >&2
+            exit 1
+          }
+
       - name: Inject Private Firmware Configuration
         if: inputs.WRT_FEATURE_OVERLAY == true
         env:

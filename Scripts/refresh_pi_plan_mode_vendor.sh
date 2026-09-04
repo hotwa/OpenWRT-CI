@@ -152,6 +152,14 @@ replaceImport('from "@mariozechner/pi-coding-agent"', 'from "@earendil-works/pi-
 replaceImport('from "@mariozechner/pi-ai"', 'from "@earendil-works/pi-ai"');
 if (extension.includes("@mariozechner/")) process.exit(12);
 
+// OpenWrt devices run untrusted/remote agent work. Keep the upstream command
+// but make every new session start in read-only plan mode; a local human must
+// explicitly use /plan to enable writes for that session.
+const upstreamDefault = 'let planModeEnabled = false;';
+const localDefault = 'let planModeEnabled = true;';
+if (extension.includes(upstreamDefault)) extension = extension.replace(upstreamDefault, localDefault);
+else if (!extension.includes(localDefault)) process.exit(13);
+
 fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 fs.writeFileSync(extensionPath, extension);
 NODE
@@ -186,6 +194,7 @@ const provenance = {
     pull_request: 9,
     pull_url: pr.url,
     scope_migration: "PR #9 only replaces @mariozechner/pi-coding-agent and @mariozechner/pi-ai with @earendil-works equivalents, and widens the Pi peer range as reviewed in that PR.",
+    local_policy: "OpenWrt firmware defaults each new Pi session to read-only plan mode; a human must explicitly use /plan to enable writes for that session.",
   },
   npm: { tarball: release.tarball, integrity: release.integrity, sha256: archiveHash },
   source_layout: ["package.json", "README.md", "plan-mode.ts"],

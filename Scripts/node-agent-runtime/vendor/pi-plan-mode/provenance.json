@@ -12,7 +12,8 @@
     "commit": "8bf61ebb34647c1d22848fb951a2234965693cef",
     "pull_request": 9,
     "pull_url": "https://github.com/qmx/pi-plan-mode/pull/9",
-    "scope_migration": "PR #9 only replaces @mariozechner/pi-coding-agent and @mariozechner/pi-ai with @earendil-works equivalents, and widens the Pi peer range as reviewed in that PR."
+    "scope_migration": "PR #9 only replaces @mariozechner/pi-coding-agent and @mariozechner/pi-ai with @earendil-works equivalents, and widens the Pi peer range as reviewed in that PR.",
+    "local_policy": "OpenWrt firmware defaults each new Pi session to read-only plan mode; a human must explicitly use /plan to enable writes for that session."
   },
   "npm": {
     "tarball": "https://registry.npmjs.org/pi-plan-mode/-/pi-plan-mode-0.4.8.tgz",
@@ -27,6 +28,6 @@
   "source_sha256": {
     "package.json": "745c05ba1a8ff9a3ed2e684d1ce532330b9cdba76872993db0164c2b70727f3a",
     "README.md": "4cacfeb93b06d833c50c3efb86a77f3fdbcb5bbffc04cfc547da751bdf3b927b",
-    "plan-mode.ts": "0fa4a5f99827aaefe84632932a1fe0a68550b339f38add6ee53234f80112917b"
+    "plan-mode.ts": "070ce4fcacb42989e823c2d1bfe8d2e6a89f23bcd5ba4bba93293eecc3070d21"
   }
 }

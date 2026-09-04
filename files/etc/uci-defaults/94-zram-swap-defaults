@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# Provide compressed RAM swap on every image without turning on any eMMC swap
+# partition. The data-runtime fallback never turns an eMMC partition into
+# swap. Do not overwrite an administrator's retained sysupgrade values.
+#
+# 256 MiB is the approved universal burst buffer for this firmware family.
+# Keep that policy independent of board name and never fall back to a physical
+# eMMC swap partition.
+
+set_default() {
+	local option="$1"
+	local value="$2"
+
+	uci -q get "system.@system[0].$option" >/dev/null 2>&1 && return 0
+	uci -q set "system.@system[0].$option=$value"
+}
+
+[ -x /etc/init.d/zram ] || exit 0
+uci -q get 'system.@system[0]' >/dev/null 2>&1 || exit 0
+
+zram_size_mb=256
+
+changed=0
+for entry in "zram_size_mb:$zram_size_mb" 'zram_comp_algo:lz4' 'zram_priority:100'; do
+	option="${entry%%:*}"
+	value="${entry#*:}"
+	if ! uci -q get "system.@system[0].$option" >/dev/null 2>&1; then
+		set_default "$option" "$value" || exit 0
+		changed=1
+	fi
+done
+
+[ "$changed" -eq 0 ] || uci commit system
+# This starts only zram-swap; it does not edit fstab or enable disk-backed swap.
+/etc/init.d/zram enable >/dev/null 2>&1 || exit 0
+/etc/init.d/zram start >/dev/null 2>&1 || true
+
+exit 0
