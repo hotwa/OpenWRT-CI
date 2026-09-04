@@ -9,7 +9,9 @@ IPKG_INSTROOT="${IPKG_INSTROOT:-/}"
 
 TAG="tailscale-route-reconcile"
 STATE_FILE="${TSRC_STATE_FILE:-/var/run/tailscale-route-reconcile.state}"
-RUNTIME_DIR="${TSRC_RUNTIME_DIR:-$(dirname "$STATE_FILE")}"
+# Keep temporary JSON files and the private lock in a dedicated directory;
+# never chmod the shared /var/run mount itself.
+RUNTIME_DIR="${TSRC_RUNTIME_DIR:-/var/run/tailscale-route-reconcile}"
 LOCK_DIR="${TSRC_LOCK_DIR:-/var/run/tailscale-route-reconcile.lock}"
 ENROLL_LOCK_DIR="${HEADSCALE_AUTO_ENROLL_LOCK_DIR:-/var/run/headscale-auto-enroll.lock}"
 TAILSCALE_INIT="${TSRC_TAILSCALE_INIT:-/etc/init.d/tailscale}"
