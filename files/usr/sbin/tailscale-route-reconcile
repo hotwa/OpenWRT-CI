@@ -93,6 +93,12 @@ release_lock() {
 
 acquire_lock() {
   old_pid=""
+  # Older builds used this pathname as a zero-byte lock file. It is stale
+  # once the old process has been stopped; remove only that exact file so the
+  # directory-based lock below can take over during an in-place upgrade.
+  if [ -f "$LOCK_DIR" ]; then
+    rm -f "$LOCK_DIR" 2>/dev/null || return 1
+  fi
   mkdir "$LOCK_DIR" 2>/dev/null || {
     old_pid="$(sed -n '1p' "$LOCK_DIR/pid" 2>/dev/null || true)"
     if ! valid_integer "$old_pid" || ! kill -0 "$old_pid" 2>/dev/null; then
