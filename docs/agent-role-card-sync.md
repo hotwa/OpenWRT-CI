@@ -24,7 +24,7 @@ OpenWRT-CI 将 Pi 和 CommandCode 的 OpenWrt 运维规则收敛到同一份动�
 
 镜像会写入 `/etc/openwrt-ci/firmware-commit`。在 CI 构建中该值由当前
 OpenWRT-CI `GITHUB_SHA` 自动生成；角色卡动态事实区会显示实际刷入的提交。
-当前维护基线为 `5cfbcb3`，包含：
+当前维护基线为 `04cc174`（包含前置提交 `5cfbcb3`），其中 `5cfbcb3` 的运行时/DNS/bootstrap 修复和本次提交的角色卡同步共同包含：
 
 - 动态读取 Tailscale MagicDNS 名称的 Quad100 UDP 探针；
 - runtime 更新后同名 Multica Agent 自动 rebind/adopt；
