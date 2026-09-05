@@ -1,13 +1,36 @@
 #!/bin/sh
-# Silence repeated odhcpd "no public prefix on lan" warnings. These
-# deployments use PPPoE WAN without a public IPv6 prefix, so RA
-# announcements on the LAN are meaningless and only spam the log every
-# 5-10 minutes. Operators that later enable public IPv6 can clear the
-# option (or remove this file) to restore RA.
+# Configure odhcpd LAN IPv6 services in hybrid mode.
+#
+# These deployments use PPPoE WAN that currently provides no public IPv6
+# prefix (PD).  With the upstream default ra=server, odhcpd periodically
+# emits "no public prefix on lan" warnings because it broadcasts Router
+# Advertisements that contain only the router link-local address and no
+# prefix information.
+#
+# Setting ra=hybrid resolves this at the source instead of disabling RA:
+#   - No prefix on WAN -> LAN RA resolves to relay mode.  odhcpd only
+#     forwards upstream RA packets; with no upstream RA present it stays
+#     completely silent and logs nothing.
+#   - Prefix delegated  -> LAN RA automatically switches to server mode and
+#     advertises the delegated prefix with SLAAC enabled.
+#
+# dhcpv6 remains server so stateful DHCPv6 (IA_NA / IA_PD) works the moment
+# a prefix is available.  DHCPv6 is request/response, so it produces no
+# periodic log noise when no prefix is present.
+#
+# ra_slaac=1 keeps stateless address autoconfiguration available in server
+# mode.
+#
+# RA is never explicitly disabled.  This is a permanent configuration, not a
+# temporary workaround: when IPv6 prefix delegation becomes available no
+# further change is required.
 set -u
 
 command -v uci >/dev/null 2>&1 || exit 0
 [ -f /etc/config/dhcp ] || exit 0
-uci -q set dhcp.lan.ra_disabled='1'
+
+uci -q set dhcp.lan.ra='hybrid'
+uci -q set dhcp.lan.dhcpv6='server'
+uci -q set dhcp.lan.ra_slaac='1'
 uci -q commit dhcp
 exit 0

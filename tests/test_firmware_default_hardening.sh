@@ -5,16 +5,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fail() { echo "firmware default hardening: $*" >&2; exit 1; }
 
-# --- 1. odhcpd RA opt-out: LAN has no public IPv6 prefix on these PPPoE WAN
-# deployments, so RA announcements are meaningless log noise.
-ODHCPD="$ROOT_DIR/files/etc/uci-defaults/95-odhcpd-ra-optout"
+# --- 1. odhcpd LAN IPv6 configuration: PPPoE WAN deployments have no public
+# IPv6 prefix today, so the upstream default ra=server spams "no public prefix
+# on lan" in the log.  ra=hybrid resolves this at the source: it falls back to
+# silent relay mode without a prefix and automatically becomes a full RA/SLAAC
+# server once prefix delegation is available.  DHCPv6 stays server-capable.
+ODHCPD="$ROOT_DIR/files/etc/uci-defaults/95-odhcpd-lan-config"
 [ -f "$ODHCPD" ] || fail "missing $ODHCPD"
+[ ! -f "$ROOT_DIR/files/etc/uci-defaults/95-odhcpd-ra-optout" ] || fail "old ra-optout patch still present"
 bash -n "$ODHCPD" || fail "$ODHCPD does not parse"
-grep -Fq 'ra_disabled' "$ODHCPD" || fail "odhcpd script does not disable RA"
+grep -Fq "ra='hybrid'" "$ODHCPD" || fail "odhcpd script does not set ra=hybrid"
+grep -Fq "dhcpv6='server'" "$ODHCPD" || fail "odhcpd script does not keep dhcpv6=server"
+grep -Fq "ra_slaac='1'" "$ODHCPD" || fail "odhcpd script does not keep ra_slaac=1"
 grep -Fq '/etc/config/dhcp' "$ODHCPD" || fail "odhcpd script does not guard the dhcp config"
 grep -Fq 'uci -q commit dhcp' "$ODHCPD" || fail "odhcpd script does not commit dhcp"
-if grep -Eq 'ra_slaac=.0.|dhcpv6=.server.' "$ODHCPD"; then
-	fail "odhcpd script over-configures IPv6 options beyond ra_disabled"
+if grep -Eq "ra_disabled=" "$ODHCPD"; then
+	fail "odhcpd script still uses the temporary ra_disabled workaround"
 fi
 
 # --- 2. nikki/mihomo external controller binds the LAN address instead of
