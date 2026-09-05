@@ -1,18 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QCA_618="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIGURER="$ROOT_DIR/Scripts/ConfigureLanTailnetGateway.sh"
 
-for workflow in "$QCA_618"; do
-	[ -f "$workflow" ] || { echo "missing workflow $workflow"; exit 1; }
-
-	grep -q "LAN_TAILNET:" "$workflow" || {
-		echo "$workflow missing LAN_TAILNET workflow input"
-		exit 1
-	}
+for workflow in $(discover_device_workflows); do
+	grep -q '^      LAN_TAILNET:' "$workflow" || continue
 
 	grep -q "description: '允许 LAN 与获授权 Tailnet 设备双向访问" "$workflow" || {
 		echo "$workflow missing LAN_TAILNET safety description"

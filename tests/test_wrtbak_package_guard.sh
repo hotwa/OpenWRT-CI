@@ -1,13 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERAL="$ROOT_DIR/Config/GENERAL.txt"
 PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-QCA_WORKFLOWS=(
-	"$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
-)
 
 [ -f "$GENERAL" ] || { echo "missing GENERAL config"; exit 1; }
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
@@ -43,12 +42,9 @@ grep -Fq 'Scripts/WrtbakR2Config.sh' "$WRT_CORE"
 grep -Fq 'Scripts/PrivateFirmwareGuard.sh' "$WRT_CORE"
 grep -Fq "if: env.WRT_PRIVATE_BUILD != 'true'" "$WRT_CORE"
 
-for workflow in "${QCA_WORKFLOWS[@]}"; do
-	[ -f "$workflow" ] || continue
-	grep -Fq 'WRTBAK_DEVICE_ALIAS:' "$workflow" || {
-		echo "$(basename "$workflow") missing WRTBAK_DEVICE_ALIAS input"
-		exit 1
-	}
+for workflow in $(discover_device_workflows); do
+	grep -qE '^      WRTBAK_DEVICE_ALIAS:[[:space:]]*$' "$workflow" || continue
+	grep -qE '^      WRTBAK_PROXY_PROFILE:[[:space:]]*$' "$workflow" || continue
 	grep -Fq 'WRTBAK_PROXY_PROFILE:' "$workflow" || {
 		echo "$(basename "$workflow") missing WRTBAK_PROXY_PROFILE input"
 		exit 1

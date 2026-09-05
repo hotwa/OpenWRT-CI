@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="$ROOT_DIR/files/etc/config/headscale_auto_enroll"
 SCRIPT="$ROOT_DIR/files/usr/sbin/headscale-auto-enroll"
@@ -9,9 +11,6 @@ DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/94-headscale-auto-enroll"
 HOTPLUG="$ROOT_DIR/files/etc/hotplug.d/iface/95-headscale-auto-enroll"
 CI_INJECTOR="$ROOT_DIR/Scripts/HeadscaleAutoEnroll.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-CALLER_WORKFLOWS=(
-  "$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
-)
 DOC="$ROOT_DIR/docs/headscale-auto-enroll.md"
 AGENTS="$ROOT_DIR/AGENTS.md"
 
@@ -174,8 +173,7 @@ grep -q 'Scripts/HeadscaleAutoEnroll.sh' "$WORKFLOW" || {
   exit 1
 }
 
-for caller_workflow in "${CALLER_WORKFLOWS[@]}"; do
-  [ -f "$caller_workflow" ] || continue
+for caller_workflow in $(discover_device_workflows); do
   grep -q 'secrets: inherit' "$caller_workflow" || {
     echo "$(basename "$caller_workflow") does not pass repository secrets to WRT-CORE"
     exit 1

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
@@ -97,22 +99,19 @@ grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE' "$WORKFLOW" || {
   exit 1
 }
 
-for workflow in \
-  RE-Mesh-BUILD.yml \
-  RE-CONTAINER-RUNTIME-TEST.yml \
-  RE-CS-07-BUILD.yml \
-  QCA-6.18-VIKINGYFY.yml; do
-  grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: true' "$ROOT_DIR/.github/workflows/$workflow" || {
-  [ -f "$ROOT_DIR/.github/workflows/$workflow" ] || continue
-    echo "$workflow does not explicitly enable the common route reconciler"
-    exit 1
-  }
+for workflow in $(discover_device_workflows); do
+  if [ "$(basename "$workflow")" = "CPE-5G.yml" ]; then
+    grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: false' "$workflow" || {
+      echo "CPE baseline does not explicitly disable the Tailscale route reconciler"
+      exit 1
+    }
+  else
+    grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: true' "$workflow" || {
+      echo "$(basename "$workflow") does not explicitly enable the common route reconciler"
+      exit 1
+    }
+  fi
 done
-
-grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: false' "$ROOT_DIR/.github/workflows/CPE-5G.yml" || {
-  echo "CPE baseline does not explicitly disable the Tailscale route reconciler"
-  exit 1
-}
 
 grep -q 'for test_file in ./tests/test_\*.sh; do' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not execute repository smoke tests"

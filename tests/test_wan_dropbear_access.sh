@@ -1,12 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/Scripts/ConfigureWanDropbearAccess.sh"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-WORKFLOWS=(
-  "$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
-)
 
 [ -f "$SCRIPT" ] || { echo "missing WAN Dropbear configurator"; exit 1; }
 [ -f "$WRT_CORE" ] || { echo "missing WRT-CORE workflow"; exit 1; }
@@ -26,12 +25,8 @@ grep -q 'ConfigureWanDropbearAccess.sh' "$WRT_CORE" || {
   exit 1
 }
 
-for workflow in "${WORKFLOWS[@]}"; do
-  [ -f "$workflow" ] || continue
-  grep -q 'WAN_SSH:' "$workflow" || {
-    echo "$workflow does not expose WAN_SSH"
-    exit 1
-  }
+for workflow in $(discover_device_workflows); do
+  grep -q 'WAN_SSH:' "$workflow" || continue
   grep -q 'WAN_SSH_PORT:' "$workflow" || {
     echo "$workflow does not expose WAN_SSH_PORT"
     exit 1

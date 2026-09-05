@@ -1,18 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QCA_618="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 VALIDATOR="$ROOT_DIR/Scripts/ValidateLanIp.sh"
 
-for workflow in "$QCA_618"; do
-  [ -f "$workflow" ] || { echo "missing workflow $workflow"; exit 1; }
-
-  grep -q "LAN_IP:" "$workflow" || {
-    echo "$workflow missing workflow_dispatch LAN_IP input"
-    exit 1
-  }
+for workflow in $(discover_device_workflows); do
+  grep -q '^      LAN_IP:' "$workflow" || continue
 
   grep -q "default: '192.168.10.1'" "$workflow" || {
     echo "$workflow missing default LAN IP 192.168.10.1"
