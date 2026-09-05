@@ -106,3 +106,11 @@
 - **Pi 加载方式**：`/usr/sbin/pi-append-system-link` 维护 `APPEND_SYSTEM.md` 软链接。Multica 启动前会重新渲染角色卡并修复两类链接，确保 Pi 与 CommandCode 看到相同的 OpenWrt 事实和安全边界。
 - **当前固件维护基线**：OpenWRT-CI `main` 的 `04cc174`（2026-09-05，包含前置提交 `5cfbcb3`）包含动态 Quad100 MagicDNS 探针、Multica Agent runtime 重绑定兜底、每日 03:00 的签名 runtime 检查/升级、profile 临时文件清理，以及 Pi/CommandCode 共用角色卡的 CI 可执行位与链接修复。设备启动时采集的 `/etc/openwrt-ci/firmware-commit` 若存在，是实际刷入镜像对应的仓库提交；它优先于本段历史说明。
 - **遇到 runtime / DNS / bootstrap 问题时**：先读取本卡、`/var/run/data-runtime.status`、`/var/run/agent-data-backup.status`、`/etc/openwrt-ci/firmware-commit`（如存在）和 `agent-runtime status --json`，再按本卡的只读诊断与明确确认边界执行修复；不要假设设备型号、分区号、路由表号或历史提交仍然适用。
+
+## 6. 共享 Skills 与 MCP 工具目录
+
+- **唯一真源**：`/data/shared/agent-tools/`；Skills 放在 `skills/<name>/SKILL.md`，可选的 CommandCode MCP 配置放在 `mcp.json`。该目录和其中内容必须由管理员审阅维护，业务凭据、OAuth、Token 和 Cookie 禁止写入。
+- **Pi / CommandCode 入口**：`/usr/sbin/agent-tools-link` 将共享 Skills 接入 `/data/pi/agent/skills` 与 `/data/commandcode/skills`；入口不存在时使用目录软链接，已有目录则只为缺失 Skill 建立单项软链接，不覆盖已有内容。新增 Skill 后再次运行此命令即可刷新。
+- **MCP 边界**：CommandCode 可通过 `cmd mcp add --scope user` 管理 `/data/commandcode/mcp.json`；共享 `mcp.json` 仅在 `/data/commandcode/mcp.json` 不存在时建立软链接。Pi 没有内置 MCP，需使用已安装扩展，或把 MCP 服务封装成带 README 的 Skill/CLI。
+- **Multica 关系**：Multica 不直接加载 Skills/MCP；它派发给本机 Pi，Pi 再按上述入口加载。因此修改共享 Skills 后无需修改 Multica Agent 注册信息；下次 Pi/CommandCode 请求即可读取新内容。
+- **启动与维护**：`/data` 挂载时和 Multica 启动前会幂等运行 `agent-tools-link`。如果 `/data` 未挂载，Agent 不得把共享目录改写到根 overlay；应先报告数据盘状态。

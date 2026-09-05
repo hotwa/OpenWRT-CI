@@ -18,6 +18,7 @@ BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
 LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
 COMMANDCODE_ROLE_LINK_BIN="${AUTO_MOUNT_COMMANDCODE_ROLE_LINK_BIN:-/usr/sbin/commandcode-role-link}"
+AGENT_TOOLS_LINK_BIN="${AUTO_MOUNT_AGENT_TOOLS_LINK_BIN:-/usr/sbin/agent-tools-link}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
@@ -522,6 +523,12 @@ prepare_agent_storage() {
 	if [ -x "$COMMANDCODE_ROLE_LINK_BIN" ]; then
 		COMMANDCODE_HOME="$DATA_ROOT/commandcode" COMMANDCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
 			"$COMMANDCODE_ROLE_LINK_BIN" || return 1
+	fi
+	if [ -x "$AGENT_TOOLS_LINK_BIN" ]; then
+		AGENT_TOOLS_ROOT="$DATA_ROOT/shared/agent-tools" \
+		PI_SKILLS_DIR="$DATA_ROOT/pi/agent/skills" \
+		COMMANDCODE_SKILLS_DIR="$DATA_ROOT/commandcode/skills" \
+			"$AGENT_TOOLS_LINK_BIN" || return 1
 	fi
 	# Pi appends this link after its built-in tool prompt. Point it at the
 	# dynamically rendered Multica role card rather than copying a second card,

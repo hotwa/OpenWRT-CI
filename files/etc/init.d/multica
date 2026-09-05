@@ -193,6 +193,12 @@ start_service() {
 			return 1
 		}
 	fi
+	if [ -x /usr/sbin/agent-tools-link ]; then
+		/usr/sbin/agent-tools-link || {
+			log_error "shared Agent Skills link is unavailable; refusing to start Multica"
+			return 1
+		}
+	fi
 	# Ensure a role can invoke python3 before registering it as a usable Pi
 	# runtime.  The provisioner is offline and idempotent after first success.
 	if [ ! -x /usr/local/bin/python3 ] && [ -x /usr/sbin/uv-runtime-provision ]; then
