@@ -10,6 +10,7 @@ PROFILE_FILE="$DATA_DIR/openwrt-agent.md"
 IDENTITY_FILE="$DATA_DIR/.device_identity"
 DATA_RUNTIME_STATUS_FILE="${MULTICA_DATA_RUNTIME_STATUS_FILE:-/var/run/data-runtime.status}"
 DATA_BACKUP_STATUS_FILE="${MULTICA_DATA_BACKUP_STATUS_FILE:-/var/run/agent-data-backup.status}"
+FIRMWARE_COMMIT_FILE="${MULTICA_FIRMWARE_COMMIT_FILE:-/etc/openwrt-ci/firmware-commit}"
 
 command_path() {
 	command -v "$1" 2>/dev/null || true
@@ -142,7 +143,7 @@ tool_line() {
 }
 
 render_profile() {
-	local tmp identity_tmp board model lan tail_ip data_mount memory
+	local tmp identity_tmp board model lan tail_ip data_mount memory firmware_commit
 	mkdir -p "$DATA_DIR"
 	tmp="$PROFILE_FILE.new.$$"
 	identity_tmp="$IDENTITY_FILE.new.$$"
@@ -159,6 +160,8 @@ render_profile() {
 	[ -n "$data_mount" ] || data_mount="unavailable"
 	memory="$(awk '/MemTotal:/ { printf "%.0f MiB", $2 / 1024 }' /proc/meminfo 2>/dev/null || true)"
 	[ -n "$memory" ] || memory="unavailable"
+	firmware_commit="$(sed -n '1p' "$FIRMWARE_COMMIT_FILE" 2>/dev/null | tr -d '\r' || true)"
+	[ -n "$firmware_commit" ] || firmware_commit="unavailable"
 
 	{
 		[ -r "$BASE_INSTRUCTIONS" ] && cat "$BASE_INSTRUCTIONS"
@@ -170,6 +173,7 @@ render_profile() {
 		printf -- '- **动态路由表 `%s` 已接受的 Tailnet 子网**：`%s`\n' "$(tailscale_route_table)" "$(tailscale_accepted_routes)"
 		printf -- '- **Tailnet 提示**：以上通告与动态路由表是本次采集的状态，不是固定拓扑；路由授权或通告变更必须另行确认。\n'
 		printf -- '- **内存**：`%s`；**数据盘**：`%s`\n' "$memory" "$data_mount"
+		printf -- '- **固件配置仓库提交**：`%s`（来源：`%s`）\n' "$firmware_commit" "$FIRMWARE_COMMIT_FILE"
 		printf -- '- **任务根目录**：`/data/multica/workspaces`（所有项目、下载、虚拟环境和产物均须位于此处）\n'
 		printf '\n### 数据盘与备份实时状态（可选）\n\n'
 		printf -- '- **data-runtime**（`/var/run/data-runtime.status`）：`%s`\n' "$(runtime_status_summary data-runtime "$DATA_RUNTIME_STATUS_FILE")"

@@ -1,0 +1,50 @@
+#!/bin/sh
+# Bind CommandCode's user-level AGENTS.md to the same dynamic role card that
+# Pi appends through APPEND_SYSTEM.md. An existing regular AGENTS.md is kept.
+
+set -eu
+
+COMMANDCODE_HOME="${COMMANDCODE_HOME:-/data/commandcode}"
+ROLE_CARD="${COMMANDCODE_ROLE_CARD:-/data/multica/openwrt-agent.md}"
+AGENTS_FILE="$COMMANDCODE_HOME/AGENTS.md"
+
+log_message() {
+	logger -t commandcode-role-link -- "$*" 2>/dev/null || true
+	printf '%s\n' "commandcode-role-link: $*" >&2
+}
+
+main() {
+	[ -d "$COMMANDCODE_HOME" ] || {
+		log_message "CommandCode home is unavailable: $COMMANDCODE_HOME"
+		return 1
+	}
+	[ -r "$ROLE_CARD" ] || {
+		log_message "role card is unavailable: $ROLE_CARD"
+		return 1
+	}
+
+	if [ -L "$AGENTS_FILE" ]; then
+		[ "$(readlink "$AGENTS_FILE")" = "$ROLE_CARD" ] || {
+			log_message "leaving existing AGENTS.md symlink unchanged: $AGENTS_FILE"
+			return 0
+		}
+		return 0
+	fi
+	if [ -e "$AGENTS_FILE" ]; then
+		log_message "leaving existing regular AGENTS.md unchanged: $AGENTS_FILE"
+		return 0
+	fi
+
+	temporary="${AGENTS_FILE}.new.$$"
+	ln -s "$ROLE_CARD" "$temporary" || return 1
+	mv "$temporary" "$AGENTS_FILE" || {
+		rm -f "$temporary"
+		return 1
+	}
+	[ -L "$AGENTS_FILE" ] && [ "$(readlink "$AGENTS_FILE")" = "$ROLE_CARD" ] || {
+		log_message "failed to set CommandCode AGENTS.md link"
+		return 1
+	}
+}
+
+main "$@"

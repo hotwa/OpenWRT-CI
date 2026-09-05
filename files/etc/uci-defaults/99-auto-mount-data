@@ -17,6 +17,7 @@ STORAGE_ENABLED_OVERRIDE="${AUTO_MOUNT_DATA_STORAGE_ENABLED:-}"
 BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
 LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
+COMMANDCODE_ROLE_LINK_BIN="${AUTO_MOUNT_COMMANDCODE_ROLE_LINK_BIN:-/usr/sbin/commandcode-role-link}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
@@ -516,6 +517,12 @@ prepare_agent_storage() {
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1
 	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || return 1
 	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || return 1
+	# CommandCode reads its user-level AGENTS.md on each request. Bind it to
+	# the same rendered role card Pi uses; an existing regular file is kept.
+	if [ -x "$COMMANDCODE_ROLE_LINK_BIN" ]; then
+		COMMANDCODE_HOME="$DATA_ROOT/commandcode" COMMANDCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
+			"$COMMANDCODE_ROLE_LINK_BIN" || return 1
+	fi
 	# Pi appends this link after its built-in tool prompt. Point it at the
 	# dynamically rendered Multica role card rather than copying a second card,
 	# so interactive Pi and daemon-dispatched sessions share one source.

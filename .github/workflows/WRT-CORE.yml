@@ -663,6 +663,12 @@ jobs:
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
+          mkdir -p ./wrt/files/etc/openwrt-ci
+          if [ -n "${GITHUB_SHA:-}" ]; then
+            printf '%s\n' "$GITHUB_SHA" > ./wrt/files/etc/openwrt-ci/firmware-commit
+          else
+            cp -f ./files/etc/openwrt-ci/firmware-commit ./wrt/files/etc/openwrt-ci/firmware-commit
+          fi
           cp -f ./files/etc/profile.d/99-data-runtime.sh ./wrt/files/etc/profile.d/99-data-runtime.sh
           cp -f ./files/etc/rclone-data-backup/include.conf ./wrt/files/etc/rclone-data-backup/include.conf
           cp -f ./files/etc/uci-defaults/94-zram-swap-defaults ./wrt/files/etc/uci-defaults/94-zram-swap-defaults
@@ -677,6 +683,7 @@ jobs:
           cp -f ./files/usr/sbin/multica-device-profile ./wrt/files/usr/sbin/multica-device-profile
           cp -f ./files/usr/sbin/openwrt-data-storage-diagnose ./wrt/files/usr/sbin/openwrt-data-storage-diagnose
           cp -f ./files/usr/sbin/pi-append-system-link ./wrt/files/usr/sbin/pi-append-system-link
+          cp -f ./files/usr/sbin/commandcode-role-link ./wrt/files/usr/sbin/commandcode-role-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
           chmod 0755 \
@@ -692,6 +699,7 @@ jobs:
             ./wrt/files/usr/sbin/auto-mount-data \
             ./wrt/files/usr/sbin/openwrt-data-storage-diagnose \
             ./wrt/files/usr/sbin/pi-append-system-link \
+            ./wrt/files/usr/sbin/commandcode-role-link \
             ./wrt/files/usr/sbin/rclone-data-backup \
             ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
           test -x ./wrt/files/usr/sbin/openwrt-data-storage-diagnose || {

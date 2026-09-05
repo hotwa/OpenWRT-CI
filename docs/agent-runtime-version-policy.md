@@ -91,6 +91,13 @@ OAuth token。`uv-runtime` 在 `/data` 已挂载后仅从 `/opt/uv/python-mirror
 离线部署 CPython 到 `/data/uv/python` 并发布 `python3`；无 `/data` 时不会
 向根分区写入解释器或缓存，Multica 也不会启动。
 
+Pi 与 CommandCode 共用角色卡：`/data/pi/agent/APPEND_SYSTEM.md` 和
+`/data/commandcode/AGENTS.md` 由固件内的 `pi-append-system-link` 与
+`commandcode-role-link` 指向 `/data/multica/openwrt-agent.md`。后者只在
+`AGENTS.md` 缺失时创建链接，保留管理员已有的普通文件；CommandCode 每轮请求
+重新读取用户级 `AGENTS.md`，因此角色卡更新无需重启。实际镜像提交记录在
+`/etc/openwrt-ci/firmware-commit`，由 CI 构建自动写入。
+
 ## “每次编译都是最新版吗？”
 
 不是。固件构建按已提交 `package-lock.json` 和底座 pin 复现；它不会从 registry

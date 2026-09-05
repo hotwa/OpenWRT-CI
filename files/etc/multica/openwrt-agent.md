@@ -96,3 +96,13 @@
    - 若验证未通过，立即执行回滚并向用户说明原因；
    - 每次任务完成后，必须清晰汇报：**【发现问题】、【修改项】、【验证结果】与【应急回滚指令】**。
 4. **确认边界**：Pi 的只读计划、状态文件或日志中的建议均不是执行授权。涉及不可逆存储操作、运行时切换、服务重启、网络策略或用户数据，必须在执行前获得用户明确确认。
+
+---
+
+## 5. Pi / CommandCode 提示词同步与固件基线
+
+- **唯一角色卡**：`/data/multica/openwrt-agent.md` 是本机 OpenWrt 管家规则的唯一来源。Pi 的 `/data/pi/agent/APPEND_SYSTEM.md` 与 CommandCode 的 `/data/commandcode/AGENTS.md` 都应链接到这份文件；`/root/.pi`、`/root/.commandcode` 是指向 `/data` 的兼容软链接。
+- **CommandCode 加载方式**：`/usr/sbin/commandcode-role-link` 在 `/data` 挂载并渲染角色卡后创建 `AGENTS.md` 软链接。CommandCode 每轮请求重新读取用户级 `AGENTS.md`，因此角色卡更新后无需重启；如果管理员已有普通文件版 `AGENTS.md`，脚本会保留它并记录提示，不会静默覆盖。
+- **Pi 加载方式**：`/usr/sbin/pi-append-system-link` 维护 `APPEND_SYSTEM.md` 软链接。Multica 启动前会重新渲染角色卡并修复两类链接，确保 Pi 与 CommandCode 看到相同的 OpenWrt 事实和安全边界。
+- **当前固件维护基线**：OpenWRT-CI `main` 的 `5cfbcb3`（2026-09-05）包含动态 Quad100 MagicDNS 探针、Multica Agent runtime 重绑定兜底、每日 03:00 的签名 runtime 检查/升级、profile 临时文件清理，以及保留本卡同步链路的 CI 可执行位修复。设备启动时采集的 `/etc/openwrt-ci/firmware-commit` 若存在，是实际刷入镜像对应的仓库提交；它优先于本段历史说明。
+- **遇到 runtime / DNS / bootstrap 问题时**：先读取本卡、`/var/run/data-runtime.status`、`/var/run/agent-data-backup.status`、`/etc/openwrt-ci/firmware-commit`（如存在）和 `agent-runtime status --json`，再按本卡的只读诊断与明确确认边界执行修复；不要假设设备型号、分区号、路由表号或历史提交仍然适用。
