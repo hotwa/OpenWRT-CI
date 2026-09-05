@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+
+# Resume only the exact, previously reviewed OpenWrt data provisioning flow.
+# The worker verifies the board, GPT topology and pending marker before it can
+# run mkfs; this wrapper deliberately performs no partition selection.
+START=19
+STOP=10
+
+WORKER="${EMMC_DATA_PROVISION_WORKER:-/usr/sbin/emmc-data-provision}"
+MOUNTER="${EMMC_DATA_AUTO_MOUNT_WORKER:-/usr/sbin/auto-mount-data}"
+
+log() { logger -t emmc-data-provision -- "$*" 2>/dev/null || true; }
+
+storage_enabled() {
+	case "$(uci -q get agent-storage.main.enabled 2>/dev/null)" in
+		1|true|yes|on) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+start() {
+	storage_enabled || return 0
+	[ -x "$WORKER" ] || { log "worker is absent; leaving storage unchanged"; return 0; }
+	[ -x "$MOUNTER" ] || { log "mount worker is absent; leaving storage unchanged"; return 0; }
+
+	# A non-zero worker status means an exact pending partition is not ready
+	# yet, or a preflight rejected it. It is intentionally non-fatal to boot;
+	# the next boot gets another bounded retry without widening the target.
+	if ! "$WORKER"; then
+		log "provisioning is still pending or was rejected; will retry on next boot"
+		return 0
+	fi
+
+	if ! "$MOUNTER"; then
+		log "data partition is not mounted yet; will retry on next boot"
+		return 0
+	fi
+
+	# data-runtime starts later, but refresh it here so a successfully resumed
+	# partition is selected immediately during this boot.
+	/etc/init.d/data-runtime restart >/dev/null 2>&1 || true
+	log "provisioning and data mount pass completed"
+}

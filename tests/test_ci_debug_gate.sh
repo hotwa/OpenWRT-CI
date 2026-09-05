@@ -3,10 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SETUP="$ROOT_DIR/Scripts/setup_ci_tailscale.sh"
+CLEANUP="$ROOT_DIR/Scripts/cleanup_ci_tailscale.sh"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 [ -f "$SETUP" ] || { echo "missing CI Tailscale setup script"; exit 1; }
+[ -x "$CLEANUP" ] || { echo "missing CI Tailscale cleanup script"; exit 1; }
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
 # The workflow invokes this script directly in some historical revisions, so
@@ -38,8 +40,16 @@ grep -q 'SUDO="sudo -E"' "$SETUP" || {
   exit 1
 }
 grep -q 'source "\$DEBUG_ENV_FILE"' "$WORKFLOW" || {
-  echo "workflow must source same-step debug environment"
-  exit 1
+	echo "workflow must source same-step debug environment"
+	exit 1
+}
+grep -q 'cleanup_ci_tailscale.sh' "$WORKFLOW" || {
+	echo "workflow must run the CI Tailscale cleanup helper"
+	exit 1
+}
+grep -Fq 'tailscale logout' "$CLEANUP" || {
+	echo "cleanup helper must revoke the local Tailscale node key"
+	exit 1
 }
 
 # Mock the already-installed-client path. This exercises the former set -u

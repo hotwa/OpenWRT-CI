@@ -252,7 +252,11 @@ filesystem_probe_state() {
 	type="$(blkid -o value -s TYPE "$device" 2>/dev/null)"
 	status=$?
 	case "$status" in
-		0) [ -n "$type" ] || return 1; printf 'typed:%s' "$type" ;;
+		# BusyBox blkid reports a raw GPT partition as success with an empty
+		# TYPE, whereas util-linux blkid normally returns 2. Treat only this
+		# exact empty-success case as raw; a nonzero probe error is still
+		# ambiguous and must not authorize mkfs.
+		0) if [ -n "$type" ]; then printf 'typed:%s' "$type"; else printf raw; fi ;;
 		2) printf raw ;;
 		*) return 1 ;;
 	esac

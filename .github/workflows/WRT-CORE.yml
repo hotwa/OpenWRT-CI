@@ -658,6 +658,7 @@ jobs:
           fi
           cp -f ./files/etc/data-runtime.env ./wrt/files/etc/data-runtime.env
           cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
+          cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/profile.d/99-data-runtime.sh ./wrt/files/etc/profile.d/99-data-runtime.sh
@@ -666,18 +667,26 @@ jobs:
           cp -f ./files/etc/uci-defaults/98-provision-emmc-data ./wrt/files/etc/uci-defaults/98-provision-emmc-data
           cp -f ./files/etc/uci-defaults/99-auto-mount-data ./wrt/files/etc/uci-defaults/99-auto-mount-data
           cp -f ./files/etc/uci-defaults/99-enable-data-runtime ./wrt/files/etc/uci-defaults/99-enable-data-runtime
+          # First-boot defaults can be interrupted after GPT creation but
+          # before mkfs. Install the same reviewed workers under stable names
+          # so an enabled init service can resume only that pending marker.
+          cp -f ./files/etc/uci-defaults/98-provision-emmc-data ./wrt/files/usr/sbin/emmc-data-provision
+          cp -f ./files/etc/uci-defaults/99-auto-mount-data ./wrt/files/usr/sbin/auto-mount-data
           cp -f ./files/usr/sbin/multica-device-profile ./wrt/files/usr/sbin/multica-device-profile
           cp -f ./files/usr/sbin/openwrt-data-storage-diagnose ./wrt/files/usr/sbin/openwrt-data-storage-diagnose
           cp -f ./files/usr/sbin/pi-append-system-link ./wrt/files/usr/sbin/pi-append-system-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           chmod 0755 \
             ./wrt/files/etc/init.d/data-runtime \
+            ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
             ./wrt/files/etc/uci-defaults/98-provision-emmc-data \
             ./wrt/files/etc/uci-defaults/99-auto-mount-data \
             ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
             ./wrt/files/usr/sbin/multica-device-profile \
+            ./wrt/files/usr/sbin/emmc-data-provision \
+            ./wrt/files/usr/sbin/auto-mount-data \
             ./wrt/files/usr/sbin/openwrt-data-storage-diagnose \
             ./wrt/files/usr/sbin/pi-append-system-link \
             ./wrt/files/usr/sbin/rclone-data-backup
@@ -1084,6 +1093,13 @@ jobs:
             exit 0
           fi
           DEBUG_ENV_FILE="${RUNNER_TEMP}/ci-debug-env"
+          cleanup_ci_debug() {
+            local rc=$?
+            bash "$GITHUB_WORKSPACE/Scripts/cleanup_ci_tailscale.sh"
+            rm -f "$DEBUG_ENV_FILE" /tmp/continue-ci
+            return "$rc"
+          }
+          trap cleanup_ci_debug EXIT
           rm -f "$DEBUG_ENV_FILE"
           export CI_DEBUG_ENV_FILE="$DEBUG_ENV_FILE"
           # Invoke through bash as a defensive fallback for checkouts where a
@@ -1121,11 +1137,4 @@ jobs:
             echo "continue-ci detected; releasing runner"
           fi
           rm -f /tmp/continue-ci
-          # Stop only the process started by this gate. The preauth key owns
-          # the node's ephemeral lifecycle; this removes the local runner
-          # process and temporary state even after timeout or manual release.
-          if [ -n "${CI_TSCALE_PID:-}" ]; then
-            sudo kill "$CI_TSCALE_PID" 2>/dev/null || true
-          fi
-          sudo rm -f /run/tailscaled-tmp.state 2>/dev/null || true
           echo "CI resumed"

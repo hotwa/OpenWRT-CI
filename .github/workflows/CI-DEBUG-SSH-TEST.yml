@@ -59,10 +59,7 @@ jobs:
 
           cleanup() {
             local rc=$?
-            if [ -n "${CI_TSCALE_PID:-}" ]; then
-              sudo kill "$CI_TSCALE_PID" 2>/dev/null || true
-            fi
-            sudo rm -f /run/tailscaled-tmp.state 2>/dev/null || true
+            bash "$GITHUB_WORKSPACE/Scripts/cleanup_ci_tailscale.sh"
             rm -f "$DEBUG_ENV_FILE" /tmp/continue-ci
             echo "CI Debug SSH smoke cleanup complete"
             return "$rc"

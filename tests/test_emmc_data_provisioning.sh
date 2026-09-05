@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/files/etc/uci-defaults/98-provision-emmc-data"
+RESUME_INIT="$ROOT_DIR/files/etc/init.d/emmc-data-provision"
 CONFIGURER="$ROOT_DIR/Scripts/ConfigureEmmcDataProvisioning.sh"
 CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 RE_MESH_WF="$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"
@@ -10,10 +11,12 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 [ -x "$SCRIPT" ] || { echo "missing executable first-boot eMMC data provisioner"; exit 1; }
+[ -x "$RESUME_INIT" ] || { echo "missing executable eMMC provisioning resume init service"; exit 1; }
 [ -x "$CONFIGURER" ] || { echo "missing eMMC data workflow configurer"; exit 1; }
 [ -f "$CORE_WF" ] || { echo "missing WRT-CORE workflow"; exit 1; }
 [ -f "$RE_MESH_WF" ] || { echo "missing RE mesh workflow"; exit 1; }
 sh -n "$SCRIPT"
+sh -n "$RESUME_INIT"
 sh -n "$CONFIGURER"
 
 # Static guards: no broad "largest partition" selection or generic label can
@@ -34,6 +37,10 @@ grep -Fq -- '--backup=$backup' "$SCRIPT" || {
 	echo "provisioner does not save a GPT backup before mutation"
 	exit 1
 }
+grep -Fq "0) if [ -n \"\$type\" ]; then printf 'typed:%s' \"\$type\"; else printf raw; fi ;;" "$SCRIPT" || {
+	echo "provisioner does not handle BusyBox raw-partition blkid semantics"
+	exit 1
+}
 if grep -Eq 'largest|userdata|mkfs\.ext4 .*mmcblk[0-9]$' "$SCRIPT"; then
 	echo "provisioner contains an unsafe generic partition-selection path"
 	exit 1
@@ -51,6 +58,22 @@ grep -Fq 'WRT_EMMC_DATA_PROVISIONING: true' "$RE_MESH_WF" || {
 	echo "RE-SS-01 is not the first guarded device gate"
 	exit 1
 }
+grep -Fq 'emmc-data-provision enable' "$ROOT_DIR/files/etc/uci-defaults/99-enable-data-runtime" || {
+	echo "data runtime defaults do not enable the pending provisioning retry service"
+	exit 1
+}
+grep -Fq '"$WORKER"' "$RESUME_INIT" || {
+	echo "resume init does not invoke the reviewed provisioning worker"
+	exit 1
+}
+grep -Fq '"$MOUNTER"' "$RESUME_INIT" || {
+	echo "resume init does not invoke the reviewed mount worker"
+	exit 1
+}
+if grep -Eq '^[[:space:]]*(mkfs|sgdisk|partprobe)([[:space:]]|$)' "$RESUME_INIT"; then
+	echo "resume init must delegate mutations to the reviewed worker"
+	exit 1
+fi
 
 CONFIG_CASE="$TMP_ROOT/config"
 mkdir -p "$CONFIG_CASE/files/etc/config"

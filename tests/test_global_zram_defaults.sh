@@ -7,6 +7,9 @@ DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/94-zram-swap-defaults"
 
 grep -Fxq 'CONFIG_PACKAGE_zram-swap=y' "$GENERAL"
 grep -Fxq 'CONFIG_KERNEL_SWAP=y' "$GENERAL"
+grep -Fxq 'CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y' "$GENERAL"
+grep -Fxq 'CONFIG_KERNEL_LZ4_COMPRESS=y' "$GENERAL"
+grep -Fxq 'CONFIG_KERNEL_LZ4_DECOMPRESS=y' "$GENERAL"
 test -x "$DEFAULTS"
 
 grep -Fq 'zram_size_mb:$zram_size_mb' "$DEFAULTS"

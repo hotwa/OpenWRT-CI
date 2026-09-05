@@ -11,6 +11,7 @@ fi
 
 for path in \
 	'files/etc/init.d/data-runtime' \
+	'files/etc/init.d/emmc-data-provision' \
 	'files/etc/init.d/rclone-data-backup' \
 	'files/etc/uci-defaults/94-zram-swap-defaults' \
 	'files/etc/uci-defaults/98-provision-emmc-data' \
@@ -22,6 +23,15 @@ for path in \
 		exit 1
 	}
 done
+
+grep -Fq './files/etc/uci-defaults/98-provision-emmc-data ./wrt/files/usr/sbin/emmc-data-provision' "$CORE" || {
+	echo 'WRT-CORE does not install the eMMC provision worker for retry' >&2
+	exit 1
+}
+grep -Fq './files/etc/uci-defaults/99-auto-mount-data ./wrt/files/usr/sbin/auto-mount-data' "$CORE" || {
+	echo 'WRT-CORE does not install the data mount worker for retry' >&2
+	exit 1
+}
 
 grep -Fq 'destructive GPT provisioning remains disabled by its UCI gate' "$CORE"
 grep -Fq 'read-only data storage diagnosis helper' "$CORE"
