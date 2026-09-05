@@ -134,7 +134,7 @@ jobs:
               node /verify_pi_extensions.js --directory /generation/node \
                 --vendor-extension /generation/vendor/pi-plan-mode/plan-mode.ts
               NODE_PATH=/generation/node/lib/node_modules node -e \
-                "require('@napi-rs/keyring'); require('zigpty');"
+                "require(\"@napi-rs/keyring\"); require(\"zigpty\");"
             '
           done
 
