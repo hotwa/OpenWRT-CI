@@ -87,82 +87,30 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then mode=plan; else mode=apply; fi
           bash Scripts/bump_agent_runtime.sh "$mode" 2>&1 | tee "$RUNNER_TEMP/bump.log"
 
-      - name: Detect a verified update
-        id: changes
+      - name: Set candidate runtime sequence
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
-          if [ "$DRY_RUN" = "true" ]; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            echo 'Dry run does not construct a latest-at-build candidate.'
-            exit 0
-          fi
-          paths=(Scripts/node-agent-runtime Scripts/fetch_multica_runtime.sh Scripts/fetch_uv_runtime.sh)
-          if [ "${{ inputs.force_release }}" = "true" ]; then
-            echo 'changed=true' >> "$GITHUB_OUTPUT"
-            echo 'Forced latest-at-build candidate release.'
-            exit 0
-          fi
-          if git diff --quiet -- "${paths[@]}"; then
-            channel='https://github.com/hotwa/OpenWRT-CI/releases/download/agent-runtime-stable'
-            mkdir -p "$RUNNER_TEMP/channel-check"
-            if ! curl -fsSL "$channel/index.json" -o "$RUNNER_TEMP/channel-check/index.json" || \
-               ! curl -fsSL "$channel/index.json.sig" -o "$RUNNER_TEMP/channel-check/index.json.sig" || \
-               ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/index.json" -x "$RUNNER_TEMP/channel-check/index.json.sig"; then
-              echo 'changed=true' >> "$GITHUB_OUTPUT"
-              echo 'Stable signed channel is missing or invalid; rebuilding it.'
-              exit 0
-            fi
-            if ! node -e "const index = require(process.argv[1]); if (index.schema_version !== 1 || index.release_tag !== 'agent-runtime-stable' || !Number.isSafeInteger(index.runtime_release) || index.runtime_release < 1) process.exit(1); for (const arch of ['arm64', 'x64']) { const release = index.releases?.[arch]; const prefix = 'agent-runtime-' + index.runtime_release + '-' + arch + '-musl'; if (!release || release.runtime_release !== index.runtime_release || release.libc !== 'musl' || release.manifest !== (prefix + '.manifest.json') || release.manifest_signature !== (prefix + '.manifest.json.sig') || release.bundle !== (prefix + '.tar.gz')) process.exit(1); console.log(arch + '\t' + release.manifest + '\t' + release.bundle); }" "$RUNNER_TEMP/channel-check/index.json" >"$RUNNER_TEMP/channel-check/assets.tsv"; then
-              echo 'changed=true' >> "$GITHUB_OUTPUT"
-              echo 'Stable signed channel index is incomplete; rebuilding it.'
-              exit 0
-            fi
-            stable_ok=true
-            while IFS=$'\t' read -r arch manifest bundle; do
-              if ! curl -fsSL "$channel/$manifest" -o "$RUNNER_TEMP/channel-check/$manifest" || \
-                 ! curl -fsSL "$channel/$manifest.sig" -o "$RUNNER_TEMP/channel-check/$manifest.sig" || \
-                 ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/$manifest" -x "$RUNNER_TEMP/channel-check/$manifest.sig" || \
-                 ! curl -fsIL "$channel/$bundle" -o /dev/null; then
-                stable_ok=false
-                break
-              fi
-            done < "$RUNNER_TEMP/channel-check/assets.tsv"
-            if [ "$stable_ok" != true ]; then
-              echo 'changed=true' >> "$GITHUB_OUTPUT"
-              echo 'Stable channel is incomplete or does not represent the current verified inputs; rebuilding it.'
-              exit 0
-            fi
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            echo 'No source-controlled update. Pi/plugins are latest-at-build; dispatch with force_release to construct and compare a fresh signed candidate.'
-          else
-            echo 'changed=true' >> "$GITHUB_OUTPUT"
-          fi
+          runtime_release="$(sed -n '1p' Scripts/node-agent-runtime/runtime-release)"
+          echo "CANDIDATE_RUNTIME_RELEASE=$runtime_release" >> "$GITHUB_ENV"
 
-      - name: Advance immutable runtime sequence
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          bash Scripts/bump_agent_runtime.sh advance-release
-
-      - name: Build arm64 musl generation
-        if: steps.changes.outputs.changed == 'true'
+      - name: Build latest arm64 musl candidate
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
           command -v qemu-aarch64
-          runtime_release="$(sed -n '1p' Scripts/node-agent-runtime/runtime-release)"
-          echo "RUNTIME_RELEASE=$runtime_release" >> "$GITHUB_ENV"
-          AGENT_RUNTIME_RELEASE="$runtime_release" bash Scripts/build_agent_runtime_generation.sh --arch arm64 --output "$RUNNER_TEMP/generation/arm64"
-          bash Scripts/package_agent_runtime_bundle.sh --arch arm64 --source "$RUNNER_TEMP/generation/arm64" --output "$RUNNER_TEMP/release" --runtime-release "$runtime_release"
+          AGENT_RUNTIME_RELEASE="$CANDIDATE_RUNTIME_RELEASE" bash Scripts/build_agent_runtime_generation.sh --arch arm64 --output "$RUNNER_TEMP/generation/arm64"
+          bash Scripts/package_agent_runtime_bundle.sh --arch arm64 --source "$RUNNER_TEMP/generation/arm64" --output "$RUNNER_TEMP/candidate-release" --runtime-release "$CANDIDATE_RUNTIME_RELEASE"
 
-      - name: Build x64 musl generation
-        if: steps.changes.outputs.changed == 'true'
+      - name: Build latest x64 musl candidate
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
-          AGENT_RUNTIME_RELEASE="$RUNTIME_RELEASE" bash Scripts/build_agent_runtime_generation.sh --arch x64 --output "$RUNNER_TEMP/generation/x64"
-          bash Scripts/package_agent_runtime_bundle.sh --arch x64 --source "$RUNNER_TEMP/generation/x64" --output "$RUNNER_TEMP/release" --runtime-release "$RUNTIME_RELEASE"
+          AGENT_RUNTIME_RELEASE="$CANDIDATE_RUNTIME_RELEASE" bash Scripts/build_agent_runtime_generation.sh --arch x64 --output "$RUNNER_TEMP/generation/x64"
+          bash Scripts/package_agent_runtime_bundle.sh --arch x64 --source "$RUNNER_TEMP/generation/x64" --output "$RUNNER_TEMP/candidate-release" --runtime-release "$CANDIDATE_RUNTIME_RELEASE"
 
       - name: Probe complete musl generations
-        if: steps.changes.outputs.changed == 'true'
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
           for arch in arm64 x64; do
@@ -188,6 +136,69 @@ jobs:
               NODE_PATH=/generation/node/lib/node_modules node -e \
                 "require('@napi-rs/keyring'); require('zigpty');"
             '
+          done
+
+      - name: Compare verified latest candidate with stable channel
+        id: changes
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Dry run reports source-controlled updates only; it does not construct a registry candidate.'
+            exit 0
+          fi
+          if [ "${{ inputs.force_release }}" = "true" ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo 'Forced publication of a fully verified latest-at-build candidate.'
+            exit 0
+          fi
+          channel='https://github.com/hotwa/OpenWRT-CI/releases/download/agent-runtime-stable'
+          mkdir -p "$RUNNER_TEMP/channel-check"
+          if ! curl -fsSL "$channel/index.json" -o "$RUNNER_TEMP/channel-check/index.json" || \
+             ! curl -fsSL "$channel/index.json.sig" -o "$RUNNER_TEMP/channel-check/index.json.sig" || \
+             ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/index.json" -x "$RUNNER_TEMP/channel-check/index.json.sig"; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo 'Stable signed channel is missing or invalid; publishing the verified candidate.'
+            exit 0
+          fi
+          if ! node -e "const index=require(process.argv[1]); if (index.schema_version!==1 || index.release_tag!=='agent-runtime-stable' || !Number.isSafeInteger(index.runtime_release) || index.runtime_release<1) process.exit(1); for (const arch of ['arm64','x64']) { const r=index.releases?.[arch]; if (!r?.manifest || r.libc!=='musl') process.exit(1); console.log(arch+'\t'+r.manifest+'\t'+r.bundle); }" "$RUNNER_TEMP/channel-check/index.json" >"$RUNNER_TEMP/channel-check/assets.tsv"; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo 'Stable signed channel index is incomplete; publishing the verified candidate.'
+            exit 0
+          fi
+          changed=false
+          while IFS=$'\t' read -r arch manifest bundle; do
+            candidate="$RUNNER_TEMP/candidate-release/agent-runtime-${CANDIDATE_RUNTIME_RELEASE}-${arch}-musl.manifest.json"
+            if ! curl -fsSL "$channel/$manifest" -o "$RUNNER_TEMP/channel-check/$manifest" || \
+               ! curl -fsSL "$channel/$manifest.sig" -o "$RUNNER_TEMP/channel-check/$manifest.sig" || \
+               ! usign -V -p files/etc/agent-runtime/usign.pub -m "$RUNNER_TEMP/channel-check/$manifest" -x "$RUNNER_TEMP/channel-check/$manifest.sig" || \
+               ! curl -fsIL "$channel/$bundle" -o /dev/null || \
+               ! test -s "$candidate" || \
+               ! node -e "const fs=require('node:fs'); const [stable,candidate]=process.argv.slice(1); const a=JSON.parse(fs.readFileSync(stable)); const b=JSON.parse(fs.readFileSync(candidate)); process.exit(a.input_sha256===b.input_sha256 ? 0 : 1)" "$RUNNER_TEMP/channel-check/$manifest" "$candidate"; then
+              changed=true
+              break
+            fi
+          done < "$RUNNER_TEMP/channel-check/assets.tsv"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          if [ "$changed" = true ]; then
+            echo 'Verified latest candidate differs from the stable channel.'
+          else
+            echo 'Stable channel already matches the verified latest candidate.'
+          fi
+
+      - name: Advance immutable runtime sequence
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          bash Scripts/bump_agent_runtime.sh advance-release
+          echo "RUNTIME_RELEASE=$(sed -n '1p' Scripts/node-agent-runtime/runtime-release)" >> "$GITHUB_ENV"
+
+      - name: Package changed verified candidate
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          for arch in arm64 x64; do
+            bash Scripts/package_agent_runtime_bundle.sh --arch "$arch" --source "$RUNNER_TEMP/generation/$arch" --output "$RUNNER_TEMP/release" --runtime-release "$RUNTIME_RELEASE"
           done
 
       - name: Verify manifests and write signed index input

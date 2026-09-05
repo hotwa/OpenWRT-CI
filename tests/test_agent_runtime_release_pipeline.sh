@@ -20,7 +20,7 @@ for path in "$PACKAGE" "$VERIFY" "$INDEX" "$SIGN" "$FINALIZE"; do
 done
 
 grep -Eq "cron: ['\"]?0 \* \* \* \*['\"]?" "$WORKFLOW" || fail "workflow is not hourly"
-for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests' 'verify_pi_extensions.js' '@napi-rs/keyring' 'zigpty'; do
+for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests' 'verify_pi_extensions.js' '@napi-rs/keyring' 'zigpty' 'candidate-release' 'Compare verified latest candidate with stable channel' 'input_sha256'; do
   grep -Fq "$term" "$WORKFLOW" || fail "workflow omits $term"
 done
 grep -Fq 'apk add --no-cache libgcc libstdc++' "$WORKFLOW" ||

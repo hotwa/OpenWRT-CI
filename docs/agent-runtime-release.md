@@ -7,11 +7,12 @@ resolves those packages, dynamically aligns every discovered
 `@earendil-works/*` package to the resolved Pi generation, then imports every
 extension through Pi's Jiti loader before it can publish anything.
 
-The hourly job publishes when source-controlled runtime inputs change or when
-the signed channel is incomplete. To deliberately refresh registry packages
-without a repository-source change, dispatch it with `force_release=true`; that
-constructs a new candidate, runs both musl probes, and commits/publishes the
-advanced immutable runtime sequence only after the gates pass.
+Every hourly run constructs the latest registry candidate for both musl
+architectures, checks native dependencies, and compares its generated
+`input_sha256` with the signed stable channel. It advances the immutable runtime
+sequence and publishes only when the verified candidate differs or the channel
+is incomplete. `force_release=true` remains available for an intentional
+republish even when the candidate is byte-for-byte equivalent.
 
 The release is an all-or-nothing stack. A router must never run `npm install
 latest`, `pnpm update`, or CLI self-update from the Runtime Manager. Registry
