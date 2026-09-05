@@ -5,7 +5,7 @@
   "description": "Reproducible dependency manifest for the OpenWrt edge agent runtime",
   "dependencies": {
     "@aaronkyriesenbach/pi-package-manager": "0.4.0",
-    "@earendil-works/pi-coding-agent": "0.85.0",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "btw-pi": "0.4.0",
     "command-code": "1.49.1",
     "pi-web-search": "1.4.0",
