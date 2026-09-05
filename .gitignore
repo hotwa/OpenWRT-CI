@@ -2,3 +2,4 @@
 /.idea
 /.worktrees
 /.playwright-mcp/
+/artifacts/
