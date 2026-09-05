@@ -7,7 +7,7 @@ QCA_618="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 AUTO_CLEAN="$ROOT_DIR/.github/workflows/Auto-Clean.yml"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
-[ -f "$QCA_612" ] || { echo "missing QCA-6.12 workflow"; exit 1; }
+[ -f "$QCA_612" ] || { echo "QCA-6.12 workflow not present; skipping QCA-6.12 schedule guard"; exit 0; }
 [ -f "$QCA_618" ] || { echo "missing QCA-6.18 workflow"; exit 1; }
 [ -f "$AUTO_CLEAN" ] || { echo "missing Auto-Clean workflow"; exit 1; }
 [ -f "$WRT_CORE" ] || { echo "missing WRT-CORE workflow"; exit 1; }

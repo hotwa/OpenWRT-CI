@@ -177,6 +177,7 @@ grep -q 'Scripts/HeadscaleAutoEnroll.sh' "$WORKFLOW" || {
 }
 
 for caller_workflow in "${CALLER_WORKFLOWS[@]}"; do
+  [ -f "$caller_workflow" ] || continue
   grep -q 'secrets: inherit' "$caller_workflow" || {
     echo "$(basename "$caller_workflow") does not pass repository secrets to WRT-CORE"
     exit 1

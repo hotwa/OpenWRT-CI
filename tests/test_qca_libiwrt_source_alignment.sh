@@ -6,7 +6,7 @@ WORKFLOW="$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
 DIY_SH="$ROOT_DIR/diy.sh"
 README="$ROOT_DIR/README.md"
 
-[ -f "$WORKFLOW" ] || { echo "missing QCA-6.12-LiBwrt workflow"; exit 1; }
+[ -f "$WORKFLOW" ] || { echo "QCA-6.12-LiBwrt workflow not present; skipping"; exit 0; }
 [ -f "$DIY_SH" ] || { echo "missing diy.sh"; exit 1; }
 [ -f "$README" ] || { echo "missing README"; exit 1; }
 

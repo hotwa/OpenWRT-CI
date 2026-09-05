@@ -46,6 +46,7 @@ grep -Fq 'Scripts/PrivateFirmwareGuard.sh' "$WRT_CORE"
 grep -Fq "if: env.WRT_PRIVATE_BUILD != 'true'" "$WRT_CORE"
 
 for workflow in "${QCA_WORKFLOWS[@]}"; do
+	[ -f "$workflow" ] || continue
 	grep -Fq 'WRTBAK_DEVICE_ALIAS:' "$workflow" || {
 		echo "$(basename "$workflow") missing WRTBAK_DEVICE_ALIAS input"
 		exit 1

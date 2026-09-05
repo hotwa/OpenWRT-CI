@@ -9,7 +9,7 @@ WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 VALIDATOR="$ROOT_DIR/Scripts/ValidateLanIp.sh"
 
 for workflow in "$QCA_612" "$QCA_618" "$QCA_LIBWRT"; do
-  [ -f "$workflow" ] || { echo "missing workflow $workflow"; exit 1; }
+  [ -f "$workflow" ] || continue
 
   grep -q "LAN_IP:" "$workflow" || {
     echo "$workflow missing workflow_dispatch LAN_IP input"

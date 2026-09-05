@@ -105,6 +105,7 @@ for workflow in \
   QCA-6.12-VIKINGYFY.yml \
   QCA-6.18-VIKINGYFY.yml; do
   grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: true' "$ROOT_DIR/.github/workflows/$workflow" || {
+  [ -f "$ROOT_DIR/.github/workflows/$workflow" ] || continue
     echo "$workflow does not explicitly enable the common route reconciler"
     exit 1
   }

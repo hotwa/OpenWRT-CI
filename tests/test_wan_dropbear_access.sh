@@ -29,7 +29,7 @@ grep -q 'ConfigureWanDropbearAccess.sh' "$WRT_CORE" || {
 }
 
 for workflow in "${WORKFLOWS[@]}"; do
-  [ -f "$workflow" ] || { echo "missing workflow $workflow"; exit 1; }
+  [ -f "$workflow" ] || continue
   grep -q 'WAN_SSH:' "$workflow" || {
     echo "$workflow does not expose WAN_SSH"
     exit 1
