@@ -1,12 +1,22 @@
 # Agent Runtime Signed Release Contract
 
-`Agent-Runtime-Bump.yml` runs at UTC minute 0 every hour. It resolves the
-app-layer pins, builds arm64 and x64 musl generation payloads, and probes
-CommandCode, Pi, Multica and the pinned uv binary before it can commit or publish anything.
-The job only publishes a new release when the verified app-layer pins changed.
+`Agent-Runtime-Bump.yml` runs at UTC minute 0 every hour. Multica and the
+reviewed vendored extension are source-controlled inputs; Pi, CommandCode and
+the default Pi extensions are a **latest-at-build catalog**. A candidate build
+resolves those packages, dynamically aligns every discovered
+`@earendil-works/*` package to the resolved Pi generation, then imports every
+extension through Pi's Jiti loader before it can publish anything.
+
+The hourly job publishes when source-controlled runtime inputs change or when
+the signed channel is incomplete. To deliberately refresh registry packages
+without a repository-source change, dispatch it with `force_release=true`; that
+constructs a new candidate, runs both musl probes, and commits/publishes the
+advanced immutable runtime sequence only after the gates pass.
 
 The release is an all-or-nothing stack. A router must never run `npm install
-latest`, `pnpm update`, or CLI self-update from the Runtime Manager.
+latest`, `pnpm update`, or CLI self-update from the Runtime Manager. Registry
+resolution belongs only to the CI staging directory; the installed generation
+contains its exact generated lockfile and resolution report.
 
 ## Artifacts
 

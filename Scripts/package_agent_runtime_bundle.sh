@@ -52,6 +52,9 @@ SOURCE="$(realpath -e "$SOURCE")"
 [ -x "$SOURCE/bin/multica" ] || die "generation source is missing executable bin/multica"
 [ -s "$SOURCE/node-version" ] || die "generation source is missing node-version"
 [ -s "$SOURCE/vendor/pi-plan-mode/provenance.json" ] || die "generation source is missing vendored Pi plan-mode provenance"
+[ -s "$SOURCE/node/agent-runtime-package.json" ] || die "generation source is missing resolved Node catalog"
+[ -s "$SOURCE/node/agent-runtime-package-lock.json" ] || die "generation source is missing resolved Node lockfile"
+[ -s "$SOURCE/node/agent-runtime-resolved.json" ] || die "generation source is missing resolved Node component metadata"
 
 # A hostile symlink must never make a signed bundle read a host path outside
 # the prepared generation.  Internal links (for npm .bin, etc.) are valid.
@@ -92,29 +95,40 @@ case "${NODE_VERSION%%.*}" in
 esac
 case "${NODE_VERSION%%.*}:$NODE_ABI" in 24:137|22:127) ;; *) die "unreviewed Node version/ABI contract: $NODE_VERSION/$NODE_ABI" ;; esac
 
-# Component versions always come from the repository's reviewed lock input,
-# never from an arbitrary prepared generation directory.
-PACKAGES_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
+# The catalog deliberately uses latest-at-build selectors.  The generation
+# carries the exact package/lock/peer-alignment metadata that was resolved and
+# verified for this build, so the signed manifest describes real bytes rather
+# than a stale repository lock.
+CATALOG_FILE="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
+PACKAGES_JSON="$SOURCE/node/agent-runtime-package.json"
+LOCK_FILE="$SOURCE/node/agent-runtime-package-lock.json"
+RESOLVED_FILE="$SOURCE/node/agent-runtime-resolved.json"
 SOURCE="$SOURCE" MANIFEST="$MANIFEST" ARCH="$ARCH" RUNTIME_RELEASE="$RUNTIME_RELEASE" \
   BUNDLE_SHA256="$BUNDLE_SHA256" BUNDLE_BYTES="$BUNDLE_BYTES" MIN_SPACE_BYTES="$MIN_SPACE_BYTES" \
   NODE_VERSION="$NODE_VERSION" NODE_ABI="$NODE_ABI" MULTICA_VERSION="$MULTICA_VERSION" UV_VERSION="$UV_VERSION" PYTHON_VERSION="$PYTHON_VERSION" PYTHON_RELEASE_TAG="$PYTHON_RELEASE_TAG" \
-  LOCK_FILE="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json" PACKAGES_JSON="$PACKAGES_JSON" \
+  CATALOG_FILE="$CATALOG_FILE" LOCK_FILE="$LOCK_FILE" PACKAGES_JSON="$PACKAGES_JSON" RESOLVED_FILE="$RESOLVED_FILE" \
   node <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const e = process.env;
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const packages = JSON.parse(fs.readFileSync(e.PACKAGES_JSON, 'utf8')).dependencies;
+const resolved = JSON.parse(fs.readFileSync(e.RESOLVED_FILE, 'utf8'));
+const packages = resolved.components;
+if (!packages || typeof packages !== 'object' || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(resolved.pi_version || '')) {
+  throw new Error('invalid resolved Pi extension metadata');
+}
 const piPlanMode = JSON.parse(fs.readFileSync(path.join(e.SOURCE, 'vendor/pi-plan-mode/provenance.json'), 'utf8'));
 const releaseInputs = [
+  e.CATALOG_FILE,
   e.PACKAGES_JSON,
   e.LOCK_FILE,
-  path.join(path.dirname(e.PACKAGES_JSON), 'vendor/pi-plan-mode/provenance.json'),
-  path.join(path.dirname(e.PACKAGES_JSON), 'vendor/pi-plan-mode/plan-mode.ts'),
-  path.join(path.dirname(e.PACKAGES_JSON), 'runtime-release'),
-  path.join(path.dirname(path.dirname(e.PACKAGES_JSON)), 'fetch_multica_runtime.sh'),
-  path.join(path.dirname(path.dirname(e.PACKAGES_JSON)), 'fetch_uv_runtime.sh')
+  e.RESOLVED_FILE,
+  path.join(e.SOURCE, 'vendor/pi-plan-mode/provenance.json'),
+  path.join(e.SOURCE, 'vendor/pi-plan-mode/plan-mode.ts'),
+  path.join(path.dirname(e.CATALOG_FILE), 'runtime-release'),
+  path.join(path.dirname(path.dirname(e.CATALOG_FILE)), 'fetch_multica_runtime.sh'),
+  path.join(path.dirname(path.dirname(e.CATALOG_FILE)), 'fetch_uv_runtime.sh')
 ];
 const inputHash = crypto.createHash('sha256');
 for (const file of releaseInputs) inputHash.update(fs.readFileSync(file));

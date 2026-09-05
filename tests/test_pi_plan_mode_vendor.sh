@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 VENDOR_DIR="$RUNTIME_DIR/vendor/pi-plan-mode"
 PACKAGE_JSON="$RUNTIME_DIR/package.json"
-PACKAGE_LOCK="$RUNTIME_DIR/package-lock.json"
 PROVENANCE="$VENDOR_DIR/provenance.json"
 REFRESH_SCRIPT="$ROOT_DIR/Scripts/refresh_pi_plan_mode_vendor.sh"
 MIGRATION="$ROOT_DIR/files/etc/uci-defaults/98-pi-plan-mode-vendor-migration"
@@ -19,7 +18,7 @@ fail() {
   exit 1
 }
 
-for path in "$PACKAGE_JSON" "$PACKAGE_LOCK" "$VENDOR_DIR/package.json" \
+for path in "$PACKAGE_JSON" "$VENDOR_DIR/package.json" \
   "$VENDOR_DIR/plan-mode.ts" "$VENDOR_DIR/README.md" "$VENDOR_DIR/LICENSE" \
   "$PROVENANCE" "$REFRESH_SCRIPT" "$MIGRATION" "$RECONCILE" "$BUMP_SCRIPT"; do
   [ -f "$path" ] || fail "missing $path"
@@ -29,70 +28,12 @@ if grep -Eq '"pi-plan-mode"[[:space:]]*:' "$PACKAGE_JSON"; then
   fail "pi-plan-mode must not remain an npm root dependency"
 fi
 
-node - "$PACKAGE_LOCK" <<'NODE' || fail "package lock retains a legacy Pi scope"
-const lock = require(process.argv[2]);
-const forbidden = /@mariozechner\/pi-(?:coding-agent|ai|tui)|(^|\/)pi-plan-mode$|(^|\/)koffi$/;
-const found = [];
-const visit = (value, path) => {
-  if (typeof value === 'string') {
-    if (forbidden.test(value)) found.push(path);
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = `${path}.${key}`;
-    if (forbidden.test(key)) found.push(childPath);
-    visit(child, childPath);
-  }
-};
-visit(lock.packages || {}, 'packages');
-if (found.length) {
-  console.error(found.join("\n"));
-  process.exit(1);
-}
+node - "$PACKAGE_JSON" <<'NODE' || fail "source Pi catalog must remain latest-at-build"
+const manifest = require(process.argv[2]);
+if (Object.values(manifest.dependencies || {}).some(value => value !== 'latest')) process.exit(1);
 NODE
-
-# npm v11 writes pi-wechat-assistant's obsolete optional peer back into a new
-# lock. The bump helper may remove only that exact metadata, and must reject a
-# second retired Pi scope rather than silently broadening the exception.
+[ ! -e "$RUNTIME_DIR/package-lock.json" ] || fail "source lockfile would freeze Pi/plugin resolution"
 bash -n "$BUMP_SCRIPT" || fail "agent bump script does not parse"
-sed '$d' "$BUMP_SCRIPT" >"$WORK_DIR/bump-lib.sh"
-cp "$PACKAGE_LOCK" "$WORK_DIR/package-lock.json"
-node - "$WORK_DIR/package-lock.json" <<'NODE'
-const fs = require('node:fs');
-const file = process.argv[2];
-const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
-const entry = lock.packages['node_modules/pi-wechat-assistant'];
-entry.peerDependencies['@mariozechner/pi-coding-agent'] = '*';
-entry.peerDependenciesMeta['@mariozechner/pi-coding-agent'] = { optional: true };
-fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
-NODE
-(
-  # shellcheck disable=SC1090
-  source "$WORK_DIR/bump-lib.sh"
-  PACKAGE_LOCK="$WORK_DIR/package-lock.json"
-  sanitize_legacy_pi_optional_peer
-) || fail "bump helper rejected its one documented optional legacy peer"
-node - "$WORK_DIR/package-lock.json" <<'NODE' || fail "bump helper did not remove the optional legacy Pi peer"
-const lock = require(process.argv[2]);
-if (/@mariozechner\/pi-(?:coding-agent|ai|tui)/.test(JSON.stringify(lock))) process.exit(1);
-NODE
-node - "$WORK_DIR/package-lock.json" <<'NODE'
-const fs = require('node:fs');
-const file = process.argv[2];
-const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
-const entry = lock.packages['node_modules/pi-wechat-assistant'];
-entry.peerDependencies['@mariozechner/pi-ai'] = '*';
-entry.peerDependenciesMeta['@mariozechner/pi-ai'] = { optional: true };
-fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
-NODE
-if (
-  source "$WORK_DIR/bump-lib.sh"
-  PACKAGE_LOCK="$WORK_DIR/package-lock.json"
-  sanitize_legacy_pi_optional_peer
-) >/dev/null 2>&1; then
-  fail "bump helper accepted an undocumented legacy Pi peer"
-fi
 
 node - "$VENDOR_DIR/package.json" "$PROVENANCE" <<'NODE' || fail "vendor metadata is invalid"
 const fs = require("node:fs");

@@ -33,7 +33,7 @@ hotwa/OpenWRT-CI 不仅是一个 OpenWrt CI 构建脚本库，更是一个定位
 
 1. **AI CLI Agent 矩阵**：
    - Node.js 24 LTS (musl static) 构建期秒级预装；
-   - `@earendil-works/pi-coding-agent` CLI + `@aaronkyriesenbach/pi-package-manager` + `btw-pi` + `pi-plan-mode` + `pi-web-search` + `pi-wechat-assistant`；
+   - `@earendil-works/pi-coding-agent` CLI + `pi-package-manager` + `btw-pi` + `pi-plan-mode` + `pi-web-search` + `pi-commandcode-provider` + `pi-mcp-adapter` + `pi-subagents` + `@capdiem/pi-todo` + `@zephyrdeng/pi-review` + `@luxusai/pi-hindsight` + `pi-interactive-shell` + `@narumitw/pi-statusline` + `pi-wechat-assistant`；
    - `command-code` CLI（`cmdc`）；
    - `/etc/profile.d/30-agent-update-check.sh`（SSH 登录 24h 缓存状态看板）。
 2. **Tailscale / Headscale 网关默认就绪**：

@@ -1,17 +1,20 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# Resolve the newest app-layer agent runtime releases, apply them to the locked
-# manifest, and prove the result still installs for the firmware's target CPUs.
+# Resolve the newest source-controlled app-layer inputs.  Pi and its extension
+# catalog deliberately remain latest-at-build: fetch_node_runtime.sh resolves,
+# aligns and imports them in the candidate generation itself.
 #
 # Policy owner: docs/agent-runtime-version-policy.md
-#   App layer (this script): CommandCode, Pi, Pi extensions, pnpm and Multica
-#     - allowed to follow upstream latest.
+#   App layer: Pi, CommandCode and extensions resolve latest during every
+#     generation build; this script updates Multica and the reviewed vendored
+#     plan extension.
 #   Runtime base (never touched here): Node.js, the OpenWrt source commit and
 #     the kernel. Those stay exact-pinned.
 #
 # Modes:
 #   plan    print current vs latest, change nothing
-#   apply   rewrite the manifest, lock and Multica pin, then run every gate
+#   apply            rewrite source-controlled inputs, then run repository guards
+#   advance-release  advance only the immutable signed-generation sequence
 #
 # apply never rolls anything back: on a failed gate it exits non-zero and leaves
 # the edits in place, so the caller decides what to do with them.
@@ -21,7 +24,6 @@ set -euo pipefail
 ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PACKAGE_JSON="$MANIFEST_DIR/package.json"
-PACKAGE_LOCK="${AGENT_RUNTIME_PACKAGE_LOCK:-$MANIFEST_DIR/package-lock.json}"
 RUNTIME_RELEASE_FILE="${AGENT_RUNTIME_RELEASE_FILE:-$MANIFEST_DIR/runtime-release}"
 PI_PLAN_VENDOR_SCRIPT="$ROOT_DIR/Scripts/refresh_pi_plan_mode_vendor.sh"
 PI_PLAN_PROVENANCE="$MANIFEST_DIR/vendor/pi-plan-mode/provenance.json"
@@ -64,43 +66,6 @@ github_api() {
 	[ -z "${GITHUB_TOKEN:-}" ] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
 	curl -fsSL --retry 4 --retry-delay 5 --max-time 60 \
 		-H "Accept: application/vnd.github+json" "${auth[@]}" "$url"
-}
-
-manifest_packages() {
-	node -e 'console.log(Object.keys(require(process.argv[1]).dependencies).join("\n"))' \
-		"$PACKAGE_JSON"
-}
-
-manifest_version() {
-	node -e '
-		const deps = require(process.argv[1]).dependencies;
-		const value = deps[process.argv[2]];
-		if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(value || "")) process.exit(3);
-		process.stdout.write(value);
-	' "$PACKAGE_JSON" "$1" 2>/dev/null || return 1
-}
-
-set_manifest_version() {
-	node -e '
-		const fs = require("node:fs");
-		const [path, name, version] = process.argv.slice(1);
-		const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-		if (!(name in pkg.dependencies)) process.exit(4);
-		pkg.dependencies[name] = version;
-		fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
-	' "$PACKAGE_JSON" "$1" "$2"
-}
-
-latest_npm_version() {
-	local name="$1"
-	local version
-
-	version="$(npm view "$name" version 2>/dev/null | tail -n1 | tr -d '[:space:]')"
-	[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-		printf 'ERROR: [agent-bump] no usable latest for %s\n' "$name" >&2
-		return 1
-	}
-	printf '%s\n' "$version"
 }
 
 multica_current_version() {
@@ -158,18 +123,7 @@ set_multica_version() {
 
 # Emits "name<TAB>current<TAB>latest" for everything that has moved.
 resolve_plan() {
-	local name current latest lines="" vendor_current vendor_latest vendor_current_version vendor_current_integrity vendor_latest_version vendor_latest_integrity
-
-	while IFS= read -r name; do
-		[ -n "$name" ] || continue
-		current="$(manifest_version "$name")" ||
-			die "$name is not pinned to an exact version in $PACKAGE_JSON"
-		latest="$(latest_npm_version "$name")" ||
-			die "refusing to continue with an unresolved latest for $name"
-		[ "$current" = "$latest" ] ||
-			lines="${lines}${name}	${current}	${latest}
-"
-	done < <(manifest_packages)
+	local current latest lines="" vendor_current vendor_latest vendor_current_version vendor_current_integrity vendor_latest_version vendor_latest_integrity
 
 	current="$(multica_current_version)"
 	[ -n "$current" ] || die "unable to read MULTICA_VERSION from $MULTICA_SCRIPT"
@@ -205,100 +159,8 @@ apply_plan() {
 			log_info "vendored pi-plan-mode ${current} -> ${latest}"
 			continue
 		fi
-		set_manifest_version "$name" "$latest"
-		[ "$(manifest_version "$name")" = "$latest" ] ||
-			die "failed to record ${name}@${latest} in $PACKAGE_JSON"
-		log_info "${name} ${current} -> ${latest}"
+		die "unexpected source-controlled runtime component: $name"
 	done <<<"$plan"
-
-	log_info "Re-resolving the locked agent runtime..."
-	# pi-wechat-assistant advertises an obsolete optional Pi peer alongside the
-	# maintained scope.  Never let npm synthesize that legacy tree while
-	# re-resolving this lock; the supported peer is already explicitly pinned.
-	npm install --package-lock-only --legacy-peer-deps --no-audit --no-fund --silent \
-		--prefix "$MANIFEST_DIR" >/dev/null
-	[ -s "$PACKAGE_LOCK" ] || die "$PACKAGE_LOCK is empty after re-resolution"
-	sanitize_legacy_pi_optional_peer
-}
-
-# pi-wechat-assistant publishes two *optional* peers: the maintained
-# @earendil-works scope and the obsolete @mariozechner scope.  npm records
-# both in package-lock even though the latter is not installed.  Keep the
-# lock free of the retired scope without weakening peer resolution generally:
-# refuse any occurrence except that exact optional metadata, then remove it.
-sanitize_legacy_pi_optional_peer() {
-	node - "$PACKAGE_LOCK" <<'NODE'
-const fs = require('node:fs');
-const file = process.argv[2];
-const legacyNames = new Set([
-  '@mariozechner/pi-coding-agent',
-  '@mariozechner/pi-ai',
-  '@mariozechner/pi-tui',
-]);
-const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
-const packages = lock.packages;
-if (!packages || typeof packages !== 'object') throw new Error('package-lock has no packages map');
-const containsLegacyPiScope = value => {
-  if (typeof value === 'string') return [...legacyNames].some(name => value.includes(name));
-  if (!value || typeof value !== 'object') return false;
-  return Object.entries(value).some(([key, item]) =>
-    [...legacyNames].some(name => key.includes(name)) || containsLegacyPiScope(item));
-};
-for (const [name, entry] of Object.entries(packages)) {
-  if (name === 'node_modules/pi-wechat-assistant') continue;
-  if (containsLegacyPiScope(name) || containsLegacyPiScope(entry)) {
-    throw new Error(`legacy Pi scope appeared outside pi-wechat-assistant optional peer metadata: ${name}`);
-  }
-}
-const wechat = packages['node_modules/pi-wechat-assistant'];
-if (!wechat || typeof wechat !== 'object') throw new Error('missing pi-wechat-assistant lock entry');
-const peer = wechat.peerDependencies || {};
-const peerMeta = wechat.peerDependenciesMeta || {};
-const knownLegacyPeer = '@mariozechner/pi-coding-agent';
-for (const legacy of legacyNames) {
-  if (legacy === knownLegacyPeer) continue;
-  if (legacy in peer || legacy in peerMeta || containsLegacyPiScope(wechat.dependencies?.[legacy]) || containsLegacyPiScope(wechat.optionalDependencies?.[legacy])) {
-    throw new Error(`unsupported legacy Pi scope in pi-wechat-assistant lock metadata: ${legacy}`);
-  }
-}
-if (knownLegacyPeer in peer || knownLegacyPeer in peerMeta) {
-  if (peer[knownLegacyPeer] !== '*' || peerMeta[knownLegacyPeer]?.optional !== true) {
-    throw new Error('legacy Pi scope is not the expected optional pi-wechat-assistant peer');
-  }
-  delete peer[knownLegacyPeer];
-  delete peerMeta[knownLegacyPeer];
-  if (Object.keys(peer).length) wechat.peerDependencies = peer; else delete wechat.peerDependencies;
-  if (Object.keys(peerMeta).length) wechat.peerDependenciesMeta = peerMeta; else delete wechat.peerDependenciesMeta;
-}
-if (containsLegacyPiScope(lock)) throw new Error('failed to remove retired Pi scope from package-lock');
-fs.writeFileSync(file, `${JSON.stringify(lock, null, 2)}\n`);
-NODE
-}
-
-# The same cross-target install WRT-CORE performs. A lock that cannot resolve the
-# musl platform packages for a firmware CPU must never reach main.
-verify_target_cpu() {
-	local cpu="$1"
-	local work_dir
-
-	work_dir="$(new_work_dir)"
-	cp "$PACKAGE_JSON" "$PACKAGE_LOCK" "$work_dir/"
-
-	npm_config_arch="$cpu" npm_config_platform=linux npm_config_libc=musl \
-		npm ci --prefix "$work_dir" --omit=dev --no-audit --no-fund \
-			--legacy-peer-deps --ignore-scripts --os=linux --cpu="$cpu" --libc=musl --silent \
-			>"$work_dir/npm-ci.log" 2>&1 || {
-			tail -n 30 "$work_dir/npm-ci.log" >&2 || true
-			die "npm ci could not install the re-resolved lock for linux-${cpu}-musl"
-		}
-
-	[ -s "$work_dir/node_modules/command-code/dist/index.mjs" ] ||
-		die "linux-${cpu}-musl install is missing CommandCode's entrypoint"
-	for command in pi cmdc command-code commandcode; do
-		[ -e "$work_dir/node_modules/.bin/$command" ] ||
-			die "linux-${cpu}-musl install is missing $command"
-	done
-	log_info "Verified linux-${cpu}-musl install (CommandCode and Pi)."
 }
 
 run_guard_suite() {
@@ -336,13 +198,16 @@ main() {
 	local mode="${1:-plan}" plan
 
 	case "$mode" in
-		plan|apply) ;;
-		*) die "unknown mode: $mode (expected plan or apply)" ;;
+		plan|apply|advance-release) ;;
+		*) die "unknown mode: $mode (expected plan, apply or advance-release)" ;;
 	esac
 
 	require_tools
-	[ -f "$PACKAGE_JSON" ] && [ -f "$PACKAGE_LOCK" ] ||
-		die "locked agent runtime manifest is incomplete"
+	[ -f "$PACKAGE_JSON" ] || die "latest-at-build agent runtime catalog is incomplete"
+	if [ "$mode" = "advance-release" ]; then
+		advance_runtime_release
+		exit 0
+	fi
 	[ -f "$PI_PLAN_VENDOR_SCRIPT" ] && [ -f "$PI_PLAN_PROVENANCE" ] ||
 		die "vendored pi-plan-mode refresh chain is incomplete"
 	[ -f "$MULTICA_SCRIPT" ] || die "Multica runtime fetch script is missing"
@@ -351,10 +216,7 @@ main() {
 	# Validate the upstream archive and the narrowly reviewed PR #9 scope patch
 	# even when its version has not moved; registry substitutions fail closed.
 	bash "$PI_PLAN_VENDOR_SCRIPT" plan
-	if [ -z "$plan" ]; then
-		log_info "already on the newest app-layer releases"
-		return 0
-	fi
+	[ -n "$plan" ] || log_info "Pi/extensions are latest-at-build; no source-controlled component changed"
 
 	while IFS=$'\t' read -r name current latest; do
 		[ -n "$name" ] || continue
@@ -366,12 +228,9 @@ main() {
 			log_info "plan mode: nothing was written"
 			;;
 		apply)
-			apply_plan "$plan"
-			verify_target_cpu arm64
-			verify_target_cpu x64
+			[ -z "$plan" ] || apply_plan "$plan"
 			run_guard_suite
-			advance_runtime_release
-			log_info "applied and verified; ready to commit"
+			log_info "source-controlled inputs verified; candidate generation will resolve Pi/plugins"
 			;;
 	esac
 }

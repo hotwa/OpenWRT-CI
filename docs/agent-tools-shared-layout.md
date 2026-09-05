@@ -37,4 +37,5 @@ Skill 创建单项软链接；已有 Skill、普通 `AGENTS.md` 或 MCP 文件�
 ## 维护基线
 
 当前固件角色卡基线为 `04cc174`（包含 `5cfbcb3` 的 runtime、DNS、bootstrap 与
-自动升级改动）。实际刷入镜像以 `/etc/openwrt-ci/firmware-commit` 为准。
+自动升级改动）；扩展预装清单由后续 runtime manifest 固定，`pi-plan-mode` 仍是
+仓库审查后的 vendored 版本。实际刷入镜像以 `/etc/openwrt-ci/firmware-commit` 为准。

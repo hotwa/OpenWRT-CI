@@ -103,13 +103,13 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
   - **Node.js 24 LTS**（针对 `linux-arm64-musl` / `linux-x64-musl` 的静态构建）；
   - **uv 0.12.7 + 一个固定的 CPython 3.13 musl 镜像**：首次确认 `/data` 真正挂载后离线展开到 `/data/uv/python`，并提供 `python3` 给 Pi 与 Multica 角色；不会在启动后联网下载解释器，也不会污染根分区或 `/opt`；
   - **`pnpm` / `npm` / `npx` / `corepack`** 全局包管理；
-  - **Pi Coding Agent**（`@earendil-works/pi-coding-agent`）及 `@aaronkyriesenbach/pi-package-manager`、`btw-pi`、`pi-plan-mode`、`pi-web-search`、`pi-wechat-assistant` 扩展；
+  - **Pi Coding Agent**（`@earendil-works/pi-coding-agent`）及 `pi-package-manager`、`btw-pi`、`pi-plan-mode`、`pi-web-search`、`pi-commandcode-provider`、`pi-mcp-adapter`、`pi-subagents`、`@capdiem/pi-todo`、`@zephyrdeng/pi-review`、`@luxusai/pi-hindsight`、`pi-interactive-shell`、`@narumitw/pi-statusline`、`pi-wechat-assistant` 扩展；`pi-plan-mode` 使用仓库审查后的 vendored 版本；
   - **CommandCode CLI**（`command-code`，命令为 `cmdc`）；认证状态仅在设备首次登录后保存在 `/data/commandcode`，不写入固件镜像；
 - **环境直通与 SSH 智能提醒**：
   - `/etc/profile.d/20-node-agent.sh` 与 `21-uv-python.sh` 优先解析 Runtime Manager 选定的 generation；`/data/node` 仅是指向该 generation 的兼容链接，不是可写 npm/pnpm 前缀；
   - `/etc/profile.d/30-agent-update-check.sh` 在 SSH 登录时非阻塞展示 Agent 状态，并引导使用 `agent-runtime upgrade`、verify 或 rollback；设备不执行 `npm install @latest`、`pnpm update` 或 CLI 自更新。
 
-应用层 pin 由 `Agent-Runtime-Bump.yml` 在每小时 UTC 第 0 分钟检查。只有 arm64/x64 musl 完整 generation 均通过 CI probe、仓库守卫、签名及发布后，新的 pin 才会进入 `main`；设备下载并验签完整 generation 后原子切换。这个流程不是任何型号的真机门禁：固件推广仍须完成相应设备的独立刷写、启动、网络与回退验证。详见 `docs/agent-runtime-version-policy.md` 与 `docs/agent-runtime-release.md`。
+应用层 pin 由 `Agent-Runtime-Bump.yml` 在每小时 UTC 第 0 分钟检查。只有 arm64/x64 musl 完整 generation 均通过 CI probe、仓库守卫、签名及发布后，新的 pin 才会进入 `main`；设备下载并验签完整 generation 后原子切换。这个流程不是任何型号的真机门禁：固件推广仍须完成相应设备的独立刷写、启动、网络与回退验证。详见 `docs/agent-runtime-version-policy.md`、`docs/agent-runtime-release.md` 与 `docs/pi-extension-preload-policy.md`。
 
 所有本仓库构建的 OpenWrt 镜像还注入统一的 `/data` 运行时：验证独立挂载后才使用持久缓存，空间不足时进入受限 fallback/emergency 模式；zram 固定为 256 MiB，不启用 eMMC swap。它同时提供只读 GPT/数据盘诊断、动态角色卡状态和默认关闭的 rclone 三快照备份能力。分区、格式化和未知挂载不会在普通启动时自动执行，完整边界见 `docs/data-runtime.md`。
 

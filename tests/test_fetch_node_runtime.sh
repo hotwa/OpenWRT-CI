@@ -6,18 +6,23 @@ WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
-LOCKFILE="$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json"
+PEER_RESOLVER="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
+EXTENSION_VERIFIER="$ROOT_DIR/Scripts/verify_pi_extensions.js"
 MODELS="$ROOT_DIR/files/etc/pi/agent/models.json"
 SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
 PROFILE_NODE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
 PROFILE_UPDATE="$ROOT_DIR/files/etc/profile.d/30-agent-update-check.sh"
 
 fail() { echo "node runtime guard: $*" >&2; exit 1; }
-for path in "$WORKFLOW" "$FETCH_SCRIPT" "$UV_FETCH" "$MANIFEST" "$LOCKFILE" "$MODELS" "$SETTINGS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
+for path in "$WORKFLOW" "$FETCH_SCRIPT" "$UV_FETCH" "$MANIFEST" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" "$MODELS" "$SETTINGS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$FETCH_SCRIPT"
 bash -n "$UV_FETCH"
+node --check "$PEER_RESOLVER"
+node --check "$EXTENSION_VERIFIER"
+[ ! -e "$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json" ] ||
+  fail "source catalog lockfile would freeze latest-at-build plugin resolution"
 
 grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh' "$WORKFLOW" || fail "WRT-CORE does not build the Node runtime"
 grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh' "$WORKFLOW" || fail "WRT-CORE does not build Multica"
@@ -25,7 +30,7 @@ grep -Fq '$GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh' "$WORKFLOW" || fail "WR
 grep -Fq 'PYTHON_SERIES="3.13"' "$UV_FETCH" || fail "uv runtime must carry exactly Python 3.13"
 grep -Fq 'UV_OFFLINE=1' "$ROOT_DIR/files/usr/sbin/uv-runtime-provision" || fail "Python provisioning must remain offline"
 
-for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
+for term in 'linux-arm64-musl' 'linux-x64-musl' \
   'prune_foreign_platform_builds' 'verify_agent_runtime_arch' \
   'install_vendored_pi_extensions' 'install_pi_search_tools' \
   'PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"' \
@@ -33,10 +38,11 @@ for term in 'linux-arm64-musl' 'linux-x64-musl' 'npm ci' '--ignore-scripts' \
   'cmdc' 'command-code' 'commandcode'; do
   grep -Fq -- "$term" "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh omits $term"
 done
-# The bump helper re-resolves the lock with --legacy-peer-deps; the firmware
-# cross-install must use the same flag or npm 11 strict peer resolution rejects
-# the resulting lock with EUSAGE ("Missing ... from lock file").
-grep -Fq -- '--legacy-peer-deps' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh must install with --legacy-peer-deps"
+grep -Fq -- 'ensure_pi_extension_peers.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not align Pi peers"
+grep -Fq -- 'verify_pi_extensions.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not load-check Pi extensions"
+for term in '--ignore-scripts' '--legacy-peer-deps' 'PI EXTENSION DEPENDENCY TREE OK' 'PI EXTENSIONS OK'; do
+  grep -Fq -- "$term" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" || fail "Pi extension build gate omits $term"
+done
 # configure_pi_extensions must register every preinstalled package in Pi's
 # settings so pi actually loads them (not just installs them under /opt/node).
 grep -Fq '"pi-commandcode-provider"' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not register pi-commandcode-provider in settings"
@@ -51,11 +57,28 @@ for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
-for pkg in 'command-code' '@earendil-works/pi-coding-agent' '@aaronkyriesenbach/pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' 'pi-commandcode-provider' 'pnpm'; do
+for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
+node - "$MANIFEST" <<'NODE' || fail "Pi extension catalog is not latest-at-build"
+const fs = require('node:fs');
+const [manifestPath] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+for (const [name, selector] of Object.entries(manifest.dependencies || {})) {
+  if (selector !== 'latest') process.exit(1);
+}
+if (!Array.isArray(manifest.openwrtPiExtensions) || manifest.openwrtPiExtensions.length === 0) process.exit(2);
+NODE
+if grep -Fq '@aaronkyriesenbach/pi-package-manager' "$MANIFEST"; then
+  fail "the legacy scoped package manager must not be preloaded alongside pi-package-manager"
+fi
+for forbidden in 'pi-web-access' 'pi-mcp-extension' 'pi-code' '@narumitw/pi-subagents' '@henryqw/pi-subagent'; do
+  if grep -Fq "$forbidden" "$MANIFEST"; then
+    fail "excluded Pi extension remains preloaded: $forbidden"
+  fi
+done
 for retired in 'opencode-ai' 'hermes-agent' '@tarquinen/opencode-dcp' '@mohak34/opencode-notifier' 'opencode-conductor-plugin'; do
-  if grep -Fq "$retired" "$MANIFEST" || grep -Fq "node_modules/$retired" "$LOCKFILE"; then
+  if grep -Fq "$retired" "$MANIFEST"; then
     fail "retired runtime package remains: $retired"
   fi
 done

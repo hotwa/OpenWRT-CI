@@ -10,6 +10,7 @@ TARGET_FILES="${1:-$ROOT_DIR/wrt/files}"
 BASELINE="$TARGET_FILES/opt/agent-runtime"
 NODE="$TARGET_FILES/opt/node/bin/node"
 NODE_VERSION_FILE="$TARGET_FILES/etc/agent-runtime/node-version"
+NODE_RESOLVED="$TARGET_FILES/opt/node/agent-runtime-resolved.json"
 UV_ROOT="$TARGET_FILES/opt/uv"
 UV="$UV_ROOT/uv"
 UV_MIRROR_MANIFEST="$UV_ROOT/python-mirror/manifest.txt"
@@ -21,6 +22,7 @@ die() { printf 'ERROR: [agent-runtime baseline] %s\n' "$*" >&2; exit 1; }
 [[ "$RUNTIME_RELEASE" =~ ^[1-9][0-9]*$ ]] || die "runtime release must be a positive integer"
 [ -x "$NODE" ] || die "missing staged Node runtime"
 [ -s "$NODE_VERSION_FILE" ] || die "missing selected Node version contract"
+[ -s "$NODE_RESOLVED" ] || die "missing resolved Pi extension metadata"
 [ -x "$UV" ] || die "missing staged uv runtime"
 [ -s "$UV_MIRROR_MANIFEST" ] || die "missing staged Python mirror manifest"
 [ -x "$MULTICA" ] || die "missing staged Multica runtime"
@@ -44,14 +46,15 @@ ln -sfn ../uv "$BASELINE/uv"
 ln -sfn /usr/local/bin/multica "$BASELINE/bin/multica"
 
 ROOT_DIR="$ROOT_DIR" TARGET_FILES="$TARGET_FILES" BASELINE="$BASELINE" \
-  NODE="$NODE" NODE_VERSION_FILE="$NODE_VERSION_FILE" UV="$UV" UV_MIRROR_MANIFEST="$UV_MIRROR_MANIFEST" MULTICA="$MULTICA" MANIFEST="$MANIFEST" \
+  NODE="$NODE" NODE_VERSION_FILE="$NODE_VERSION_FILE" NODE_RESOLVED="$NODE_RESOLVED" UV="$UV" UV_MIRROR_MANIFEST="$UV_MIRROR_MANIFEST" MULTICA="$MULTICA" MANIFEST="$MANIFEST" \
   RUNTIME_RELEASE="$RUNTIME_RELEASE" ARCH="$ARCH" NODE_ABI="$NODE_ABI" node <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const e = process.env;
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-const deps = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/package.json'))).dependencies;
+const resolved = JSON.parse(fs.readFileSync(e.NODE_RESOLVED, 'utf8'));
+const deps = resolved.components;
 const pi = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json')));
 const nodeVersion = fs.readFileSync(e.NODE_VERSION_FILE, 'utf8').trim();
 const multicaScript = fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/fetch_multica_runtime.sh'), 'utf8');
@@ -60,7 +63,7 @@ const uvScript = fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/fetch_uv_runtime
 const uv = uvScript.match(/^UV_VERSION="([0-9.]+)"/m)?.[1];
 const pythonVersion = uvScript.match(/^PYTHON_VERSION="([0-9.]+)"/m)?.[1];
 const pythonReleaseTag = uvScript.match(/^PYTHON_RELEASE_TAG="([0-9]+)"/m)?.[1];
-if (!nodeVersion || !multica || !uv || !pythonVersion || !pythonReleaseTag || !['arm64', 'x64'].includes(e.ARCH) || !Number.isSafeInteger(Number(e.NODE_ABI))) throw new Error('invalid baseline component metadata');
+if (!nodeVersion || !multica || !uv || !pythonVersion || !pythonReleaseTag || !deps || typeof deps !== 'object' || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(resolved.pi_version || '') || !['arm64', 'x64'].includes(e.ARCH) || !Number.isSafeInteger(Number(e.NODE_ABI))) throw new Error('invalid baseline component metadata');
 const manifest = {
   schema_version: 1,
   runtime_release: Number(e.RUNTIME_RELEASE),

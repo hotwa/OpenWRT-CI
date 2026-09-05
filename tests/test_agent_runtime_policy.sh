@@ -11,12 +11,14 @@ MULTICA_FETCH="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
 UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 CORE_WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 PACKAGE_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
+PEER_RESOLVER="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
+EXTENSION_VERIFIER="$ROOT_DIR/Scripts/verify_pi_extensions.js"
 RUNTIME_RELEASE_FILE="$ROOT_DIR/Scripts/node-agent-runtime/runtime-release"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$WORK_DIR"' EXIT
 
 fail() { echo "agent runtime policy: $*" >&2; exit 1; }
-for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH" "$MULTICA_FETCH" "$UV_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON" "$RUNTIME_RELEASE_FILE"; do
+for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH" "$MULTICA_FETCH" "$UV_FETCH" "$CORE_WORKFLOW" "$PACKAGE_JSON" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" "$RUNTIME_RELEASE_FILE"; do
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$BUMP_SCRIPT"
@@ -40,8 +42,11 @@ MULTICA_LINE="$(grep -n 'Scripts/fetch_multica_runtime.sh' "$CORE_WORKFLOW" | he
 [ -n "$UV_LINE" ] && [ -n "$NODE_LINE" ] && [ -n "$MULTICA_LINE" ] && [ "$UV_LINE" -lt "$NODE_LINE" ] && [ "$NODE_LINE" -lt "$MULTICA_LINE" ] || fail "WRT-CORE must prepare uv, Node, then Multica"
 
 for command in pi cmdc command-code commandcode; do
-  grep -Fq "$command" "$BUMP_SCRIPT" || fail "cross-target verification omits $command"
+  grep -Fq "$command" "$NODE_FETCH" || fail "runtime staging omits $command"
 done
+grep -Fq 'latest-at-build' "$POLICY_DOC" || fail "policy does not describe latest-at-build Pi/plugin resolution"
+grep -Fq 'verify_pi_extensions.js' "$WORKFLOW" || fail "release workflow does not import-check Pi extensions"
+grep -Fq 'advance-release' "$WORKFLOW" || fail "release workflow does not advance an immutable runtime sequence"
 
 # npm returns a nested `dist` object only when asked for `dist`; asking for
 # `dist.integrity` instead creates a flattened key and makes the bump job fail

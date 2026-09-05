@@ -31,6 +31,9 @@ OpenWRT-CI `GITHUB_SHA` 自动生成；角色卡动态事实区会显示实际�
 - 每日 03:00、无活动任务时才执行的签名 runtime 检查/升级；
 - profile 临时文件清理和 CommandCode 角色卡入口同步。
 
+Pi 扩展的版本清单、RE-CS-02 现场加载验收和 Hindsight/MCP/subagent 运行约束见
+[`docs/pi-extension-preload-policy.md`](pi-extension-preload-policy.md)。
+
 诊断 runtime、DNS 或 bootstrap 异常时，先读取 `/etc/openwrt-ci/firmware-commit`
 和 `/data/multica/openwrt-agent.md`，不要把历史提交、设备型号或分区号当成当前
 事实。

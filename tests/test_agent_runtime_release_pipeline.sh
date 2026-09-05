@@ -20,7 +20,7 @@ for path in "$PACKAGE" "$VERIFY" "$INDEX" "$SIGN" "$FINALIZE"; do
 done
 
 grep -Eq "cron: ['\"]?0 \* \* \* \*['\"]?" "$WORKFLOW" || fail "workflow is not hourly"
-for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests'; do
+for term in 'AGENT_RUNTIME_USIGN_SECRET_KEY' 'files/etc/agent-runtime/usign.pub' 'qemu-user-static' 'cmdc --version' 'Sign index and manifests' 'verify_pi_extensions.js' '@napi-rs/keyring' 'zigpty'; do
   grep -Fq "$term" "$WORKFLOW" || fail "workflow omits $term"
 done
 grep -Fq 'apk add --no-cache libgcc libstdc++' "$WORKFLOW" ||
@@ -30,13 +30,16 @@ if grep -Eqi 'HERMES_TARGET_RUNNER|opencode-dcp' "$WORKFLOW"; then
 fi
 grep -Fq 'uv --version' "$WORKFLOW" || fail "workflow does not probe the pinned uv runtime"
 
-mkdir -p "$WORK/generation/node/bin" "$WORK/generation/uv/python-mirror" "$WORK/generation/bin" "$WORK/generation/vendor"
+mkdir -p "$WORK/generation/node/bin" "$WORK/generation/node/lib/node_modules" "$WORK/generation/uv/python-mirror" "$WORK/generation/bin" "$WORK/generation/vendor"
 cp "$(command -v node)" "$WORK/generation/node/bin/node"
 cp "$(command -v node)" "$WORK/generation/uv/uv"
 printf 'python_series=3.13\n' > "$WORK/generation/uv/python-mirror/manifest.txt"
 printf '#!/bin/sh\necho 0.4.35\n' > "$WORK/generation/bin/multica"
 chmod 755 "$WORK/generation/node/bin/node" "$WORK/generation/bin/multica"
 printf '24.20.0\n' > "$WORK/generation/node-version"
+printf '%s\n' '{"dependencies":{"@earendil-works/pi-coding-agent":"0.85.0","command-code":"1.49.1"},"openwrtPiExtensions":["example-extension"]}' > "$WORK/generation/node/agent-runtime-package.json"
+printf '%s\n' '{"lockfileVersion":3,"packages":{}}' > "$WORK/generation/node/agent-runtime-package-lock.json"
+printf '%s\n' '{"schema_version":1,"pi_version":"0.85.0","extension_packages":{"example-extension":"1.0.0"},"aligned_peers":["@earendil-works/pi-coding-agent"],"components":{"@earendil-works/pi-coding-agent":"0.85.0","command-code":"1.49.1"}}' > "$WORK/generation/node/agent-runtime-resolved.json"
 cp -a "$ROOT_DIR/Scripts/node-agent-runtime/vendor/pi-plan-mode" "$WORK/generation/vendor/pi-plan-mode"
 bash "$PACKAGE" --source "$WORK/generation" --output "$WORK/release" --arch x64 --runtime-release 497 >/dev/null
 MANIFEST="$WORK/release/agent-runtime-497-x64-musl.manifest.json"
@@ -51,6 +54,7 @@ NODE
 
 mkdir -p "$WORK/firmware/files/opt/node/bin" "$WORK/firmware/files/opt/uv/python-mirror" "$WORK/firmware/files/etc/agent-runtime" "$WORK/firmware/files/usr/local/bin"
 cp "$WORK/generation/node/bin/node" "$WORK/firmware/files/opt/node/bin/node"
+cp "$WORK/generation/node/agent-runtime-resolved.json" "$WORK/firmware/files/opt/node/agent-runtime-resolved.json"
 cp "$WORK/generation/uv/uv" "$WORK/firmware/files/opt/uv/uv"
 cp "$WORK/generation/uv/python-mirror/manifest.txt" "$WORK/firmware/files/opt/uv/python-mirror/manifest.txt"
 cp "$WORK/generation/node-version" "$WORK/firmware/files/etc/agent-runtime/node-version"

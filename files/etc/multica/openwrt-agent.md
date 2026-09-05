@@ -32,7 +32,8 @@
 - **存储与远程备份** (`rclone`, `f2fs-tools`, `e2fsprogs`)：支持对接 S3/WebDAV/Cloudflare R2 进行配置备份与还原。
 
 ### (2) AI Agent 协同与执行环境
-- **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装计划模式 (`pi-plan-mode`)、联网搜索 (`pi-web-search`) 与 WeChat 助手 (`pi-wechat-assistant`)。
+- **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装计划模式 (`pi-plan-mode`，仓库审查过的 vendored 版本)、联网搜索 (`pi-web-search`)、CommandCode provider、MCP adapter、受限 subagents、todo/review/hindsight/interactive-shell 以及 WeChat 助手。每次固件构建解析 catalog 中的 latest Pi/扩展，随后把扩展声明的 `@earendil-works/*` peer（含 `pi-tui`）对齐至本次 Pi 版本，并用 Pi 的 Jiti loader 逐一 import；任一失败即中止构建。不要在设备上执行 `npm install` 或 `pi update` 改写不可变 runtime。
+- **Pi 扩展运行约束**：`pi-subagents` 默认最多并发 1–2 个；`pi-interactive-shell` 只在明确需要 SSH/REPL 时使用；`@luxusai/pi-hindsight` 只有配置 `HINDSIGHT_BASE_URL` 与 root-only 的 `HINDSIGHT_API_TOKEN`（或受控 env 引用）后才启用记忆服务；真实 MCP 服务调用仍需按服务单独验证。`btw-pi` 与 `@narumitw/pi-statusline` 都触及 footer，若出现视觉重叠应在 Pi 设置中停用其中一个。
 - **CommandCode** (`cmdc` CLI)：Node.js 终端编码智能体；其登录状态在首次认证后持久化在 `/data/commandcode`。
 - **运行时**：Node.js 24 LTS Musl 静态版与由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13。Agent 应使用 `/data/agent-runtime/current` 所指向的**已签名、不可变 generation**；不得在 `/data/node`、`/opt/node` 或全局 npm/pnpm 前缀内原地升级、安装或修改包。运行时更新只能通过 `/usr/sbin/agent-runtime` 验签后的完整 generation 完成。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
 - **Pi 默认权限**：Pi 是只读诊断/规划助手。默认仅允许采集状态、阅读配置、生成计划及提出命令；任何写配置、重启服务、安装软件、删除文件或网络变更，都必须由用户针对该操作明确确认后才可执行。

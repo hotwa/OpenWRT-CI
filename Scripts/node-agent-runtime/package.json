@@ -2,15 +2,36 @@
   "name": "openwrt-edge-agent-runtime",
   "version": "1.0.0",
   "private": true,
-  "description": "Reproducible dependency manifest for the OpenWrt edge agent runtime",
+  "description": "Latest-at-build package catalog for the OpenWrt edge agent runtime",
   "dependencies": {
-    "@aaronkyriesenbach/pi-package-manager": "0.4.0",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "btw-pi": "0.4.0",
-    "command-code": "1.49.1",
-    "pi-web-search": "1.4.0",
-    "pi-wechat-assistant": "0.3.1",
-    "pnpm": "11.25.0",
-    "pi-commandcode-provider": "0.6.4"
-  }
+    "@capdiem/pi-todo": "latest",
+    "@earendil-works/pi-coding-agent": "latest",
+    "@luxusai/pi-hindsight": "latest",
+    "@narumitw/pi-statusline": "latest",
+    "@zephyrdeng/pi-review": "latest",
+    "btw-pi": "latest",
+    "command-code": "latest",
+    "pi-commandcode-provider": "latest",
+    "pi-interactive-shell": "latest",
+    "pi-mcp-adapter": "latest",
+    "pi-package-manager": "latest",
+    "pi-subagents": "latest",
+    "pi-web-search": "latest",
+    "pi-wechat-assistant": "latest",
+    "pnpm": "latest"
+  },
+  "openwrtPiExtensions": [
+    "pi-package-manager",
+    "btw-pi",
+    "pi-commandcode-provider",
+    "pi-web-search",
+    "pi-wechat-assistant",
+    "pi-mcp-adapter",
+    "pi-subagents",
+    "@capdiem/pi-todo",
+    "@zephyrdeng/pi-review",
+    "@luxusai/pi-hindsight",
+    "pi-interactive-shell",
+    "@narumitw/pi-statusline"
+  ]
 }

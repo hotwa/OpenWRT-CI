@@ -13,7 +13,7 @@ pin，以及设备如何只接受完整、已签名的运行时 generation。
 | | 应用层（float） | 运行时底座（pin） |
 | :--- | :--- | :--- |
 | 内容 | agent CLI、CLI 插件、包管理器、Multica | Node.js、uv、CPython 3.13、OpenWrt 源码、内核 |
-| 版本策略 | 自动化解析 latest，但写入精确 lock/pin | 精确版本 + 校验和，只有人工改 |
+| 版本策略 | 每次候选构建解析 latest；在 generation 内写入精确 lock 与组件清单 | 精确版本 + 校验和，只有人工改 |
 | 交付方式 | 每小时 UTC 第 0 分钟构建、探测并发布一对已签名的不可变 generation | 随固件人工提交；改动须说明体积与启动影响 |
 | 设备行为 | 仅经 `agent-runtime` 下载、验签、健康检查并原子切换完整 generation | `/opt` 中的固件基线是只读回退源 |
 
@@ -27,12 +27,13 @@ commit 或内核变化会改变 ELF、musl 或固件体积契约。
 
 | 组件 | pin 位置 |
 | :--- | :--- |
-| `command-code`、`@earendil-works/pi-coding-agent`、`pnpm` 及 Pi 扩展 | `Scripts/node-agent-runtime/package.json` + `package-lock.json` |
+| `command-code`、`@earendil-works/pi-coding-agent`、`pnpm` 及 Pi 扩展 | `Scripts/node-agent-runtime/package.json` 的 latest catalog；候选 generation 内的 `node/agent-runtime-package-lock.json` 与 `node/agent-runtime-resolved.json` |
 | Multica CLI/daemon | `Scripts/fetch_multica_runtime.sh` 的 `MULTICA_VERSION` |
 | 受审查的 `pi-plan-mode` | `Scripts/node-agent-runtime/vendor/pi-plan-mode/` |
 
-`Scripts/bump_agent_runtime.sh` 是浮动层的唯一升级入口：`plan` 只报告，
-`apply` 才重写 lock/pin，并交叉安装 arm64/x64 musl，再运行仓库守卫。
+`Scripts/bump_agent_runtime.sh` 只处理 Multica 与受审查 vendored extension 的
+source-controlled 更新；Pi 与 npm 扩展采用 **latest-at-build**，由每次候选构建的
+`ensure_pi_extension_peers.js`/`verify_pi_extensions.js` 解析、对齐并导入。
 它绝不写入底座 pin。设备上的 Runtime Manager 不运行 `npm install`、
 `pnpm update` 或任意 CLI 的自更新。
 
@@ -47,13 +48,15 @@ commit 或内核变化会改变 ELF、musl 或固件体积契约。
 
 ## 联动闸门
 
-1. **升级与发布期**：`bump_agent_runtime.sh apply` 对 arm64 与 x64 做真实
-   `npm ci --os=linux --cpu=<cpu> --libc=musl`。CI 构建完整 generation，探测
-   CommandCode、Pi 与 Multica；随后运行守卫、签名并发布。
+1. **升级与发布期**：每个 arm64/x64 候选 generation 都先从 latest catalog 安装
+   Pi 与扩展、写出本次精确 lock，再将所有 `@earendil-works/*` peer 对齐到实际 Pi
+   版本，并通过 Pi 的 Jiti loader 逐个导入扩展。CI 还探测 CommandCode、Pi、
+   Multica 与原生模块；任一失败均不签名、不发布。
 2. **固件构建期**：`fetch_uv_runtime.sh` 先交付经 SHA256 校验的 uv 与一个
    CPython 3.13 musl `install_only` 镜像，`fetch_node_runtime.sh` 使用
-   `npm ci --ignore-scripts` 交付 Node.js、Pi、CommandCode、Pi 扩展；随后
-   交付 Multica。`WRT-CORE.yml` 保持 uv → node → multica 的顺序。
+   `npm install --ignore-scripts` 解析 Pi/CommandCode/扩展的 latest catalog，完成
+   peer 对齐与 Jiti import 后才交付 Node runtime；随后交付 Multica。
+   `WRT-CORE.yml` 保持 uv → node → multica 的顺序。
 3. **设备升级期**：`agent-runtime` 仅从固定 release URL 取得签名 index、
    manifest 与 bundle；验证签名、架构/musl/Node ABI、哈希、空间和健康后，
    才原子切换 `current`。失败 generation 不会成为活动版本。
@@ -100,7 +103,8 @@ Pi 与 CommandCode 共用角色卡：`/data/pi/agent/APPEND_SYSTEM.md` 和
 
 ## “每次编译都是最新版吗？”
 
-不是。固件构建按已提交 `package-lock.json` 和底座 pin 复现；它不会从 registry
-取得 `@latest`。自动任务每小时检查一次上游，但只有完整双架构 generation
-已验证、签名和发布后，新的应用层 pin 才会进入 `main`。手动 dispatch 可用
-`dry_run` 仅查看报告，或用 `force_release` 重建当前已验证输入的签名通道。
+不是。底座仍按已提交的 Node/uv/OpenWrt pin 复现；但 Pi、CommandCode 与允许的
+Pi 扩展在每次候选固件/运行时构建时从 registry 解析 latest。构建会把实际版本、
+peer 对齐结果和 lock 一起写入 generation 并做双架构 Jiti import 验收；失败不会进入
+固件或已签名通道。手动 dispatch 可用 `dry_run` 仅查看 source-controlled 更新，或用
+`force_release` 重建并验证当前 latest catalog 的签名通道。

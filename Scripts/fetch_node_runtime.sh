@@ -14,6 +14,8 @@ NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"
+PI_EXTENSION_PEER_SCRIPT="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
+PI_EXTENSION_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extensions.js"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PI_PLAN_MODE_VENDOR_DIR="$AGENT_RUNTIME_MANIFEST_DIR/vendor/pi-plan-mode"
 
@@ -270,14 +272,15 @@ preinstall_cli_agents_and_extensions() (
 	local node_arch="$1"
 	local npm_arch staging_dir bin
 
-	log_info "Installing CommandCode, Pi CLI and extensions from package-lock.json..."
+	log_info "Resolving latest CommandCode, Pi CLI and extensions, then aligning Pi peers..."
 	command -v npm >/dev/null 2>&1 || {
-		echo "ERROR: host npm is required for the locked agent runtime install" >&2
+		echo "ERROR: host npm is required for latest-at-build agent runtime resolution" >&2
 		return 1
 	}
 	[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package.json" ] && \
-		[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package-lock.json" ] || {
-		echo "ERROR: locked agent runtime manifest is incomplete" >&2
+		[ -f "$PI_EXTENSION_PEER_SCRIPT" ] && \
+		[ -f "$PI_EXTENSION_VERIFY_SCRIPT" ] || {
+		echo "ERROR: latest-at-build Pi extension resolver is incomplete" >&2
 		return 1
 	}
 
@@ -292,18 +295,20 @@ preinstall_cli_agents_and_extensions() (
 
 	staging_dir="$(mktemp -d)"
 	trap 'rm -rf "$staging_dir"' EXIT
-	cp "$AGENT_RUNTIME_MANIFEST_DIR/package.json" "$AGENT_RUNTIME_MANIFEST_DIR/package-lock.json" "$staging_dir/"
-	npm_config_arch="$npm_arch" \
-	npm_config_platform="linux" \
-	npm_config_libc="musl" \
-		npm ci --prefix "$staging_dir" --omit=dev --no-audit --no-fund \
-			--legacy-peer-deps --ignore-scripts --os=linux --cpu="$npm_arch" --libc=musl
+	cp "$AGENT_RUNTIME_MANIFEST_DIR/package.json" "$staging_dir/"
+	node "$PI_EXTENSION_PEER_SCRIPT" --directory "$staging_dir" \
+		--os linux --cpu "$npm_arch" --libc musl
+	node "$PI_EXTENSION_VERIFY_SCRIPT" --directory "$staging_dir" \
+		--vendor-extension "$PI_PLAN_MODE_VENDOR_DIR/plan-mode.ts"
 
 	[ -d "$staging_dir/node_modules" ] || {
-		echo "ERROR: npm ci completed without producing node_modules" >&2
+		echo "ERROR: npm install completed without producing node_modules" >&2
 		return 1
 	}
 	cp -a "$staging_dir/node_modules/." "$NODE_LIB_DIR/"
+	cp "$staging_dir/package.json" "$NODE_ROOT_DIR/agent-runtime-package.json"
+	cp "$staging_dir/package-lock.json" "$NODE_ROOT_DIR/agent-runtime-package-lock.json"
+	cp "$staging_dir/openwrt-agent-runtime-resolved.json" "$NODE_ROOT_DIR/agent-runtime-resolved.json"
 
 	prune_foreign_platform_builds "$npm_arch"
 	verify_agent_runtime_arch "$npm_arch"
@@ -502,11 +507,18 @@ configure_pi_extensions() {
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask",
   "packages": [
-    "@aaronkyriesenbach/pi-package-manager",
+    "pi-package-manager",
     "btw-pi",
     "pi-commandcode-provider",
     "pi-web-search",
-    "pi-wechat-assistant"
+    "pi-wechat-assistant",
+    "pi-mcp-adapter",
+    "pi-subagents",
+    "@capdiem/pi-todo",
+    "@zephyrdeng/pi-review",
+    "@luxusai/pi-hindsight",
+    "pi-interactive-shell",
+    "@narumitw/pi-statusline"
   ],
   "extensions": [
     "/tmp/agent-runtime-pi-plan-mode.ts"
