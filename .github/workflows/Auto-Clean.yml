@@ -17,6 +17,11 @@ jobs:
   auto_clean:
     runs-on: ubuntu-22.04
     steps:
+      - name: Delete all Actions caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache delete --all
+
       - name: Delete completed failed workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
