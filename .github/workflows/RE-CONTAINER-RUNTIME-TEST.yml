@@ -1,8 +1,8 @@
-name: Container Runtime Test (RE-CS-02 / RE-CS-07)
+name: Container Runtime Test (RE-SS-01 / RE-CS-02 / RE-CS-07)
 
-# One experimental entry point for both supported container boards. The
-# ordinary RE-Mesh and RE-CS-07 build workflows remain unchanged, and RE-SS-01
-# is intentionally excluded from this workflow.
+# One experimental entry point for all three supported container boards. The
+# ordinary RE-Mesh and RE-CS-07 build workflows remain unchanged; this keeps
+# the container runtime opt-in while sharing one tested bridge+nft overlay.
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - all
+          - re-ss-01
           - re-cs-02
           - re-cs-07
         default: all
@@ -28,6 +29,10 @@ on:
         description: 'RE-CS-07 LAN IP'
         required: false
         default: '192.168.10.1'
+      SS01_LAN_IP:
+        description: 'RE-SS-01 LAN IP'
+        required: false
+        default: '192.168.12.1'
       CONTAINER_RUNTIME_MODE:
         description: 'Runtime source: latest prebuilt bundle, fallback, or OpenWrt package build'
         required: false
@@ -47,6 +52,39 @@ permissions:
   contents: write
 
 jobs:
+  re-ss-01:
+    if: inputs.TARGET == 'all' || inputs.TARGET == 're-ss-01'
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets: inherit
+    with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      WRT_CONFIG: IPQ60XX-RE-SS-01
+      WRT_THEME: argon
+      WRT_NAME: RE-SS-01-CONTAINER
+      WRT_SSID: RE-SS-01
+      WRT_IP: ${{ inputs.SS01_LAN_IP || '192.168.12.1' }}
+      WRT_PW: 无
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_BUILD_ONLY: true
+      WRT_SPLIT_DEVICE_ARTIFACTS: false
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
+      WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRT_CONTAINER_RUNTIME_TEST: true
+      WRT_CONTAINER_RUNTIME_MODE: ${{ inputs.CONTAINER_RUNTIME_MODE || 'prebuilt' }}
+      WRT_CONTAINER_RUNTIME_VERSION: ${{ inputs.CONTAINER_RUNTIME_VERSION }}
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
+      WRTBAK_DEVICE_ALIAS: home-re-ss-01
+      WRTBAK_PROXY_PROFILE: auto
+      CI_NAME: RE-SS-01-CONTAINER-TEST
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360
+
   re-cs-02:
     if: inputs.TARGET == 'all' || inputs.TARGET == 're-cs-02'
     uses: ./.github/workflows/WRT-CORE.yml

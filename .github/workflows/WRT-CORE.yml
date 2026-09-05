@@ -549,9 +549,9 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
           if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
             case "${WRT_EXPECTED_DEVICE:-}" in
-              jdcloud_re-cs-02|jdcloud_re-cs-07) ;;
+              jdcloud_re-ss-01|jdcloud_re-cs-02|jdcloud_re-cs-07) ;;
               *)
-                echo "ERROR: container runtime is allowed only for jdcloud_re-cs-02 and jdcloud_re-cs-07" >&2
+                echo "ERROR: container runtime is allowed only for jdcloud_re-ss-01, jdcloud_re-cs-02, and jdcloud_re-cs-07" >&2
                 exit 1
                 ;;
             esac

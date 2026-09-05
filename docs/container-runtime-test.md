@@ -1,10 +1,10 @@
-# RE-CS-02 / RE-CS-07 container runtime test
+# RE-SS-01 / RE-CS-02 / RE-CS-07 container runtime test
 
 The experimental workflow is `.github/workflows/RE-CONTAINER-RUNTIME-TEST.yml`.
-It is one manual entry point that can build RE-CS-02, RE-CS-07, or both. It is
-intentionally separate from the normal production workflows, so the container
-runtime can be retired by removing this workflow and its overlay without
-changing the normal firmware path or RE-SS-01.
+It is one manual entry point that can build RE-SS-01, RE-CS-02, RE-CS-07, or
+all three. It is intentionally separate from the normal production workflows,
+so the container runtime remains opt-in and its overlay can be retired without
+changing the ordinary firmware path.
 
 The Action downloads the latest stable official `nerdctl-full` arm64 release,
 verifies its `SHA256SUMS` entry, and copies only the rootful `containerd`,
@@ -22,9 +22,9 @@ The test workflow also exposes an optional `CONTAINER_RUNTIME_VERSION` input.
 Leaving it empty follows the latest stable release; setting it to a release
 such as `2.3.5` makes a reproducible rollback image from that bundle.
 
-The RE-CS-02 and RE-CS-07 test images include the bridge CNI plugin and a
-boot-time `bridge+nft` policy. RE-SS-01 does not include this runtime. The
-unsupported `ipvlan-l3` path is deliberately not included: on the target
+The RE-SS-01, RE-CS-02, and RE-CS-07 test images include the bridge CNI plugin
+and a boot-time `bridge+nft` policy. The unsupported `ipvlan-l3` path is
+deliberately not included: on the target
 kernel its virtual gateway was unreachable before packets reached the host
 firewall, so adding the module would only increase firmware size and failure
 surface.
