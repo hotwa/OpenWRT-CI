@@ -14,9 +14,34 @@ grep -q '100.100.100.100' "$INIT_SCRIPT" || {
 }
 
 grep -q '53' "$INIT_SCRIPT" || {
-  echo "Quad100 health script does not probe DNS port 53"
-  exit 1
+	echo "Quad100 health script does not probe DNS port 53"
+	exit 1
 }
+
+grep -q "jsonfilter -e '@.Self.DNSName'" "$INIT_SCRIPT" || {
+	echo "Quad100 health script must derive the current MagicDNS name dynamically"
+	exit 1
+}
+
+grep -q 'nslookup "\$probe_name" "\$PROBE_HOST"' "$INIT_SCRIPT" || {
+	echo "Quad100 health script must query the current MagicDNS name over UDP DNS"
+	exit 1
+}
+
+grep -q "grep -q 'Name:'" "$INIT_SCRIPT" || {
+	echo "Quad100 health script must match the DNS answer Name field"
+	exit 1
+}
+
+grep -q 'nc -uz -w 2' "$INIT_SCRIPT" || {
+	echo "Quad100 health script must use UDP for the nc fallback"
+	exit 1
+}
+
+if grep -Eq 'nc -z -w|nslookup openwrt\.org' "$INIT_SCRIPT"; then
+	echo "Quad100 health script must not probe TCP 53 or a public DNS name"
+	exit 1
+fi
 
 grep -q 'while \[ "\$attempt" -lt 5 \]' "$INIT_SCRIPT" || {
   echo "Quad100 health script does not retry the probe five times"
