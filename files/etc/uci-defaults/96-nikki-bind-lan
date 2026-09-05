@@ -1,0 +1,18 @@
+#!/bin/sh
+# Bind the mihomo/nikki external controller to the LAN address instead of
+# the package default [::]. The management API (zashboard etc.) stays
+# reachable from the LAN, but is no longer exposed on the WAN side.
+# A missing LAN address or an operator-provided custom value is left alone.
+set -u
+
+command -v uci >/dev/null 2>&1 || exit 0
+[ -f /etc/config/nikki ] || exit 0
+lan_ip="$(uci -q get network.lan.ipaddr)"
+[ -n "$lan_ip" ] || exit 0
+case "$lan_ip" in
+	*:*|'') exit 0 ;;
+	*) ;;
+esac
+uci -q set nikki.mixin.api_listen="${lan_ip}:9090"
+uci -q commit nikki
+exit 0

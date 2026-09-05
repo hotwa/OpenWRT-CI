@@ -289,4 +289,21 @@ if grep -Fq 'PNPM_HOME=/data/pnpm/bin' "$PROFILE"; then
 	exit 1
 fi
 
+# pi-subagents must receive an absolute storeRoot: /root/.pi is a symlink to
+# /data/pi, so a "~/" schedule root resolves outside the real project and the
+# extension fails its trust check. The absolute default must be seeded once,
+# without overwriting an operator-provided extension config.
+grep -Fq '/data/pi/subagents/schedules' "$SCRIPT" || {
+	echo 'auto mount script does not seed the absolute pi-subagents store root'
+	exit 1
+}
+grep -Fq '"scheduledRuns"' "$SCRIPT" || {
+	echo 'auto mount script does not configure pi-subagents scheduledRuns'
+	exit 1
+}
+grep -Fq 'subagent_cfg_dir/config.json' "$SCRIPT" || {
+	echo 'auto mount script does not guard the pi-subagents config path'
+	exit 1
+}
+
 echo "auto mount data fixture tests passed"

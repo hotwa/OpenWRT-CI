@@ -513,6 +513,18 @@ prepare_agent_storage() {
 		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
 	done
 
+	# pi-subagents resolves schedule roots against the real project path.
+	# /root/.pi is a symlink to /data/pi, so a "~/"-based store root trips its
+	# trust check ("resolves outside the real project"). Seed an absolute
+	# storeRoot once, unless the operator has already configured the extension.
+	subagent_cfg_dir="$DATA_ROOT/pi/agent/extensions/subagent"
+	if [ ! -e "$subagent_cfg_dir/config.json" ]; then
+		ensure_real_directory "$subagent_cfg_dir" || return 1
+		printf '%s\n' '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' \
+			> "$subagent_cfg_dir/config.json.new" || return 1
+		mv "$subagent_cfg_dir/config.json.new" "$subagent_cfg_dir/config.json" || return 1
+	fi
+
 	[ -d "$ROOT_HOME" ] || return 0
 	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || return 1
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || return 1

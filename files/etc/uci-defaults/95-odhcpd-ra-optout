@@ -1,0 +1,13 @@
+#!/bin/sh
+# Silence repeated odhcpd "no public prefix on lan" warnings. These
+# deployments use PPPoE WAN without a public IPv6 prefix, so RA
+# announcements on the LAN are meaningless and only spam the log every
+# 5-10 minutes. Operators that later enable public IPv6 can clear the
+# option (or remove this file) to restore RA.
+set -u
+
+command -v uci >/dev/null 2>&1 || exit 0
+[ -f /etc/config/dhcp ] || exit 0
+uci -q set dhcp.lan.ra_disabled='1'
+uci -q commit dhcp
+exit 0
