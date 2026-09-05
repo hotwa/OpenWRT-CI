@@ -14,36 +14,28 @@ tailnet_ready() {
 }
 
 probe_quad100() {
-	local probe_name lookup_output
+	local fqdn lookup_output
 
 	# Quad100 is a MagicDNS resolver, not a public recursive resolver. Resolve
 	# the node's current MagicDNS name so renames do not require a new image.
-	probe_name="$(tailscale status --json 2>/dev/null |
-		jsonfilter -e '@.Self.DNSName' 2>/dev/null || true)"
-	probe_name="${probe_name%.}"
-	case "$probe_name" in
+	fqdn="$(tailscale status --json 2>/dev/null |
+		jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+	case "$fqdn" in
 		''|*[!A-Za-z0-9_.-]*)
-			logger -t "$PROBE_TAG" "skipping Quad100 DNS probe because Self.DNSName is unavailable"
-			return 0
+			logger -t "$PROBE_TAG" "Quad100 probe is not ready because Self.DNSName is unavailable"
+			return 1
 		;;
 	esac
 
 	if command -v nslookup >/dev/null 2>&1; then
-		lookup_output="$(nslookup "$probe_name" "$PROBE_HOST" 2>/dev/null || true)"
+		lookup_output="$(nslookup "$fqdn" "$PROBE_HOST" 2>/dev/null || true)"
 		# Matching Name: avoids accepting the resolver's own Address: line when
 		# the query returns SERVFAIL.
 		echo "$lookup_output" | grep -q 'Name:'
 		return $?
 	fi
 
-	# BusyBox nc must use -u: -z without it probes TCP 53 and always fails on
-	# Quad100 deployments that intentionally expose DNS only over UDP.
-	if command -v nc >/dev/null 2>&1; then
-		nc -uz -w 2 "$PROBE_HOST" "$PROBE_PORT" >/dev/null 2>&1
-		return $?
-	fi
-
-	logger -t "$PROBE_TAG" "skipping Quad100 health probe because neither nslookup nor nc is available"
+	logger -t "$PROBE_TAG" "skipping Quad100 probe because nslookup is unavailable"
 	return 0
 }
 
