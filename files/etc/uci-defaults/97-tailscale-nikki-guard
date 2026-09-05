@@ -28,6 +28,14 @@ ensure_list_entry "nikki.@router_access_control[0].user" "mosdns"
 ensure_list_entry "nikki.@router_access_control[0].group" "dnsmasq"
 ensure_list_entry "nikki.@router_access_control[0].group" "mosdns"
 
+ui_current="$(uci -q get nikki.mixin.ui_path 2>/dev/null || true)"
+case "$ui_current" in
+	'' | '/etc/nikki/ui')
+		uci set nikki.mixin.ui_path='/etc/nikki/run/ui'
+		changed=1
+		;;
+esac
+
 if [ -x /etc/init.d/tailscale-nikki-guard ]; then
 	/etc/init.d/tailscale-nikki-guard enable >/dev/null 2>&1 || true
 	/etc/init.d/tailscale-nikki-guard start >/dev/null 2>&1 || true

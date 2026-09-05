@@ -119,4 +119,19 @@ grep -q 'nft list chain inet nikki router_dns_hijack' "$BOOT_GUARD" || {
 	exit 1
 }
 
+grep -q 'ensure_ui_path()' "$BOOT_GUARD" || {
+	echo "boot guard does not normalize nikki.mixin.ui_path"
+	exit 1
+}
+
+grep -q 'nikki.mixin.ui_path' "$BOOT_GUARD" || {
+	echo "boot guard does not manage nikki.mixin.ui_path"
+	exit 1
+}
+
+grep -q '/etc/nikki/run/ui' "$BOOT_GUARD" || {
+	echo "boot guard does not pin the UI path inside the mihomo home directory"
+	exit 1
+}
+
 echo "tailscale Nikki boot guard test passed"

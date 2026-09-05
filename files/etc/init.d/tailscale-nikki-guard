@@ -64,6 +64,17 @@ ensure_declarative_tailnet_policy() {
 	ensure_list_entry "nikki.tailscale_magicdns.nameserver" "$QUAD100_TAILSCALE_ENDPOINT"
 }
 
+ensure_ui_path() {
+	local current
+	current="$(uci -q get nikki.mixin.ui_path 2>/dev/null || true)"
+	case "$current" in
+		'' | '/etc/nikki/ui')
+			uci set nikki.mixin.ui_path='/etc/nikki/run/ui'
+			changed=1
+			;;
+	esac
+}
+
 reset_managed_lan_bypass_sections() {
 	local sections
 
@@ -223,6 +234,7 @@ apply_guard() {
 	ensure_list_entry "nikki.@router_access_control[0].group" "dnsmasq"
 	ensure_list_entry "nikki.@router_access_control[0].group" "mosdns"
 	ensure_declarative_tailnet_policy
+	ensure_ui_path
 	sync_lan_bypass_hosts
 	# Record the active Nikki profile before patching the DNS hijack policy.
 	active_profile="$(current_profile_path 2>/dev/null || true)"
