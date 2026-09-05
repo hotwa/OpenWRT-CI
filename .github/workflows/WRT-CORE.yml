@@ -783,6 +783,20 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
           make defconfig -j$(nproc)
+          # zram-swap only sets a UCI preference.  Verify that the target
+          # kernel actually exposes lz4 before building an image; otherwise
+          # the device silently starts with its lzo-rle fallback.
+          for zram_config in \
+            CONFIG_PACKAGE_zram-swap=y \
+            CONFIG_PACKAGE_kmod-zram=y \
+            CONFIG_PACKAGE_kmod-lib-lz4=y \
+            CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y \
+            CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y; do
+            grep -Fxq "$zram_config" .config || {
+              echo "ERROR: required zram lz4 configuration was dropped by defconfig: $zram_config" >&2
+              exit 1
+            }
+          done
           if [ "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-}" = "openwrt" ]; then
             for package in containerd nerdctl runc; do
               grep -q "^CONFIG_PACKAGE_${package}=y$" .config || {

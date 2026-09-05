@@ -49,12 +49,14 @@ CONFIG_TARGET_PER_DEVICE_ROOTFS=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=n
 #内核调整
 CONFIG_KERNEL_SWAP=y
-# zram-swap is configured by the common runtime overlay to prefer lz4. Keep
-# the compressor in every target kernel; otherwise the init script silently
-# falls back to lzo even though UCI says "lz4".
+# zram-swap is configured by the common runtime overlay to prefer lz4.  The
+# zram init script can only select an algorithm exposed by the kernel, so all
+# targets must include the ZRAM LZ4 backend *and* make it the kernel default.
+# Generic LZ4 compressor options alone do not register lz4 for zram.
+CONFIG_PACKAGE_kmod-zram=y
+CONFIG_PACKAGE_kmod-lib-lz4=y
+CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y
 CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y
-CONFIG_KERNEL_LZ4_COMPRESS=y
-CONFIG_KERNEL_LZ4_DECOMPRESS=y
 CONFIG_PACKAGE_kmod-ata-ahci=y
 CONFIG_PACKAGE_kmod-ata-core=y
 CONFIG_PACKAGE_kmod-bonding=y

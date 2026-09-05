@@ -31,7 +31,22 @@
 `/tmp`。交互 shell 从 `/etc/profile.d/99-data-runtime.sh` 读取该契约。
 
 运行时只使用 256 MiB、lz4、priority 100 的 zram；不会创建或启用 eMMC swap、
-swapfile 或任何磁盘 swap。
+swapfile 或任何磁盘 swap。镜像构建必须同时包含 `kmod-zram`、`kmod-lib-lz4`、
+`CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y` 和
+`CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y`：仅设置 UCI 的
+`zram_comp_algo=lz4` 不会为内核新增 lz4 支持，缺失时服务会静默回退到
+`lzo-rle`。`WRT-CORE` 在 `make defconfig` 后验证这五项构建配置，避免发布
+看似已启用但实际不可用的镜像。
+
+刷机后的只读验收命令为：
+
+```sh
+cat /sys/block/zram0/comp_algorithm
+swapon --show
+```
+
+前一条必须显示 `[lz4]`（方括号表示当前选择）；后一条应只显示约 256 MiB、
+priority 100 的 `/dev/zram0`，不应出现 eMMC 或 swapfile。
 
 ## 迁移、数据盘与诊断
 
