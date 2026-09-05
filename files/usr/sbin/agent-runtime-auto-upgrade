@@ -1,0 +1,86 @@
+#!/bin/sh
+# Nightly signed agent-runtime check/upgrade wrapper.
+# The agent-runtime manager owns locking, signature verification, atomic switch,
+# health checks and rollback; this script only schedules a bounded decision.
+
+set -u
+
+CONFIG="multica"
+SECTION="main"
+DATA_DIR="/data/multica"
+LOG_DIR="$DATA_DIR/logs"
+LOG_FILE="$LOG_DIR/agent-runtime.log"
+LOCK_DIR="/var/run/agent-runtime-auto-upgrade.lock"
+RUNTIME_BIN="/usr/sbin/agent-runtime"
+
+log() {
+	local message="$*"
+	if [ -d "$LOG_DIR" ] && [ -w "$LOG_DIR" ]; then
+		printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)" "$message" >>"$LOG_FILE"
+	fi
+	logger -t agent-runtime-auto-upgrade -- "$message" 2>/dev/null || true
+}
+
+cfg() {
+	local value
+	value="$(uci -q get "$CONFIG.$SECTION.$1" 2>/dev/null || true)"
+	[ -n "$value" ] || value="$2"
+	printf '%s' "$value"
+}
+
+json_field() {
+	local payload="$1" expression="$2"
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	jsonfilter -s "$payload" -e "$expression" 2>/dev/null | sed -n '1p'
+}
+
+active_tasks() {
+	local state_file agent_id tasks
+	state_file="$DATA_DIR/.agent_state"
+	[ -r "$state_file" ] || return 1
+	agent_id="$(sed -n 's/^agent_id=//p' "$state_file" | sed -n '1p')"
+	[ -n "$agent_id" ] || return 1
+	command -v multica >/dev/null 2>&1 || return 1
+	tasks="$(multica agent tasks "$agent_id" --output json 2>/dev/null || true)"
+	printf '%s' "$tasks" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"(queued|running|dispatched|in_progress|pending|started|active)"'
+}
+
+main() {
+	local enabled check_output code upgrade_output
+	enabled="$(cfg auto_runtime_upgrade 1)"
+	case "$enabled" in
+		1|true|yes|on) ;;
+		*) log "automatic runtime upgrade disabled"; return 0 ;;
+	esac
+
+	[ -x "$RUNTIME_BIN" ] || { log "agent-runtime manager unavailable"; return 0; }
+	[ -d /data ] && [ -w /data ] || { log "skipping runtime check because /data is unavailable"; return 0; }
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		log "another automatic runtime upgrade check is already running"
+		return 0
+	fi
+	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+	mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+	check_output="$("$RUNTIME_BIN" check --json 2>&1 || true)"
+	log "check: $check_output"
+	code="$(json_field "$check_output" '@.code' || true)"
+	case "$code" in
+		ok)
+			if active_tasks; then
+				log "new runtime available but an Agent task is active; deferring upgrade"
+				return 0
+			fi
+			upgrade_output="$("$RUNTIME_BIN" upgrade --json 2>&1 || true)"
+			log "upgrade: $upgrade_output"
+			;;
+		no_update) log "runtime is current" ;;
+		busy|no_data|download_failed|signature_failed|incompatible|insufficient_space|health_failed)
+			log "runtime check did not authorize upgrade (code=$code)" ;;
+		*) log "runtime check returned an unrecognized result; no upgrade attempted" ;;
+	esac
+}
+
+if [ "${AGENT_RUNTIME_AUTO_UPGRADE_LIBRARY_ONLY:-0}" != "1" ]; then
+	main "$@"
+fi

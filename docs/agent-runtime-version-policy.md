@@ -57,6 +57,12 @@ commit 或内核变化会改变 ELF、musl 或固件体积契约。
 3. **设备升级期**：`agent-runtime` 仅从固定 release URL 取得签名 index、
    manifest 与 bundle；验证签名、架构/musl/Node ABI、哈希、空间和健康后，
    才原子切换 `current`。失败 generation 不会成为活动版本。
+4. **设备自动检查期**：启用 `multica.main.auto_runtime_upgrade=1` 时，固件在每天
+   03:00（设备本地 cron 时区）运行 `/usr/sbin/agent-runtime-auto-upgrade`。它先执行
+   `agent-runtime check --json`；仅收到“存在更新”的结果且没有活跃 Agent 任务时才调用
+   `upgrade --json`。升级、验签、原子切换、Multica 重启和失败回滚仍全部由 Runtime
+   Manager 负责。将该 UCI 选项设为 `0` 可保留当前 generation；日志位于
+   `/data/multica/logs/agent-runtime.log`。
 
 这些是 CI/构建/设备软件门槛，不等于已完成某型号的真机验收。把某个 runtime
 generation 推广到固件或生产设备前，仍需按目标设备的独立刷写、启动、网络和

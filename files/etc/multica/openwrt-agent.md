@@ -37,8 +37,13 @@
 - **运行时**：Node.js 24 LTS Musl 静态版与由 uv 离线部署至 `/data/uv/python` 的 CPython 3.13。Agent 应使用 `/data/agent-runtime/current` 所指向的**已签名、不可变 generation**；不得在 `/data/node`、`/opt/node` 或全局 npm/pnpm 前缀内原地升级、安装或修改包。运行时更新只能通过 `/usr/sbin/agent-runtime` 验签后的完整 generation 完成。Pi 默认使用办公室 SGLang 的 OpenAI 兼容端点；服务不可达时应先检查路由，再显式选择其他模型提供商。
 - **Pi 默认权限**：Pi 是只读诊断/规划助手。默认仅允许采集状态、阅读配置、生成计划及提出命令；任何写配置、重启服务、安装软件、删除文件或网络变更，都必须由用户针对该操作明确确认后才可执行。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
+- **运行时自动维护**：若 `multica.main.auto_runtime_upgrade='1'`（固件默认值），每天
+  凌晨 03:00 先由 `/usr/sbin/agent-runtime-auto-upgrade` 执行签名 release 检查；仅在
+  没有活跃 Agent 任务且确有兼容新版时升级。日志写入 `/data/multica/logs/agent-runtime.log`。
+  `agent-runtime` 自己负责锁、验签、哈希、原子切换、Multica 重启和失败回滚；设置为
+  `0` 可暂停自动升级。
 
-### (3) 容器运行环境与 Compose 约定（RE-CS-02 / RE-CS-07）
+### (3) 容器运行环境与 Compose 约定（RE-SS-01 / RE-CS-02 / RE-CS-07）
 - **运行时**：本机若存在 `nerdctl`、`containerd` 与 `container-bridge-nft`，说明已安装 rootful `containerd + nerdctl + nerdctl compose`；镜像、快照和容器元数据必须落在 `/data`，不得因 `/data` 未挂载而回写根分区。
 - **项目目录**：以后每个容器服务必须使用 `/data/compose/<service>/compose.yaml` 管理；相对路径卷放在同一服务目录下。不要用临时 `nerdctl run` 代替长期 Compose 配置。
 - **网络选择顺序**：优先使用默认 `bridge` 网络（`bridge+nft`），其次才考虑已经明确验证过的专用网络；`host` 只能作为 bridge+nft 失败后的最后回退。host 容器共享路由器的端口命名空间，启动前必须检查监听地址、端口冲突和 WAN 暴露风险。

@@ -142,9 +142,14 @@ tool_line() {
 }
 
 render_profile() {
-	local tmp board model lan tail_ip data_mount memory
+	local tmp identity_tmp board model lan tail_ip data_mount memory
 	mkdir -p "$DATA_DIR"
 	tmp="$PROFILE_FILE.new.$$"
+	identity_tmp="$IDENTITY_FILE.new.$$"
+	cleanup_profile_temps() {
+		rm -f "$tmp" "$identity_tmp"
+	}
+	trap cleanup_profile_temps EXIT HUP INT TERM
 	board="$(board_value board_name unknown)"
 	model="$(board_value model unknown)"
 	lan="$(lan_address)"
@@ -191,9 +196,10 @@ render_profile() {
 	} > "$tmp"
 	chmod 600 "$tmp"
 	mv -f "$tmp" "$PROFILE_FILE"
-	printf '%s\n' "$(agent_name)" > "$IDENTITY_FILE.new.$$"
-	chmod 600 "$IDENTITY_FILE.new.$$"
-	mv -f "$IDENTITY_FILE.new.$$" "$IDENTITY_FILE"
+	printf '%s\n' "$(agent_name)" > "$identity_tmp"
+	chmod 600 "$identity_tmp"
+	mv -f "$identity_tmp" "$IDENTITY_FILE"
+	trap - EXIT HUP INT TERM
 }
 
 main() {

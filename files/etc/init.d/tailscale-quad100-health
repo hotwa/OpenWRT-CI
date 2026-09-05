@@ -6,6 +6,7 @@ STOP=10
 PROBE_HOST="100.100.100.100"
 PROBE_PORT="53"
 PROBE_TAG="tailscale-quad100-health"
+STATE_FILE="/var/run/quad100-health.ok"
 
 tailnet_ready() {
 	ip link show dev tailscale0 >/dev/null 2>&1 || return 1
@@ -18,11 +19,18 @@ probe_quad100() {
 
 	# Quad100 is a MagicDNS resolver, not a public recursive resolver. Resolve
 	# the node's current MagicDNS name so renames do not require a new image.
-	fqdn="$(tailscale status --json 2>/dev/null |
-		jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+	if command -v jq >/dev/null 2>&1; then
+		fqdn="$(tailscale status --json 2>/dev/null |
+			jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+	elif command -v jsonfilter >/dev/null 2>&1; then
+		fqdn="$(tailscale status --json 2>/dev/null |
+			jsonfilter -e '@.Self.DNSName' 2>/dev/null || true)"
+	else
+		fqdn=""
+	fi
+	fqdn="${fqdn%.}"
 	case "$fqdn" in
 		''|*[!A-Za-z0-9_.-]*)
-			logger -t "$PROBE_TAG" "Quad100 probe is not ready because Self.DNSName is unavailable"
 			return 1
 		;;
 	esac
@@ -35,8 +43,18 @@ probe_quad100() {
 		return $?
 	fi
 
-	logger -t "$PROBE_TAG" "skipping Quad100 probe because nslookup is unavailable"
 	return 0
+}
+
+record_probe_state() {
+	local state="$1" previous
+	previous="$(cat "$STATE_FILE" 2>/dev/null || true)"
+	[ "$previous" = "$state" ] && return 0
+	printf '%s\n' "$state" >"$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
+	case "$state" in
+		ok) logger -t "$PROBE_TAG" "Quad100 MagicDNS probe succeeded (state changed)" ;;
+		failed) logger -t "$PROBE_TAG" "Quad100 MagicDNS probe failed (state changed)" ;;
+	esac
 }
 
 start() {
@@ -50,7 +68,7 @@ start() {
 
 	while [ "$attempt" -lt 5 ]; do
 		if probe_quad100; then
-			logger -t tailscale-quad100-health "Quad100 MagicDNS probe succeeded on ${PROBE_HOST}:${PROBE_PORT} after $((attempt + 1)) attempt(s)"
+			record_probe_state ok
 			return 0
 		fi
 
@@ -58,7 +76,7 @@ start() {
 		sleep 2
 	done
 
-	logger -t tailscale-quad100-health "Quad100 MagicDNS probe failed on ${PROBE_HOST}:${PROBE_PORT} after ${attempt} attempt(s)"
+	record_probe_state failed
 	return 0
 }
 

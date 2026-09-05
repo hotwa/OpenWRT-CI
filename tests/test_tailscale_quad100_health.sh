@@ -23,6 +23,16 @@ grep -q "jq -r '.Self.DNSName // empty'" "$INIT_SCRIPT" || {
 	exit 1
 }
 
+grep -q 'fqdn="\${fqdn%.}"' "$INIT_SCRIPT" || {
+	echo "Quad100 health script must normalize a trailing DNS dot"
+	exit 1
+}
+
+grep -q "jsonfilter -e '@.Self.DNSName'" "$INIT_SCRIPT" || {
+	echo "Quad100 health script must have a parser fallback when jq is unavailable"
+	exit 1
+}
+
 grep -q 'nslookup "\$fqdn" "\$PROBE_HOST"' "$INIT_SCRIPT" || {
 	echo "Quad100 health script must query the current MagicDNS name over UDP DNS"
 	exit 1
@@ -38,8 +48,8 @@ grep -q 'return 1' "$INIT_SCRIPT" || {
 	exit 1
 }
 
-if grep -Eq 'nc -z|nslookup openwrt\.org|jsonfilter.*Self\.DNSName' "$INIT_SCRIPT"; then
-	echo "Quad100 health script must not probe TCP 53, a public DNS name, or a stale JSON parser"
+if grep -Eq 'nc -z|nslookup openwrt\.org' "$INIT_SCRIPT"; then
+	echo "Quad100 health script must not probe TCP 53 or a public DNS name"
 	exit 1
 fi
 
@@ -48,9 +58,18 @@ grep -q 'while \[ "\$attempt" -lt 5 \]' "$INIT_SCRIPT" || {
   exit 1
 }
 
-grep -q 'logger -t tailscale-quad100-health' "$INIT_SCRIPT" || {
+grep -q 'logger -t "\$PROBE_TAG"' "$INIT_SCRIPT" || {
   echo "Quad100 health script does not log probe results"
   exit 1
+}
+
+grep -q 'STATE_FILE="/var/run/quad100-health.ok"' "$INIT_SCRIPT" || {
+	echo "Quad100 health script must persist the last probe state"
+	exit 1
+}
+grep -q 'record_probe_state' "$INIT_SCRIPT" || {
+	echo "Quad100 health script must log only state transitions"
+	exit 1
 }
 
 grep -q '/etc/init.d/tailscale-quad100-health enable' "$UCI_DEFAULTS" || {

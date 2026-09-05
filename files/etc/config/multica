@@ -12,3 +12,6 @@ config multica 'main'
 	option max_concurrent_tasks '1'
 	option poll_interval '30s'
 	option heartbeat_interval '15s'
+	# Signed runtime updates are checked nightly and upgraded only when a newer
+	# compatible release is available. Set to 0 to keep the current generation.
+	option auto_runtime_upgrade '1'

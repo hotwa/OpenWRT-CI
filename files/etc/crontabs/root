@@ -1,0 +1,2 @@
+# Check the signed agent-runtime release during the low-traffic maintenance window.
+0 3 * * * /usr/sbin/agent-runtime-auto-upgrade

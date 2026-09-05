@@ -638,6 +638,7 @@ jobs:
             ./wrt/files/etc/multica \
             ./wrt/files/etc/profile.d \
             ./wrt/files/etc/rclone-data-backup \
+            ./wrt/files/etc/crontabs \
             ./wrt/files/etc/uci-defaults \
             ./wrt/files/usr/sbin
           # A reviewed RE workflow may already have enabled this UCI gate
@@ -647,6 +648,7 @@ jobs:
             cp -f ./files/etc/config/agent-storage ./wrt/files/etc/config/agent-storage
           fi
           cp -f ./files/etc/config/rclone-data-backup ./wrt/files/etc/config/rclone-data-backup
+          cp -f ./files/etc/crontabs/root ./wrt/files/etc/crontabs/root
           if [ -n "${WRTBAK_DEVICE_ALIAS:-}" ]; then
             case "$WRTBAK_DEVICE_ALIAS" in
               *[!A-Za-z0-9._-]* )
@@ -676,6 +678,7 @@ jobs:
           cp -f ./files/usr/sbin/openwrt-data-storage-diagnose ./wrt/files/usr/sbin/openwrt-data-storage-diagnose
           cp -f ./files/usr/sbin/pi-append-system-link ./wrt/files/usr/sbin/pi-append-system-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
+          cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
           chmod 0755 \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
@@ -689,7 +692,8 @@ jobs:
             ./wrt/files/usr/sbin/auto-mount-data \
             ./wrt/files/usr/sbin/openwrt-data-storage-diagnose \
             ./wrt/files/usr/sbin/pi-append-system-link \
-            ./wrt/files/usr/sbin/rclone-data-backup
+            ./wrt/files/usr/sbin/rclone-data-backup \
+            ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
           test -x ./wrt/files/usr/sbin/openwrt-data-storage-diagnose || {
             echo "ERROR: read-only data storage diagnosis helper is missing" >&2
             exit 1
