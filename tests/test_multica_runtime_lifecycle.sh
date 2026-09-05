@@ -24,14 +24,15 @@ fi
 # a wrong-name and offline runtime ahead of the only exact match.
 cat > "$TEST_ROOT/runtimes.json" <<'EOF'
 [
-  {"id":"rt-wrong-name","name":"Other Router","provider":"pi","status":"online","device_info":"RE-SS-01-12 · 0.84.4"},
-  {"id":"rt-offline","name":"Pi (OpenWrt-Router)","provider":"pi","status":"offline","device_info":"RE-SS-01-12 · 0.84.4"},
-  {"id":"rt-correct","name":"Pi (OpenWrt-Router)","provider":"pi","status":"online","device_info":"Other-Router · 0.84.4"}
+  {"id":"rt-old-device","name":"Other Router","provider":"pi","status":"online","device_info":"OTHER · 0.84.4","last_seen_at":"2026-09-05T09:00:00Z"},
+  {"id":"rt-offline","name":"Pi (OpenWrt-Router)","provider":"pi","status":"offline","device_info":"RE-SS-01-12 · 0.84.4","last_seen_at":"2026-09-05T09:30:00Z"},
+  {"id":"rt-correct","name":"Renamed runtime","provider":"pi","status":"online","device_info":"re-ss-01-12 · 0.85.0","last_seen_at":"2026-09-05T10:00:00Z"},
+  {"id":"rt-newer","name":"Another runtime name","provider":"pi","status":"online","device_info":"RE-SS-01-12 · 0.85.0","last_seen_at":"2026-09-05T11:00:00Z"}
 ]
 EOF
 cat > "$TEST_ROOT/agents.json" <<'EOF'
 [
-  {"id":"agent-idle","name":"OpenWrt 管家 · RE-SS-01","runtime_id":"rt-correct","status":"idle"},
+  {"id":"agent-idle","name":"OpenWrt 管家 · RE-SS-01","runtime_id":"rt-old","status":"idle"},
   {"id":"agent-archived","name":"Archived Router","runtime_id":"rt-correct","status":"archived"}
 ]
 EOF
@@ -42,7 +43,7 @@ export MULTICA_PYTHON_BIN="$(command -v python3)"
 . "$BOOTSTRAP_SCRIPT"
 
 selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' pi 'RE-SS-01-12')"
-[ "$selected" = 'rt-correct' ] || {
+[ "$selected" = 'rt-newer' ] || {
 	echo "exact runtime selector returned: $selected"
 	exit 1
 }
@@ -51,7 +52,7 @@ if select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (OpenWrt-Router)' commandcod
 	exit 1
 fi
 selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (New Firmware Name)' pi 'RE-SS-01-12')"
-[ "$selected" = 'rt-wrong-name' ] || {
+[ "$selected" = 'rt-newer' ] || {
 	echo "runtime selector did not fall back to the stable device identity: $selected"
 	exit 1
 }
@@ -63,7 +64,11 @@ if agent_is_usable archived; then
 	echo "archived Agent was treated as usable"
 	exit 1
 fi
-selected_agent="$(select_agent_id "$TEST_ROOT/agents.json" 'OpenWrt 管家 · RE-SS-01' rt-correct)"
+if selected_agent="$(select_agent_id "$TEST_ROOT/agents.json" 'OpenWrt 管家 · RE-SS-01' rt-correct)"; then
+	echo "same-name Agent with an old runtime was treated as an exact match"
+	exit 1
+fi
+selected_agent="$(select_agent_id_by_name "$TEST_ROOT/agents.json" 'OpenWrt 管家 · RE-SS-01')"
 [ "$selected_agent" = 'agent-idle' ] || {
 	echo "idle Agent selector returned: $selected_agent"
 	exit 1

@@ -80,8 +80,18 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     records = json.load(stream)
 for item in records if isinstance(records, list) else []:
-    fields = ("id", "name", "provider", "status", "device_info")
-    print("\t".join(str(item.get(field) or "").replace("\t", " ").replace("\n", " ") for field in fields))
+    device_info = str(item.get("device_info") or "").split(" · ", 1)[0]
+    values = [
+        item.get("id") or "",
+        item.get("name") or "",
+        item.get("provider") or "",
+        item.get("status") or "",
+        device_info,
+        item.get("last_seen_at") or "",
+        item.get("created_at") or "",
+    ]
+    values = [str(value).replace("\t", " ").replace("\n", " ") for value in values]
+    print("\t".join(values))
 PY
 }
 
@@ -141,40 +151,47 @@ select_runtime_id() {
 	local expected_name="$2"
 	local expected_provider="$3"
 	local expected_device_name="${4:-}"
-	local records tab candidate_id candidate_name candidate_provider candidate_status candidate_device_info
-	local exact_id="" exact_matches=0 fallback_id="" fallback_matches=0
+	local records tab candidate_id candidate_name candidate_provider candidate_status candidate_device_info candidate_seen candidate_created
+	local candidate_identity expected_identity
+	local exact_id="" exact_seen="" exact_matches=0 fallback_id="" fallback_seen="" fallback_matches=0
 
 	if ! records="$(json_runtime_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_provider candidate_status candidate_device_info; do
+	expected_identity="$(printf '%s' "$expected_device_name" | tr 'A-Z' 'a-z')"
+	while IFS="$tab" read -r candidate_id candidate_name candidate_provider candidate_status candidate_device_info candidate_seen candidate_created; do
 		if [ "$candidate_name" = "$expected_name" ] && \
 			[ "$candidate_provider" = "$expected_provider" ] && \
 			[ "$candidate_status" = "online" ] && [ -n "$candidate_id" ]; then
 			exact_matches=$((exact_matches + 1))
-			exact_id="$candidate_id"
-		elif [ -n "$expected_device_name" ] && \
+			if [ -z "$exact_id" ] || [ "$candidate_seen" \> "$exact_seen" ]; then
+				exact_id="$candidate_id"
+				exact_seen="$candidate_seen"
+			fi
+		elif [ -n "$expected_identity" ] && \
 			[ "$candidate_provider" = "$expected_provider" ] && \
 			[ "$candidate_status" = "online" ] && [ -n "$candidate_id" ]; then
-			case "$candidate_device_info" in
-				"$expected_device_name"|"$expected_device_name · "*)
-					fallback_matches=$((fallback_matches + 1))
+			candidate_identity="$(printf '%s' "$candidate_device_info" | sed 's/[[:space:]]*$//' | tr 'A-Z' 'a-z')"
+			if [ "$candidate_identity" = "$expected_identity" ]; then
+				fallback_matches=$((fallback_matches + 1))
+				if [ -z "$fallback_id" ] || [ "$candidate_seen" \> "$fallback_seen" ]; then
 					fallback_id="$candidate_id"
-					;;
-			esac
+					fallback_seen="$candidate_seen"
+				fi
+			fi
 		fi
 	done <<EOF
 $records
 EOF
-	if [ "$exact_matches" -eq 1 ]; then
+	if [ "$exact_matches" -ge 1 ]; then
 		printf '%s' "$exact_id"
 		return 0
 	fi
-	# A server preserves a Runtime's display name across firmware upgrades.  Its
-	# device_info is stable, so use it only as a unique, provider-scoped fallback
-	# after the exact configured name has failed to match.
-	[ "$exact_matches" -eq 0 ] && [ "$fallback_matches" -eq 1 ] || return 1
+	# A server may change a Runtime's display name after a firmware/runtime update.
+	# Its provider-scoped device identity remains stable; select the most recently
+	# seen online record so a re-registered runtime wins without a fixed name.
+	[ "$fallback_matches" -ge 1 ] || return 1
 	printf '%s' "$fallback_id"
 }
 
@@ -206,6 +223,31 @@ select_agent_id() {
 	done <<EOF
 $records
 EOF
+	[ "$matches" -eq 1 ] || return 1
+	printf '%s' "$matched_id"
+}
+
+select_agent_id_by_name() {
+	local json_file="$1"
+	local expected_name="$2"
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local matched_id="" matches=0
+
+	if ! records="$(json_agent_records "$json_file")"; then
+		return 1
+	fi
+	tab="$(printf '\t')"
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
+		if [ "$candidate_name" = "$expected_name" ] && \
+			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			matches=$((matches + 1))
+			matched_id="$candidate_id"
+		fi
+	done <<EOF
+$records
+EOF
+	# A unique same-name Agent is the safe migration target when its runtime id
+	# changed.  Multiple matches remain ambiguous and must not be guessed.
 	[ "$matches" -eq 1 ] || return 1
 	printf '%s' "$matched_id"
 }
@@ -328,6 +370,11 @@ try_bootstrap() {
 	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
 	if [ -z "$agent_id" ]; then
 		agent_id="$(select_agent_id "$agent_json" "$agent_name" "$runtime_id" || true)"
+	fi
+	if [ -z "$agent_id" ]; then
+		# Runtime upgrades create a new runtime_id while preserving the Agent.
+		# Rebind the unique same-name Agent instead of issuing a duplicate create.
+		agent_id="$(select_agent_id_by_name "$agent_json" "$agent_name" || true)"
 	fi
 	if [ -n "$agent_id" ]; then
 		if [ "$state_runtime_id" != "$runtime_id" ] || \
