@@ -6,8 +6,6 @@ GENERAL="$ROOT_DIR/Config/GENERAL.txt"
 PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 QCA_WORKFLOWS=(
-	"$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
-	"$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
 	"$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 )
 

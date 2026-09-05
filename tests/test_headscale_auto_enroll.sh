@@ -10,8 +10,6 @@ HOTPLUG="$ROOT_DIR/files/etc/hotplug.d/iface/95-headscale-auto-enroll"
 CI_INJECTOR="$ROOT_DIR/Scripts/HeadscaleAutoEnroll.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CALLER_WORKFLOWS=(
-  "$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
-  "$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
   "$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 )
 DOC="$ROOT_DIR/docs/headscale-auto-enroll.md"

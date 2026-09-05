@@ -2,14 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QCA_612="$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
 QCA_618="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
-QCA_LIBWRT="$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIGURER="$ROOT_DIR/Scripts/ConfigureLanTailnetGateway.sh"
 
-for workflow in "$QCA_612" "$QCA_618" "$QCA_LIBWRT"; do
-	[ -f "$workflow" ] || continue
+for workflow in "$QCA_618"; do
+	[ -f "$workflow" ] || { echo "missing workflow $workflow"; exit 1; }
 
 	grep -q "LAN_TAILNET:" "$workflow" || {
 		echo "$workflow missing LAN_TAILNET workflow input"

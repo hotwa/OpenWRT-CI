@@ -6,8 +6,6 @@ SCRIPT="$ROOT_DIR/Scripts/ConfigureWanDropbearAccess.sh"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 WORKFLOWS=(
   "$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
-  "$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
-  "$ROOT_DIR/.github/workflows/QCA-6.12-LiBwrt.yml"
 )
 
 [ -f "$SCRIPT" ] || { echo "missing WAN Dropbear configurator"; exit 1; }

@@ -101,8 +101,6 @@ for workflow in \
   RE-Mesh-BUILD.yml \
   RE-CONTAINER-RUNTIME-TEST.yml \
   RE-CS-07-BUILD.yml \
-  QCA-6.12-LiBwrt.yml \
-  QCA-6.12-VIKINGYFY.yml \
   QCA-6.18-VIKINGYFY.yml; do
   grep -q 'WRT_TAILSCALE_ROUTE_RECONCILE: true' "$ROOT_DIR/.github/workflows/$workflow" || {
   [ -f "$ROOT_DIR/.github/workflows/$workflow" ] || continue

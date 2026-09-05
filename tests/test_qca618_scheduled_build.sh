@@ -2,25 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QCA_612="$ROOT_DIR/.github/workflows/QCA-6.12-VIKINGYFY.yml"
 QCA_618="$ROOT_DIR/.github/workflows/QCA-6.18-VIKINGYFY.yml"
 AUTO_CLEAN="$ROOT_DIR/.github/workflows/Auto-Clean.yml"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
-[ -f "$QCA_612" ] || { echo "QCA-6.12 workflow not present; skipping QCA-6.12 schedule guard"; exit 0; }
 [ -f "$QCA_618" ] || { echo "missing QCA-6.18 workflow"; exit 1; }
 [ -f "$AUTO_CLEAN" ] || { echo "missing Auto-Clean workflow"; exit 1; }
 [ -f "$WRT_CORE" ] || { echo "missing WRT-CORE workflow"; exit 1; }
-
-grep -q "定时编译已迁移到 QCA-6.18-VIKINGYFY" "$QCA_612" || {
-  echo "QCA-6.12 workflow does not document the schedule migration"
-  exit 1
-}
-
-if grep -q "cron: '0 1 \\* \\* \\*'" "$QCA_612"; then
-  echo "QCA-6.12 workflow still has the daily scheduled build"
-  exit 1
-fi
 
 if grep -q "cron: '0 1 \\* \\* \\*'" "$QCA_618"; then
   echo "QCA-6.18 workflow still has the daily scheduled build"
