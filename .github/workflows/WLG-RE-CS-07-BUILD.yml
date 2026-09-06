@@ -1,6 +1,11 @@
 name: WLG RE-CS-07 Build (OpenClash)
 
 on:
+  push:
+    branches:
+      - feature/wlg-openclash
+    paths:
+      - '.github/workflows/WLG-RE-CS-07-BUILD.yml'
   workflow_dispatch:
     inputs:
       DEBUG_SSH:
@@ -25,7 +30,7 @@ jobs:
       HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
       HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
     with:
-      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH || false }}
       WRT_CONFIG: IPQ60XX-RE-CS-07-NOWIFI
       WRT_THEME: argon
       WRT_NAME: WLG-RE-CS-07
