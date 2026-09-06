@@ -54,7 +54,8 @@ grep -Fq '"defaultProvider"' "$PI_SETTINGS"
 grep -Fq 'pi-commandcode-provider' "$PI_MODELS" || true
 
 CASE_ROOT="$(mktemp -d)"
-trap 'rm -rf -- "$CASE_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf -- "$CASE_ROOT" "$TMP_ROOT"' EXIT
 mkdir -p "$CASE_ROOT/etc/pi/agent" "$CASE_ROOT/root/.pi/agent"
 
 write_settings() {
@@ -81,7 +82,12 @@ COMMANDCODE_API_KEY="" bash "$CONFIG_SCRIPT" "$CASE_ROOT"
 [ ! -f "$CASE_ROOT/etc/pi/agent/auth.json" ]
 
 # Test 2: valid secret writes auth.json and flips defaultProvider.
-COMMANDCODE_API_KEY="user_abc123def456" bash "$CONFIG_SCRIPT" "$CASE_ROOT"
+# Force the fallback cache by pointing at an unreachable URL (connection
+# refused on 127.0.0.1:1 is immediate).  The real API is publicly reachable
+# and would return a non-deterministic model order.
+COMMANDCODE_API_KEY="user_abc123def456" \
+  COMMANDCODE_MODELS_URL="http://127.0.0.1:1/models" \
+  bash "$CONFIG_SCRIPT" "$CASE_ROOT"
 
 for dir in "$CASE_ROOT/etc/pi/agent" "$CASE_ROOT/root/.pi/agent"; do
   [ -f "$dir/auth.json" ] || { echo "missing auth.json in $dir"; exit 1; }
@@ -105,8 +111,79 @@ if COMMANDCODE_API_KEY="sk-bad-prefix" bash "$CONFIG_SCRIPT" "$CASE_ROOT" 2>/dev
 fi
 
 # Test 4: auth.json is idempotent — running twice does not corrupt JSON.
-COMMANDCODE_API_KEY="user_second_run" bash "$CONFIG_SCRIPT" "$CASE_ROOT"
+COMMANDCODE_API_KEY="user_second_run" \
+  COMMANDCODE_MODELS_URL="http://127.0.0.1:1/models" \
+  bash "$CONFIG_SCRIPT" "$CASE_ROOT"
 jq -e . "$CASE_ROOT/etc/pi/agent/auth.json" >/dev/null
 [ "$(jq -r .apiKey "$CASE_ROOT/etc/pi/agent/auth.json")" = "user_second_run" ]
+
+# Test 5: pre-built model cache is generated in /etc/pi/agent/.
+[ -f "$CASE_ROOT/etc/pi/agent/commandcode-models.json" ] || {
+  echo "FAIL: commandcode-models.json cache was not generated"
+  exit 1
+}
+jq -e '.data | type == "array"' "$CASE_ROOT/etc/pi/agent/commandcode-models.json" >/dev/null || {
+  echo "FAIL: commandcode-models.json is not valid JSON with a data array"
+  exit 1
+}
+# The fallback cache must contain at least one open-source model.
+[ "$(jq -r '.data[0].id' "$CASE_ROOT/etc/pi/agent/commandcode-models.json")" = "Qwen/Qwen3.8-Flash" ] || {
+  echo "FAIL: fallback cache does not start with Qwen/Qwen3.8-Flash"
+  exit 1
+}
+
+# Test 6: defaultModel is dynamically selected from the cache, not hardcoded.
+# With the fallback cache (API unreachable in tests), the first open-source
+# model is Qwen/Qwen3.8-Flash.
+[ "$(jq -r .defaultModel "$CASE_ROOT/etc/pi/agent/settings.json")" = "Qwen/Qwen3.8-Flash" ]
+
+# Test 7: custom cache input (COMMANDCODE_MODEL_CACHE_INPUT) overrides the API
+# fetch and drives model selection.  Here the first open-source model is a
+# DeepSeek model, so defaultModel must follow it.
+CUSTOM_CACHE="$(mktemp)"
+cat >"$CUSTOM_CACHE" <<'EOF'
+{"object":"list","data":[{"id":"deepseek-ai/DeepSeek-V3","object":"model","owned_by":"deepseek"},{"id":"anthropic/claude-3.5-sonnet","object":"model","owned_by":"anthropic"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}
+EOF
+CASE_CUSTOM="$TMP_ROOT/custom-cache"
+mkdir -p "$CASE_CUSTOM/etc/pi/agent" "$CASE_CUSTOM/root/.pi/agent"
+write_settings "$CASE_CUSTOM/etc/pi/agent"
+write_settings "$CASE_CUSTOM/root/.pi/agent"
+COMMANDCODE_API_KEY="user_custom_cache" \
+  COMMANDCODE_MODEL_CACHE_INPUT="$CUSTOM_CACHE" \
+  bash "$CONFIG_SCRIPT" "$CASE_CUSTOM"
+[ "$(jq -r .defaultModel "$CASE_CUSTOM/etc/pi/agent/settings.json")" = "deepseek-ai/DeepSeek-V3" ] || {
+  echo "FAIL: defaultModel was not selected from custom cache (expected deepseek-ai/DeepSeek-V3)"
+  exit 1
+}
+# The cache file must match the custom input (copied, not fetched).
+cmp -s "$CUSTOM_CACHE" "$CASE_CUSTOM/etc/pi/agent/commandcode-models.json" || {
+  echo "FAIL: commandcode-models.json does not match custom cache input"
+  exit 1
+}
+rm -f "$CUSTOM_CACHE"
+
+# Test 8: cache with no open-source models falls back to the first model.
+CLOSED_CACHE="$(mktemp)"
+cat >"$CLOSED_CACHE" <<'EOF'
+{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model"},{"id":"openai/gpt-4o","object":"model"}]}
+EOF
+CASE_CLOSED="$TMP_ROOT/closed-cache"
+mkdir -p "$CASE_CLOSED/etc/pi/agent" "$CASE_CLOSED/root/.pi/agent"
+write_settings "$CASE_CLOSED/etc/pi/agent"
+write_settings "$CASE_CLOSED/root/.pi/agent"
+COMMANDCODE_API_KEY="user_closed_cache" \
+  COMMANDCODE_MODEL_CACHE_INPUT="$CLOSED_CACHE" \
+  bash "$CONFIG_SCRIPT" "$CASE_CLOSED"
+[ "$(jq -r .defaultModel "$CASE_CLOSED/etc/pi/agent/settings.json")" = "anthropic/claude-3.5-sonnet" ] || {
+  echo "FAIL: no-open-source fallback did not select first model"
+  exit 1
+}
+rm -f "$CLOSED_CACHE"
+
+# Test 9: cache file must not contain the API key (only model directory).
+if grep -Fq 'user_' "$CASE_ROOT/etc/pi/agent/commandcode-models.json"; then
+  echo "FAIL: commandcode-models.json contains API key material"
+  exit 1
+fi
 
 echo "commandcode provider config tests passed"

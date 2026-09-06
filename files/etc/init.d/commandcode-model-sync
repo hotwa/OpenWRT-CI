@@ -1,0 +1,151 @@
+#!/bin/sh /etc/rc.common
+# CommandCode model catalog dynamic sync.
+#
+# Best-effort background task that runs after boot: waits for network, fetches
+# the latest model catalog from the CommandCode API, updates the on-disk cache,
+# and — only when settings.json is still firmware-managed (not operator-edited)
+# — refreshes defaultModel to the first open-source model in the new catalog.
+#
+# Failures are non-fatal: the existing cache and settings are preserved and the
+# pi-commandcode-provider extension will fetch the catalog on its own next use.
+
+START=99
+STOP=10
+
+# All paths are overridable for testing.
+MODELS_URL="${COMMANDCODE_MODELS_URL:-https://api.commandcode.ai/provider/v1/models}"
+CACHE_FILE="${COMMANDCODE_CACHE_FILE:-/data/pi/agent/commandcode-models.json}"
+SETTINGS_FILE="${COMMANDCODE_SETTINGS_FILE:-/data/pi/agent/settings.json}"
+AUTH_FILE="${COMMANDCODE_AUTH_FILE:-/data/commandcode/auth.json}"
+MANAGED_MARKER="${COMMANDCODE_MANAGED_MARKER:-/data/pi/agent/.firmware-settings-managed}"
+MULTICA_INIT="${COMMANDCODE_MULTICA_INIT:-/etc/init.d/multica}"
+LOG_TAG="${COMMANDCODE_LOG_TAG:-commandcode-model-sync}"
+SYNC_DELAY="${COMMANDCODE_SYNC_DELAY:-60}"
+MAX_RETRIES="${COMMANDCODE_SYNC_RETRIES:-6}"
+RETRY_INTERVAL="${COMMANDCODE_SYNC_INTERVAL:-30}"
+
+log_msg() {
+	logger -t "$LOG_TAG" "$*" 2>/dev/null || true
+}
+
+# Select the first open-source model from a cache file.  Mirrors the logic in
+# 99-auto-mount-data (grep/sed only, no jq).  Falls back to the first model in
+# the list if no open-source pattern matches.
+select_model_from_cache() {
+	local cache_file="$1"
+	local model_ids model
+	[ -f "$cache_file" ] || return 1
+	model_ids="$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$cache_file" 2>/dev/null | \
+		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+	[ -n "$model_ids" ] || return 1
+	for model in $model_ids; do
+		case "$model" in
+			*[Qq]wen*|*[Ll]lama*|*[Mm]istral*|*[Dd]eep[Ss]eek*|*[Gg]emma*)
+				printf '%s\n' "$model"
+				return 0
+				;;
+		esac
+	done
+	printf '%s\n' "$model_ids" | head -1
+	return 0
+}
+
+# True only when the settings file is still the firmware-written copy (mtime
+# matches the managed marker).  An operator edit breaks the match and we must
+# not overwrite their customization.
+settings_is_firmware_managed() {
+	[ -f "$MANAGED_MARKER" ] || return 1
+	[ "$(stat -c %Y "$SETTINGS_FILE" 2>/dev/null || true)" = \
+	  "$(stat -c %Y "$MANAGED_MARKER" 2>/dev/null || true)" ]
+}
+
+mark_settings_firmware_managed() {
+	touch -r "$SETTINGS_FILE" "$MANAGED_MARKER" 2>/dev/null || \
+		touch "$MANAGED_MARKER"
+}
+
+# Fetch the catalog using whatever HTTP client is available.  Writes to the
+# file named in $1.  Returns 0 on success, 1 on failure.
+fetch_catalog() {
+	local out="$1"
+	local api_key fetch_cmd
+
+	api_key="$(sed -n 's/.*"apiKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$AUTH_FILE" 2>/dev/null | head -1)"
+	[ -n "$api_key" ] || return 1
+
+	for fetch_cmd in uclient-fetch curl wget; do
+		command -v "$fetch_cmd" >/dev/null 2>&1 || continue
+		case "$fetch_cmd" in
+			uclient-fetch)
+				uclient-fetch -q -O "$out" \
+					--header="Authorization: Bearer $api_key" \
+					"$MODELS_URL" 2>/dev/null || true
+				;;
+			curl)
+				curl -sf --max-time 20 \
+					-H "Authorization: Bearer $api_key" \
+					-o "$out" "$MODELS_URL" 2>/dev/null || true
+				;;
+			wget)
+				wget -qO "$out" --timeout=20 \
+					--header="Authorization: Bearer $api_key" \
+					"$MODELS_URL" 2>/dev/null || true
+				;;
+		esac
+		[ -s "$out" ] && return 0
+	done
+	return 1
+}
+
+# Core sync logic.  Retries the fetch until network is ready or retries are
+# exhausted, then atomically updates the cache and possibly defaultModel.
+do_sync() {
+	local tmp_file attempt new_model current_model
+
+	tmp_file="${CACHE_FILE}.tmp.$$"
+	attempt=0
+	while [ "$attempt" -lt "$MAX_RETRIES" ]; do
+		if fetch_catalog "$tmp_file"; then
+			break
+		fi
+		attempt=$((attempt + 1))
+		[ "$attempt" -lt "$MAX_RETRIES" ] && sleep "$RETRY_INTERVAL"
+	done
+
+	if [ ! -s "$tmp_file" ]; then
+		rm -f "$tmp_file"
+		log_msg "catalog fetch failed after $MAX_RETRIES attempts; keeping current cache"
+		return 0
+	fi
+
+	# Basic shape validation: must contain a "data" array.
+	grep -q '"data"' "$tmp_file" || {
+		rm -f "$tmp_file"
+		log_msg "invalid catalog response (no data array); keeping current cache"
+		return 0
+	}
+
+	mv "$tmp_file" "$CACHE_FILE"
+	log_msg "model catalog cache updated"
+
+	# Refresh defaultModel only when the operator has not customized settings.
+	if settings_is_firmware_managed; then
+		new_model="$(select_model_from_cache "$CACHE_FILE")" || return 0
+		[ -n "$new_model" ] || return 0
+		current_model="$(sed -n 's/.*"defaultModel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SETTINGS_FILE" 2>/dev/null | head -1)"
+		if [ "$new_model" != "$current_model" ]; then
+			sed -i "s|\"defaultModel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"defaultModel\": \"$new_model\"|" "$SETTINGS_FILE" || return 0
+			mark_settings_firmware_managed
+			log_msg "defaultModel updated to $new_model"
+			if [ -x "$MULTICA_INIT" ]; then
+				"$MULTICA_INIT" restart 2>/dev/null || true
+			fi
+		fi
+	fi
+	return 0
+}
+
+start() {
+	# Delay, then sync in the background.  Never blocks the boot sequence.
+	( sleep "$SYNC_DELAY"; do_sync ) &
+}
