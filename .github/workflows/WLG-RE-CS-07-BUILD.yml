@@ -1,6 +1,11 @@
 name: WLG RE-CS-07 Build (OpenClash)
 
 on:
+  push:
+    branches:
+      - feature/wlg-openclash
+    paths:
+      - '.github/workflows/WLG-RE-CS-07-BUILD.yml'
   workflow_dispatch:
     inputs:
       DEBUG_SSH:
