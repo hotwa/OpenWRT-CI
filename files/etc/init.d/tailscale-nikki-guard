@@ -217,6 +217,20 @@ current_profile_path() {
 	return 1
 }
 
+fix_nikki_api_listen() {
+	local al ip port
+	al="$(uci -q get nikki.mixin.api_listen || true)"
+	case "$al" in
+		*/*:*)
+			ip="${al%%/*}"
+			port="${al##*:}"
+			uci -q set "nikki.mixin.api_listen=${ip}:${port}"
+			logger -t tailscale-nikki-guard "fixed nikki api_listen: $al -> ${ip}:${port}"
+			changed=1
+			;;
+	esac
+}
+
 apply_guard() {
 	local active_profile
 	[ -f "/etc/config/nikki" ] || return 0
@@ -224,6 +238,7 @@ apply_guard() {
 	uci -q get "nikki.@router_access_control[0].enabled" >/dev/null 2>&1 || return 0
 
 	changed=0
+	fix_nikki_api_listen
 	ensure_list_entry "nikki.proxy.reserved_ip" "$TAILSCALE_IPV4_RANGE"
 	ensure_list_entry "nikki.proxy.reserved_ip6" "$TAILSCALE_IPV6_RANGE"
 	ensure_list_entry "nikki.@router_access_control[0].cgroup" "services/dnsmasq"
