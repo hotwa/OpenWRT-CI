@@ -10,12 +10,20 @@ VALIDATOR="$ROOT_DIR/Scripts/ValidateLanIp.sh"
 for workflow in $(discover_device_workflows); do
   grep -q '^      LAN_IP:' "$workflow" || continue
 
-  grep -q "default: '192.168.10.1'" "$workflow" || {
-    echo "$workflow missing default LAN IP 192.168.10.1"
+  # WLG builds use a dedicated LAN subnet to avoid conflicts with the
+  # default 192.168.10.0/24 production network.
+  if echo "$workflow" | grep -qi 'wlg'; then
+    DEFAULT_IP='192.168.50.1'
+  else
+    DEFAULT_IP='192.168.10.1'
+  fi
+
+  grep -q "default: '$DEFAULT_IP'" "$workflow" || {
+    echo "$workflow missing default LAN IP $DEFAULT_IP"
     exit 1
   }
 
-  grep -q "WRT_IP: \${{ inputs.LAN_IP || '192.168.10.1' }}" "$workflow" || {
+  grep -q "WRT_IP: \${{ inputs.LAN_IP || '$DEFAULT_IP' }}" "$workflow" || {
     echo "$workflow does not pass LAN_IP into WRT-CORE with default fallback"
     exit 1
   }

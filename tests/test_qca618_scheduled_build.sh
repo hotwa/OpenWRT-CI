@@ -21,10 +21,16 @@ for workflow in $(discover_device_workflows); do
     exit 1
   fi
 
-  grep -q "secrets: inherit" "$workflow" || {
+  # Secrets may be passed via `secrets: inherit` or an explicit secrets block.
+  # WLG builds use an explicit allowlist to avoid injecting private secrets.
+  if grep -q "secrets: inherit" "$workflow"; then
+    :
+  elif grep -q "^    secrets:" "$workflow"; then
+    :
+  else
     echo "$(basename "$workflow") workflow does not pass secrets into WRT-CORE"
     exit 1
-  }
+  fi
 done
 
 grep -q "Scripts/HeadscaleAutoEnroll.sh" "$WRT_CORE" || {
