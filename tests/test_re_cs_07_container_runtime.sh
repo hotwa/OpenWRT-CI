@@ -57,14 +57,16 @@ for obsolete in RE-CS-02-CONTAINER-TEST.yml RE-CS-07-CONTAINER-TEST.yml; do
 	}
 done
 
-if grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"; then
-	echo "normal RE-Mesh workflow must not enable the experimental runtime" >&2
+# Container runtime is now promoted to production builds for the three
+# whitelisted devices (jdcloud_re-ss-01, jdcloud_re-cs-02, jdcloud_re-cs-07).
+grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml" || {
+	echo "RE-Mesh production workflow must enable the container runtime" >&2
 	exit 1
-fi
-if grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$ROOT_DIR/.github/workflows/RE-CS-07-BUILD.yml"; then
-	echo "normal RE-CS-07 workflow must not enable the experimental runtime" >&2
+}
+grep -Fq 'WRT_CONTAINER_RUNTIME_TEST: true' "$ROOT_DIR/.github/workflows/RE-CS-07-BUILD.yml" || {
+	echo "RE-CS-07 production workflow must enable the container runtime" >&2
 	exit 1
-fi
+}
 
 if grep -Eq 'CONFIG_PACKAGE_(docker|dockerd|luci-app-dockerman)=y' "$WORKFLOW"; then
 	echo "container test must not add Docker packages" >&2
