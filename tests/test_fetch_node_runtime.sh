@@ -45,7 +45,8 @@ for term in '--ignore-scripts' '--legacy-peer-deps' 'PI EXTENSION DEPENDENCY TRE
 done
 # configure_pi_extensions must register every preinstalled package in Pi's
 # settings so pi actually loads them (not just installs them under /opt/node).
-grep -Fq '"pi-commandcode-provider"' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not register pi-commandcode-provider in settings"
+# Match both "pi-commandcode-provider" (legacy) and "npm:pi-commandcode-provider" (current).
+grep -Fq 'pi-commandcode-provider' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not register pi-commandcode-provider in settings"
 
 if grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt"; then
   fail "feed ripgrep would pull Rust into every firmware build"
