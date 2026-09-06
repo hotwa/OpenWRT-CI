@@ -330,8 +330,8 @@ grep -Fq '"defaultProvider": "commandcode"' "$CASE_MIGRATE/data/pi/agent/setting
 	echo "existing settings.json was not migrated to CommandCode provider"
 	exit 1
 }
-grep -Fq '"defaultModel": ""' "$CASE_MIGRATE/data/pi/agent/settings.json" || {
-	echo "defaultModel was not cleared during CommandCode migration"
+grep -Fq '"defaultModel": "Qwen/Qwen3.8-Flash"' "$CASE_MIGRATE/data/pi/agent/settings.json" || {
+	echo "defaultModel was not set to Qwen/Qwen3.8-Flash during CommandCode migration"
 	exit 1
 }
 # Backup of the original settings must exist.
@@ -422,6 +422,76 @@ printf '%s\n' '/dev/mmcblk0p15: UUID="nokey-uuid" LABEL="openwrt-data" TYPE="ext
 run_fixture "$CASE_NOMIGRATE_NOKEY" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NOMIGRATE_NOKEY/firmware_etc"
 grep -Fq '"defaultProvider": "office-sglang"' "$CASE_NOMIGRATE_NOKEY/data/pi/agent/settings.json" || {
 	echo "settings were migrated despite no CommandCode key being injected"
+	exit 1
+}
+
+# Case 5: npm symlink for pi-commandcode-provider must be created so Pi
+# loads the extension without an explicit --extension flag.  The provider
+# path is resolved dynamically from the agent-runtime tree.
+CASE_NPM_LINK="$TMP_ROOT/cc-npm-link"
+mkdir -p "$CASE_NPM_LINK/root" "$CASE_NPM_LINK/data/pi/agent" \
+  "$CASE_NPM_LINK/firmware_etc/pi/agent" "$CASE_NPM_LINK/firmware_etc/commandcode" \
+  "$CASE_NPM_LINK/agent-runtime/current/node/lib/node_modules/pi-commandcode-provider"
+cat >"$CASE_NPM_LINK/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B"
+}
+EOF
+printf '%s\n' '{"apiKey":"user_npm_link_key"}' >"$CASE_NPM_LINK/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_NPM_LINK/firmware_etc/pi/agent/auth.json"
+printf '%s\n' '{"apiKey":"user_npm_link_key"}' >"$CASE_NPM_LINK/firmware_etc/commandcode/auth.json"
+chmod 600 "$CASE_NPM_LINK/firmware_etc/commandcode/auth.json"
+printf '%s\n' '{"name":"pi-commandcode-provider","version":"1.0.0"}' \
+  >"$CASE_NPM_LINK/agent-runtime/current/node/lib/node_modules/pi-commandcode-provider/package.json"
+: >"$CASE_NPM_LINK/mounts"
+printf '%s\n' '/dev/mmcblk0p16: UUID="npmlink-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="npmlink-part"' >"$CASE_NPM_LINK/block.info"
+run_fixture "$CASE_NPM_LINK" \
+  "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NPM_LINK/firmware_etc" \
+  "COMMANDCODE_PROVIDER_SEARCH_ROOT=$CASE_NPM_LINK/agent-runtime"
+[ -L "$CASE_NPM_LINK/data/pi/agent/npm/node_modules/pi-commandcode-provider" ] || {
+	echo "npm symlink for pi-commandcode-provider was not created"
+	exit 1
+}
+[ "$(readlink "$CASE_NPM_LINK/data/pi/agent/npm/node_modules/pi-commandcode-provider")" = \
+  "$CASE_NPM_LINK/agent-runtime/current/node/lib/node_modules/pi-commandcode-provider" ] || {
+	echo "npm symlink points to wrong provider path"
+	exit 1
+}
+# Key injection path consistency: /data/commandcode/auth.json must exist and
+# be readable (Pi reads ~/.commandcode/auth.json which symlinks to this).
+[ -f "$CASE_NPM_LINK/data/commandcode/auth.json" ] || {
+	echo "CommandCode auth.json was not copied to /data/commandcode"
+	exit 1
+}
+grep -Fq 'user_npm_link_key' "$CASE_NPM_LINK/data/commandcode/auth.json" || {
+	echo "CommandCode auth.json on /data has wrong content"
+	exit 1
+}
+
+# Case 6: no agent-runtime tree means npm symlink is skipped gracefully
+# (non-fatal).
+CASE_NPM_NO_RT="$TMP_ROOT/cc-npm-nort"
+mkdir -p "$CASE_NPM_NO_RT/root" "$CASE_NPM_NO_RT/data/pi/agent" \
+  "$CASE_NPM_NO_RT/firmware_etc/pi/agent" "$CASE_NPM_NO_RT/firmware_etc/commandcode"
+cat >"$CASE_NPM_NO_RT/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B"
+}
+EOF
+printf '%s\n' '{"apiKey":"user_nort_key"}' >"$CASE_NPM_NO_RT/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_NPM_NO_RT/firmware_etc/pi/agent/auth.json"
+printf '%s\n' '{"apiKey":"user_nort_key"}' >"$CASE_NPM_NO_RT/firmware_etc/commandcode/auth.json"
+chmod 600 "$CASE_NPM_NO_RT/firmware_etc/commandcode/auth.json"
+: >"$CASE_NPM_NO_RT/mounts"
+printf '%s\n' '/dev/mmcblk0p17: UUID="nort-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="nort-part"' >"$CASE_NPM_NO_RT/block.info"
+run_fixture "$CASE_NPM_NO_RT" \
+  "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NPM_NO_RT/firmware_etc" \
+  "COMMANDCODE_PROVIDER_SEARCH_ROOT=$CASE_NPM_NO_RT/nonexistent-runtime"
+# Script must succeed even without an agent-runtime tree.
+[ ! -e "$CASE_NPM_NO_RT/data/pi/agent/npm/node_modules/pi-commandcode-provider" ] || {
+	echo "npm symlink should not exist when agent-runtime tree is absent"
 	exit 1
 }
 

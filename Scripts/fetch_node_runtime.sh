@@ -507,9 +507,9 @@ configure_pi_extensions() {
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask",
   "packages": [
+    "npm:pi-commandcode-provider",
     "pi-package-manager",
     "btw-pi",
-    "pi-commandcode-provider",
     "pi-web-search",
     "pi-wechat-assistant",
     "pi-mcp-adapter",

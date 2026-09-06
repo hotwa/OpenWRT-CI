@@ -539,7 +539,7 @@ migrate_commandcode_provider() {
 		mv "$backup" "$data_settings"
 		return 1
 	}
-	sed -i 's/"defaultModel"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultModel": ""/' "$data_settings" || {
+	sed -i 's/"defaultModel"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultModel": "Qwen\/Qwen3.8-Flash"/' "$data_settings" || {
 		mv "$backup" "$data_settings"
 		return 1
 	}
@@ -550,6 +550,72 @@ migrate_commandcode_provider() {
 	fi
 	mark_settings_firmware_managed
 	log_error "migrated existing Pi settings to CommandCode provider (backup: $backup)"
+}
+
+# Pi 0.85+ resolves "npm:pi-commandcode-provider" against
+# /data/pi/agent/npm/node_modules.  The extension ships inside the agent-runtime
+# node_modules tree, whose exact path can shift between runtime generations.
+# Resolve it dynamically and create a stable symlink so Pi loads the provider
+# without an explicit --extension flag.
+ensure_commandcode_npm_link() {
+	local npm_modules="$DATA_ROOT/pi/agent/npm/node_modules"
+	local link_path="$npm_modules/pi-commandcode-provider"
+	local search_root="${COMMANDCODE_PROVIDER_SEARCH_ROOT:-$DATA_ROOT/agent-runtime}"
+	local provider_dir
+
+	[ -d "$search_root" ] || return 0
+	provider_dir="$(find "$search_root" -name "pi-commandcode-provider" -type d 2>/dev/null | head -1)"
+	[ -n "$provider_dir" ] || return 0
+
+	mkdir -p "$npm_modules" || return 1
+	# ln -sfn is idempotent: it replaces an existing link without following it.
+	ln -sfn "$provider_dir" "$link_path" || return 1
+	log_error "linked pi-commandcode-provider to $provider_dir"
+}
+
+# Best-effort pre-warming of the CommandCode model catalog cache.  The
+# extension normally fetches https://api.commandcode.ai/provider/v1/models on
+# first use; if the network is not ready at boot the models may be temporarily
+# unavailable.  Try once here; failure is non-fatal and the extension retries.
+provision_commandcode_model_cache() {
+	local cache_file="$DATA_ROOT/pi/agent/commandcode-models.json"
+	local auth_file="$DATA_ROOT/commandcode/auth.json"
+	local api_key fetch_cmd
+
+	[ ! -e "$cache_file" ] || return 0
+	[ -s "$auth_file" ] || return 0
+
+	api_key="$(sed -n 's/.*"apiKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$auth_file" | head -1)"
+	[ -n "$api_key" ] || return 0
+
+	for fetch_cmd in uclient-fetch curl wget; do
+		command -v "$fetch_cmd" >/dev/null 2>&1 || continue
+		case "$fetch_cmd" in
+			uclient-fetch)
+				uclient-fetch -q -O "$cache_file" \
+					--header="Authorization: Bearer $api_key" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+			curl)
+				curl -sf -H "Authorization: Bearer $api_key" \
+					-o "$cache_file" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+			wget)
+				wget -qO "$cache_file" \
+					--header="Authorization: Bearer $api_key" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+		esac
+		if [ -s "$cache_file" ]; then
+			log_error "pre-warmed CommandCode model catalog cache"
+			return 0
+		fi
+	done
+	# Non-fatal: the extension will fetch the catalog when it first loads.
+	rm -f "$cache_file"
+	log_error "CommandCode model cache pre-warm skipped (network unavailable); extension will fetch on first use"
+	return 0
 }
 
 prepare_agent_storage() {
@@ -603,6 +669,14 @@ prepare_agent_storage() {
 		( umask 077; cp -p "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
 		mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
 	fi
+
+	# Pi loads "npm:pi-commandcode-provider" from /data/pi/agent/npm/node_modules.
+	# Link it to the extension inside the agent-runtime tree (resolved dynamically).
+	ensure_commandcode_npm_link || return 1
+
+	# Best-effort pre-warm of the model catalog cache so CommandCode models are
+	# available even if the network was not ready at first boot.
+	provision_commandcode_model_cache
 
 	# pi-subagents resolves schedule roots against the real project path.
 	# /root/.pi is a symlink to /data/pi, so a "~/"-based store root trips its

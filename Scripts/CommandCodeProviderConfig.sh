@@ -11,8 +11,8 @@
 #   persists across reboots and upgrades.
 #
 # Because the CommandCode model list changes as the subscription evolves, we
-# never hard-code a defaultModel; an empty string lets Pi pick the provider's
-# first advertised model at startup.
+# pin defaultModel to Qwen/Qwen3.8-Flash (speed-prioritized, stable).  The
+# dynamic catalog is still fetched by pi-commandcode-provider at runtime.
 
 set -euo pipefail
 
@@ -74,9 +74,10 @@ patch_settings() {
 	}
 
 	tmp_file="$settings_file.tmp.$$"
-	# Set defaultProvider to "commandcode" and clear defaultModel so Pi uses
-	# the first model advertised by the dynamic CommandCode catalog.
-	jq '.defaultProvider = "commandcode" | .defaultModel = ""' \
+	# Set defaultProvider to "commandcode" and defaultModel to Qwen/Qwen3.8-Flash
+	# (speed-prioritized, stable).  The dynamic catalog is still fetched by
+	# pi-commandcode-provider at runtime for model selection.
+	jq '.defaultProvider = "commandcode" | .defaultModel = "Qwen/Qwen3.8-Flash"' \
 		"$settings_file" >"$tmp_file" || {
 		rm -f "$tmp_file"
 		log_error "failed to patch $settings_file"

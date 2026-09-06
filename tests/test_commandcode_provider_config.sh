@@ -32,6 +32,22 @@ grep -Fq 'COMMANDCODE_API_KEY' "$WLG_WF"
 grep -Fq 'auth.json' "$AUTO_MOUNT"
 grep -Fq 'commandcode/auth.json' "$AUTO_MOUNT"
 
+# The build-time settings template (fetch_node_runtime.sh) must register
+# pi-commandcode-provider with the npm: prefix so Pi 0.85+ auto-loads it
+# without an explicit --extension flag.  Bare package names are unreliable.
+FETCH_RUNTIME="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
+[ -f "$FETCH_RUNTIME" ] || { echo "missing fetch_node_runtime.sh"; exit 1; }
+grep -Fq '"npm:pi-commandcode-provider"' "$FETCH_RUNTIME" || {
+	echo "fetch_node_runtime.sh must use npm:pi-commandcode-provider (not bare package name)"
+	exit 1
+}
+# The first-boot migrator must create the npm symlink so Pi resolves the
+# npm: package reference against /data/pi/agent/npm/node_modules.
+grep -Fq 'ensure_commandcode_npm_link' "$AUTO_MOUNT" || {
+	echo "99-auto-mount-data must create the pi-commandcode-provider npm symlink"
+	exit 1
+}
+
 # The repository's static settings must keep the public default; the secret
 # injection step is what flips it to commandcode at build time.
 grep -Fq '"defaultProvider"' "$PI_SETTINGS"
@@ -50,7 +66,7 @@ write_settings() {
   "defaultThinkingLevel": "medium",
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask",
-  "packages": ["pi-commandcode-provider"],
+  "packages": ["npm:pi-commandcode-provider", "pi-package-manager"],
   "autoUpdate": false
 }
 EOF
@@ -72,9 +88,9 @@ for dir in "$CASE_ROOT/etc/pi/agent" "$CASE_ROOT/root/.pi/agent"; do
   [ "$(jq -r .apiKey "$dir/auth.json")" = "user_abc123def456" ]
   [ "$(stat -c '%a' "$dir/auth.json")" = "600" ]
   [ "$(jq -r .defaultProvider "$dir/settings.json")" = "commandcode" ]
-  [ "$(jq -r .defaultModel "$dir/settings.json")" = "" ]
-  # packages list must survive the jq edit.
-  [ "$(jq -r '.packages[0]' "$dir/settings.json")" = "pi-commandcode-provider" ]
+  [ "$(jq -r .defaultModel "$dir/settings.json")" = "Qwen/Qwen3.8-Flash" ]
+  # packages list must survive the jq edit; npm: prefix ensures Pi loads it.
+  [ "$(jq -r '.packages[0]' "$dir/settings.json")" = "npm:pi-commandcode-provider" ]
 done
 
 # CommandCode CLI auth.json must also be written so cmd / cmdc works zero-config.
