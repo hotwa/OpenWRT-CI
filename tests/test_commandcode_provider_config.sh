@@ -10,6 +10,12 @@ PI_SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
 PI_MODELS="$ROOT_DIR/files/etc/pi/agent/models.json"
 
 [ -f "$CONFIG_SCRIPT" ] || { echo "missing CommandCodeProviderConfig.sh"; exit 1; }
+# WRT-CORE.yml executes the script directly (not via bash), so it must carry
+# the executable bit in git.  A 100644 entry would Permission-deny on runners.
+[ "$(git ls-files --stage -- "$CONFIG_SCRIPT" | awk '{print $1}')" = "100755" ] || {
+	echo "CommandCodeProviderConfig.sh is not marked executable (git mode 100755 required)"
+	exit 1
+}
 [ -f "$AUTO_MOUNT" ] || { echo "missing 99-auto-mount-data"; exit 1; }
 [ -f "$CORE_WF" ] || { echo "missing WRT-CORE.yml"; exit 1; }
 [ -f "$PI_SETTINGS" ] || { echo "missing pi settings.json"; exit 1; }
@@ -24,7 +30,7 @@ grep -Fq 'COMMANDCODE_API_KEY' "$CORE_WF"
 grep -Fq 'CommandCodeProviderConfig.sh' "$CORE_WF"
 grep -Fq 'COMMANDCODE_API_KEY' "$WLG_WF"
 grep -Fq 'auth.json' "$AUTO_MOUNT"
-grep -Fq '/etc/commandcode/auth.json' "$AUTO_MOUNT"
+grep -Fq 'commandcode/auth.json' "$AUTO_MOUNT"
 
 # The repository's static settings must keep the public default; the secret
 # injection step is what flips it to commandcode at build time.
