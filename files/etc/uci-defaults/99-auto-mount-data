@@ -498,6 +498,56 @@ mark_settings_firmware_managed() {
 		touch "$DATA_ROOT/pi/agent/.firmware-settings-managed"
 }
 
+# Select the first open-source model from a CommandCode model catalog cache.
+# The cache is the raw /provider/v1/models response: {"data":[{"id":"..."},...]}.
+# Uses only grep/sed (no jq) because jq is not guaranteed on OpenWrt.
+# Returns 0 with the model id on stdout; returns 1 if the cache is missing or
+# unparseable.  If no open-source model matches, falls back to the first model
+# in the list.
+select_model_from_cache() {
+	local cache_file="$1"
+	local model_ids model
+	[ -f "$cache_file" ] || return 1
+	model_ids="$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$cache_file" 2>/dev/null | \
+		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+	[ -n "$model_ids" ] || return 1
+	for model in $model_ids; do
+		case "$model" in
+			*[Qq]wen*|*[Ll]lama*|*[Mm]istral*|*[Dd]eep[Ss]eek*|*[Gg]emma*)
+				printf '%s\n' "$model"
+				return 0
+				;;
+		esac
+	done
+	# No open-source model matched: fall back to the first model in the list.
+	printf '%s\n' "$model_ids" | head -1
+	return 0
+}
+
+# Ensure /data/pi/agent/settings.json defaultModel matches the cached catalog.
+# Only runs when the settings file is firmware-managed (not operator-edited).
+# This makes the first-boot default model track the build-time cache selection
+# and any runtime cache refresh performed by commandcode-model-sync.
+ensure_default_model_from_cache() {
+	local cache_file="$DATA_ROOT/pi/agent/commandcode-models.json"
+	local settings_file="$DATA_ROOT/pi/agent/settings.json"
+	local selected current
+
+	[ -f "$settings_file" ] || return 0
+	settings_is_firmware_managed || return 0
+	[ -f "$cache_file" ] || return 0
+
+	selected="$(select_model_from_cache "$cache_file")" || return 0
+	[ -n "$selected" ] || return 0
+
+	current="$(sed -n 's/.*"defaultModel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$settings_file" | head -1)"
+	[ "$selected" = "$current" ] && return 0
+
+	sed -i "s|\"defaultModel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"defaultModel\": \"$selected\"|" "$settings_file" || return 0
+	mark_settings_firmware_managed
+	log_error "defaultModel set to $selected from model catalog cache"
+}
+
 # One-time migration for devices that already have /data/pi/agent/settings.json
 # from an older firmware.  If the build injected a CommandCode API key and the
 # existing settings are still the firmware default (not operator-customized),
@@ -505,9 +555,10 @@ mark_settings_firmware_managed() {
 # provider without manual intervention.  The original file is backed up.
 migrate_commandcode_provider() {
 	local firmware_auth="$FIRMWARE_ETC/pi/agent/auth.json"
+	local firmware_cache="$FIRMWARE_ETC/pi/agent/commandcode-models.json"
 	local data_settings="$DATA_ROOT/pi/agent/settings.json"
 	local data_auth="$DATA_ROOT/pi/agent/auth.json"
-	local current_provider backup
+	local current_provider selected_model backup
 
 	# Only migrate when the build actually injected a CommandCode key.
 	[ -s "$firmware_auth" ] || return 0
@@ -533,13 +584,18 @@ migrate_commandcode_provider() {
 		esac
 	fi
 
+	# Select the default model from the build-time cached catalog.  If the cache
+	# is missing or unparseable, fall back to the stable Qwen/Qwen3.8-Flash.
+	selected_model="$(select_model_from_cache "$firmware_cache" 2>/dev/null || true)"
+	[ -n "$selected_model" ] || selected_model="Qwen/Qwen3.8-Flash"
+
 	backup="$data_settings.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo migration)"
 	cp -p "$data_settings" "$backup" || return 1
 	sed -i 's/"defaultProvider"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultProvider": "commandcode"/' "$data_settings" || {
 		mv "$backup" "$data_settings"
 		return 1
 	}
-	sed -i 's/"defaultModel"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultModel": "Qwen\/Qwen3.8-Flash"/' "$data_settings" || {
+	sed -i "s|\"defaultModel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"defaultModel\": \"$selected_model\"|" "$data_settings" || {
 		mv "$backup" "$data_settings"
 		return 1
 	}
@@ -549,7 +605,7 @@ migrate_commandcode_provider() {
 		mv "$data_auth.new" "$data_auth" || return 1
 	fi
 	mark_settings_firmware_managed
-	log_error "migrated existing Pi settings to CommandCode provider (backup: $backup)"
+	log_error "migrated existing Pi settings to CommandCode provider (model: $selected_model, backup: $backup)"
 }
 
 # Pi 0.85+ resolves "npm:pi-commandcode-provider" against
@@ -592,17 +648,18 @@ provision_commandcode_model_cache() {
 		command -v "$fetch_cmd" >/dev/null 2>&1 || continue
 		case "$fetch_cmd" in
 			uclient-fetch)
-				uclient-fetch -q -O "$cache_file" \
+				uclient-fetch -q -T 15 -O "$cache_file" \
 					--header="Authorization: Bearer $api_key" \
 					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
 				;;
 			curl)
-				curl -sf -H "Authorization: Bearer $api_key" \
+				curl -sf --max-time 15 \
+					-H "Authorization: Bearer $api_key" \
 					-o "$cache_file" \
 					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
 				;;
 			wget)
-				wget -qO "$cache_file" \
+				wget -qO "$cache_file" --timeout=15 \
 					--header="Authorization: Bearer $api_key" \
 					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
 				;;
@@ -652,7 +709,7 @@ prepare_agent_storage() {
 		cmp -s "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
 		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
-	for config_file in models.json settings.json auth.json; do
+	for config_file in models.json settings.json auth.json commandcode-models.json; do
 		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
 		cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
@@ -661,6 +718,12 @@ prepare_agent_storage() {
 			mark_settings_firmware_managed
 		fi
 	done
+
+	# After a fresh first-boot copy of settings.json, ensure defaultModel tracks
+	# the cached model catalog (the firmware settings may carry a model selected
+	# from the build-time fallback cache).  This is a no-op on upgrades where the
+	# operator already customized settings.
+	ensure_default_model_from_cache || true
 
 	# CommandCode CLI auth: copy the build-injected key onto /data so the
 	# cmd / cmdc CLI finds it at ~/.commandcode/auth.json.  pi-commandcode-provider
@@ -733,6 +796,13 @@ prepare_agent_storage() {
 	if [ -x /usr/sbin/uv-runtime-provision ]; then
 		UV_RUNTIME_QUIET=1 /usr/sbin/uv-runtime-provision || \
 			log_error "offline Python provisioning deferred"
+	fi
+	# Enable the CommandCode model catalog sync service.  It runs in the
+	# background after boot (START=99) and refreshes the cached model list plus
+	# defaultModel once the network is available.  Best-effort only.
+	if [ -x /etc/init.d/commandcode-model-sync ]; then
+		/etc/init.d/commandcode-model-sync enable >/dev/null 2>&1 || \
+			log_error "could not enable commandcode-model-sync"
 	fi
 }
 

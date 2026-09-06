@@ -306,6 +306,26 @@ grep -Fq 'subagent_cfg_dir/config.json' "$SCRIPT" || {
 	exit 1
 }
 
+# CommandCode model cache: the copy loop must carry commandcode-models.json
+# from the firmware onto /data so the first-boot selector and the runtime
+# sync service have a catalog even without network.
+grep -Fq 'commandcode-models.json' "$SCRIPT" || {
+	echo 'auto mount script does not copy commandcode-models.json to /data'
+	exit 1
+}
+grep -Fq 'select_model_from_cache' "$SCRIPT" || {
+	echo 'auto mount script does not define select_model_from_cache'
+	exit 1
+}
+grep -Fq 'ensure_default_model_from_cache' "$SCRIPT" || {
+	echo 'auto mount script does not define ensure_default_model_from_cache'
+	exit 1
+}
+grep -Fq 'commandcode-model-sync' "$SCRIPT" || {
+	echo 'auto mount script does not enable the commandcode-model-sync service'
+	exit 1
+}
+
 # --- CommandCode provider auto-migration for existing /data devices ---
 
 # Case 1: old device with firmware-default settings.json and build-injected
@@ -492,6 +512,124 @@ run_fixture "$CASE_NPM_NO_RT" \
 # Script must succeed even without an agent-runtime tree.
 [ ! -e "$CASE_NPM_NO_RT/data/pi/agent/npm/node_modules/pi-commandcode-provider" ] || {
 	echo "npm symlink should not exist when agent-runtime tree is absent"
+	exit 1
+}
+
+# --- CommandCode model cache: first-boot copy and dynamic selection ---
+
+# Case 7: first boot with no existing /data settings must copy the firmware
+# commandcode-models.json cache onto /data and select the first open-source
+# model from it as defaultModel.
+CASE_CACHE_FIRSTBOOT="$TMP_ROOT/cc-cache-firstboot"
+mkdir -p "$CASE_CACHE_FIRSTBOOT/root" \
+  "$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent" \
+  "$CASE_CACHE_FIRSTBOOT/firmware_etc/commandcode"
+# Firmware settings (what CommandCodeProviderConfig.sh would produce).
+cat >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "commandcode",
+  "defaultModel": "Qwen/Qwen3.8-Flash",
+  "defaultThinkingLevel": "medium"
+}
+EOF
+# Firmware model cache with a DeepSeek model first (open-source).
+cat >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/commandcode-models.json" <<'EOF'
+{"object":"list","data":[{"id":"deepseek-ai/DeepSeek-V3","object":"model"},{"id":"Qwen/Qwen3.8-27B","object":"model"}]}
+EOF
+printf '%s\n' '{"apiKey":"user_firstboot_key"}' >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/auth.json"
+printf '%s\n' '{"apiKey":"user_firstboot_key"}' >"$CASE_CACHE_FIRSTBOOT/firmware_etc/commandcode/auth.json"
+chmod 600 "$CASE_CACHE_FIRSTBOOT/firmware_etc/commandcode/auth.json"
+: >"$CASE_CACHE_FIRSTBOOT/mounts"
+printf '%s\n' '/dev/mmcblk0p18: UUID="firstboot-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="firstboot-part"' >"$CASE_CACHE_FIRSTBOOT/block.info"
+run_fixture "$CASE_CACHE_FIRSTBOOT" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_CACHE_FIRSTBOOT/firmware_etc"
+# Cache must be copied onto /data.
+[ -f "$CASE_CACHE_FIRSTBOOT/data/pi/agent/commandcode-models.json" ] || {
+	echo "commandcode-models.json was not copied to /data at first boot"
+	exit 1
+}
+cmp -s "$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/commandcode-models.json" \
+  "$CASE_CACHE_FIRSTBOOT/data/pi/agent/commandcode-models.json" || {
+	echo "commandcode-models.json copy does not match firmware source"
+	exit 1
+}
+# defaultModel must be the first open-source model from the cache (DeepSeek).
+grep -Fq '"defaultModel": "deepseek-ai/DeepSeek-V3"' "$CASE_CACHE_FIRSTBOOT/data/pi/agent/settings.json" || {
+	echo "first-boot defaultModel was not selected from the model cache"
+	exit 1
+}
+# Managed marker must exist after first-boot provisioning.
+[ -f "$CASE_CACHE_FIRSTBOOT/data/pi/agent/.firmware-settings-managed" ] || {
+	echo "firmware-settings-managed marker missing after first boot"
+	exit 1
+}
+
+# Case 8: upgrade migration with a firmware cache must select the model from
+# the cache instead of hardcoding Qwen/Qwen3.8-Flash.
+CASE_MIGRATE_CACHE="$TMP_ROOT/cc-migrate-cache"
+mkdir -p "$CASE_MIGRATE_CACHE/root" "$CASE_MIGRATE_CACHE/data/pi/agent" \
+  "$CASE_MIGRATE_CACHE/firmware_etc/pi/agent" "$CASE_MIGRATE_CACHE/firmware_etc/commandcode"
+cat >"$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B",
+  "defaultThinkingLevel": "medium"
+}
+EOF
+printf '%s\n' '{"apiKey":"user_migcache_key"}' >"$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/auth.json"
+# Firmware cache with Mistral first.
+cat >"$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/commandcode-models.json" <<'EOF'
+{"object":"list","data":[{"id":"mistralai/Mistral-Small","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
+EOF
+: >"$CASE_MIGRATE_CACHE/mounts"
+printf '%s\n' '/dev/mmcblk0p19: UUID="migcache-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="migcache-part"' >"$CASE_MIGRATE_CACHE/block.info"
+run_fixture "$CASE_MIGRATE_CACHE" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_MIGRATE_CACHE/firmware_etc"
+grep -Fq '"defaultProvider": "commandcode"' "$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" || {
+	echo "migration with cache did not flip defaultProvider"
+	exit 1
+}
+grep -Fq '"defaultModel": "mistralai/Mistral-Small"' "$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" || {
+	echo "migration with cache did not select model from cache (expected mistralai/Mistral-Small)"
+	exit 1
+}
+
+# Case 9: user-customized settings (mtime mismatch) must NOT have their
+# defaultModel overwritten by ensure_default_model_from_cache.
+CASE_USER_LOCKED="$TMP_ROOT/cc-user-locked"
+mkdir -p "$CASE_USER_LOCKED/root" \
+  "$CASE_USER_LOCKED/firmware_etc/pi/agent" \
+  "$CASE_USER_LOCKED/firmware_etc/commandcode" \
+  "$CASE_USER_LOCKED/data/pi/agent"
+# Pre-existing /data settings with user's custom model.
+cat >"$CASE_USER_LOCKED/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "commandcode",
+  "defaultModel": "user-custom-model",
+  "defaultThinkingLevel": "high"
+}
+EOF
+# Create managed marker then simulate user edit (mtime mismatch).
+touch -r "$CASE_USER_LOCKED/data/pi/agent/settings.json" "$CASE_USER_LOCKED/data/pi/agent/.firmware-settings-managed"
+sleep 1
+touch "$CASE_USER_LOCKED/data/pi/agent/settings.json"
+# Firmware cache with a different open-source model.
+cat >"$CASE_USER_LOCKED/firmware_etc/pi/agent/commandcode-models.json" <<'EOF'
+{"object":"list","data":[{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
+EOF
+cat >"$CASE_USER_LOCKED/firmware_etc/pi/agent/settings.json" <<'EOF'
+{"defaultProvider":"commandcode","defaultModel":"Qwen/Qwen3.8-Flash"}
+EOF
+printf '%s\n' '{"apiKey":"user_locked_key"}' >"$CASE_USER_LOCKED/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_USER_LOCKED/firmware_etc/pi/agent/auth.json"
+printf '%s\n' '{"apiKey":"user_locked_key"}' >"$CASE_USER_LOCKED/firmware_etc/commandcode/auth.json"
+chmod 600 "$CASE_USER_LOCKED/firmware_etc/commandcode/auth.json"
+: >"$CASE_USER_LOCKED/mounts"
+printf '%s\n' '/dev/mmcblk0p20: UUID="locked-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="locked-part"' >"$CASE_USER_LOCKED/block.info"
+run_fixture "$CASE_USER_LOCKED" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_USER_LOCKED/firmware_etc"
+# User's custom model must survive.
+grep -Fq '"defaultModel": "user-custom-model"' "$CASE_USER_LOCKED/data/pi/agent/settings.json" || {
+	echo "user-customized defaultModel was overwritten despite mtime mismatch"
 	exit 1
 }
 
