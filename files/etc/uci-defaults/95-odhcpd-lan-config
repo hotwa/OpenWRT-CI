@@ -32,5 +32,14 @@ command -v uci >/dev/null 2>&1 || exit 0
 uci -q set dhcp.lan.ra='hybrid'
 uci -q set dhcp.lan.dhcpv6='server'
 uci -q set dhcp.lan.ra_slaac='1'
+# ra_default=0 prevents odhcpd from forcing a default route in hybrid mode
+# when no public prefix is present on lan.  Without this, the upstream
+# ImmortalWrt default ra_default=1 causes odhcpd to log every 30s:
+#   "A default route is present but there is no public prefix on lan thus
+#    we announce no default route by setting ra_lifetime to 0!"
+# With ra_default=0, hybrid mode stays silent when there is no prefix;
+# when a prefix is delegated odhcpd automatically announces a default route,
+# preserving full IPv6 capability.
+uci -q set dhcp.lan.ra_default='0'
 uci -q commit dhcp
 exit 0
