@@ -306,4 +306,123 @@ grep -Fq 'subagent_cfg_dir/config.json' "$SCRIPT" || {
 	exit 1
 }
 
+# --- CommandCode provider auto-migration for existing /data devices ---
+
+# Case 1: old device with firmware-default settings.json and build-injected
+# CommandCode key must be auto-migrated to defaultProvider=commandcode.
+CASE_MIGRATE="$TMP_ROOT/cc-migrate"
+mkdir -p "$CASE_MIGRATE/root" "$CASE_MIGRATE/data/pi/agent" "$CASE_MIGRATE/firmware_etc/pi/agent" "$CASE_MIGRATE/firmware_etc/commandcode"
+cat >"$CASE_MIGRATE/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B",
+  "defaultThinkingLevel": "medium",
+  "enableInstallTelemetry": false,
+  "defaultProjectTrust": "ask"
+}
+EOF
+printf '%s\n' '{"apiKey":"user_migrate_test_key"}' >"$CASE_MIGRATE/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_MIGRATE/firmware_etc/pi/agent/auth.json"
+: >"$CASE_MIGRATE/mounts"
+printf '%s\n' '/dev/mmcblk0p12: UUID="migrate-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="migrate-part"' >"$CASE_MIGRATE/block.info"
+run_fixture "$CASE_MIGRATE" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_MIGRATE/firmware_etc"
+grep -Fq '"defaultProvider": "commandcode"' "$CASE_MIGRATE/data/pi/agent/settings.json" || {
+	echo "existing settings.json was not migrated to CommandCode provider"
+	exit 1
+}
+grep -Fq '"defaultModel": ""' "$CASE_MIGRATE/data/pi/agent/settings.json" || {
+	echo "defaultModel was not cleared during CommandCode migration"
+	exit 1
+}
+# Backup of the original settings must exist.
+ls "$CASE_MIGRATE/data/pi/agent/"settings.json.bak.* >/dev/null 2>&1 || {
+	echo "CommandCode migration did not create a backup of the original settings.json"
+	exit 1
+}
+# auth.json must be carried onto /data.
+[ -f "$CASE_MIGRATE/data/pi/agent/auth.json" ] || {
+	echo "CommandCode migration did not copy auth.json onto /data"
+	exit 1
+}
+grep -Fq 'user_migrate_test_key' "$CASE_MIGRATE/data/pi/agent/auth.json" || {
+	echo "CommandCode migration copied wrong auth.json content"
+	exit 1
+}
+# Managed marker must exist after migration.
+[ -f "$CASE_MIGRATE/data/pi/agent/.firmware-settings-managed" ] || {
+	echo "CommandCode migration did not create the firmware-settings-managed marker"
+	exit 1
+}
+
+# Case 2: user-customized defaultProvider (not in known firmware-default list)
+# must NOT be auto-migrated.
+CASE_NOMIGRATE_CUSTOM="$TMP_ROOT/cc-nomigrate-custom"
+mkdir -p "$CASE_NOMIGRATE_CUSTOM/root" "$CASE_NOMIGRATE_CUSTOM/data/pi/agent" "$CASE_NOMIGRATE_CUSTOM/firmware_etc/pi/agent"
+cat >"$CASE_NOMIGRATE_CUSTOM/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "my-custom-provider",
+  "defaultModel": "custom-model",
+  "defaultThinkingLevel": "high"
+}
+EOF
+printf '%s\n' '{"apiKey":"user_nomigrate_key"}' >"$CASE_NOMIGRATE_CUSTOM/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_NOMIGRATE_CUSTOM/firmware_etc/pi/agent/auth.json"
+: >"$CASE_NOMIGRATE_CUSTOM/mounts"
+printf '%s\n' '/dev/mmcblk0p13: UUID="nomigrate-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="nomigrate-part"' >"$CASE_NOMIGRATE_CUSTOM/block.info"
+run_fixture "$CASE_NOMIGRATE_CUSTOM" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NOMIGRATE_CUSTOM/firmware_etc"
+grep -Fq '"defaultProvider": "my-custom-provider"' "$CASE_NOMIGRATE_CUSTOM/data/pi/agent/settings.json" || {
+	echo "user-customized settings.json was overwritten by CommandCode migration"
+	exit 1
+}
+# No backup should be created when migration is skipped.
+ls "$CASE_NOMIGRATE_CUSTOM/data/pi/agent/"settings.json.bak.* >/dev/null 2>&1 && {
+	echo "backup was created despite migration being skipped for user-customized settings"
+	exit 1
+}
+
+# Case 3: managed marker with mismatched mtime (user edited settings after
+# firmware wrote it) must NOT be auto-migrated.
+CASE_NOMIGRATE_MTIME="$TMP_ROOT/cc-nomigrate-mtime"
+mkdir -p "$CASE_NOMIGRATE_MTIME/root" "$CASE_NOMIGRATE_MTIME/data/pi/agent" "$CASE_NOMIGRATE_MTIME/firmware_etc/pi/agent"
+cat >"$CASE_NOMIGRATE_MTIME/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B",
+  "defaultThinkingLevel": "medium"
+}
+EOF
+# Create marker matching settings mtime, then touch settings to simulate a
+# user edit (mtime no longer matches marker).
+touch -r "$CASE_NOMIGRATE_MTIME/data/pi/agent/settings.json" "$CASE_NOMIGRATE_MTIME/data/pi/agent/.firmware-settings-managed"
+sleep 1
+touch "$CASE_NOMIGRATE_MTIME/data/pi/agent/settings.json"
+printf '%s\n' '{"apiKey":"user_mtime_key"}' >"$CASE_NOMIGRATE_MTIME/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_NOMIGRATE_MTIME/firmware_etc/pi/agent/auth.json"
+: >"$CASE_NOMIGRATE_MTIME/mounts"
+printf '%s\n' '/dev/mmcblk0p14: UUID="mtime-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="mtime-part"' >"$CASE_NOMIGRATE_MTIME/block.info"
+run_fixture "$CASE_NOMIGRATE_MTIME" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NOMIGRATE_MTIME/firmware_etc"
+grep -Fq '"defaultProvider": "office-sglang"' "$CASE_NOMIGRATE_MTIME/data/pi/agent/settings.json" || {
+	echo "settings with mismatched managed-marker mtime was overwritten by CommandCode migration"
+	exit 1
+}
+
+# Case 4: no firmware-injected CommandCode key means no migration even if
+# settings.json has the old default provider.
+CASE_NOMIGRATE_NOKEY="$TMP_ROOT/cc-nomigrate-nokey"
+mkdir -p "$CASE_NOMIGRATE_NOKEY/root" "$CASE_NOMIGRATE_NOKEY/data/pi/agent" "$CASE_NOMIGRATE_NOKEY/firmware_etc/pi/agent"
+cat >"$CASE_NOMIGRATE_NOKEY/data/pi/agent/settings.json" <<'EOF'
+{
+  "defaultProvider": "office-sglang",
+  "defaultModel": "Qwen3.8-27B"
+}
+EOF
+# Intentionally do NOT create firmware_etc/pi/agent/auth.json.
+: >"$CASE_NOMIGRATE_NOKEY/mounts"
+printf '%s\n' '/dev/mmcblk0p15: UUID="nokey-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="nokey-part"' >"$CASE_NOMIGRATE_NOKEY/block.info"
+run_fixture "$CASE_NOMIGRATE_NOKEY" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_NOMIGRATE_NOKEY/firmware_etc"
+grep -Fq '"defaultProvider": "office-sglang"' "$CASE_NOMIGRATE_NOKEY/data/pi/agent/settings.json" || {
+	echo "settings were migrated despite no CommandCode key being injected"
+	exit 1
+}
+
 echo "auto mount data fixture tests passed"

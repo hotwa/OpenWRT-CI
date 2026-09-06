@@ -19,6 +19,7 @@ LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-pro
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
 COMMANDCODE_ROLE_LINK_BIN="${AUTO_MOUNT_COMMANDCODE_ROLE_LINK_BIN:-/usr/sbin/commandcode-role-link}"
 AGENT_TOOLS_LINK_BIN="${AUTO_MOUNT_AGENT_TOOLS_LINK_BIN:-/usr/sbin/agent-tools-link}"
+FIRMWARE_ETC="${AUTO_MOUNT_FIRMWARE_ETC:-/etc}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
@@ -480,6 +481,77 @@ link_compatibility_path() {
 	mv "$temporary" "$link_path" || { rm -f "$temporary"; return 1; }
 }
 
+# Detect whether the operator has manually edited /data/pi/agent/settings.json
+# since the firmware last wrote it.  A managed marker carries the mtime of the
+# last firmware write; a mismatch means the operator changed the file and we
+# must not overwrite their customization.
+settings_is_firmware_managed() {
+	local marker="$DATA_ROOT/pi/agent/.firmware-settings-managed"
+	[ -f "$marker" ] || return 1
+	[ "$(stat -c %Y "$DATA_ROOT/pi/agent/settings.json" 2>/dev/null || true)" = \
+	  "$(stat -c %Y "$marker" 2>/dev/null || true)" ]
+}
+
+mark_settings_firmware_managed() {
+	touch -r "$DATA_ROOT/pi/agent/settings.json" \
+		"$DATA_ROOT/pi/agent/.firmware-settings-managed" 2>/dev/null || \
+		touch "$DATA_ROOT/pi/agent/.firmware-settings-managed"
+}
+
+# One-time migration for devices that already have /data/pi/agent/settings.json
+# from an older firmware.  If the build injected a CommandCode API key and the
+# existing settings are still the firmware default (not operator-customized),
+# flip defaultProvider to commandcode so the device picks up the zero-config
+# provider without manual intervention.  The original file is backed up.
+migrate_commandcode_provider() {
+	local firmware_auth="$FIRMWARE_ETC/pi/agent/auth.json"
+	local data_settings="$DATA_ROOT/pi/agent/settings.json"
+	local data_auth="$DATA_ROOT/pi/agent/auth.json"
+	local current_provider backup
+
+	# Only migrate when the build actually injected a CommandCode key.
+	[ -s "$firmware_auth" ] || return 0
+	# Existing settings file must be present (this is the upgrade case).
+	[ -f "$data_settings" ] || return 0
+	# If the operator already configured CommandCode auth on /data, respect it.
+	[ ! -s "$data_auth" ] || return 0
+
+	current_provider="$(sed -n 's/.*"defaultProvider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$data_settings" | head -1)"
+	[ "$current_provider" != "commandcode" ] || return 0
+
+	# Refuse to overwrite operator-customized settings.
+	# - If a managed marker exists, a matching mtime proves the firmware wrote
+	#   the file; a mismatch means the operator edited it afterward, so skip.
+	# - If no marker exists (legacy device), use a conservative heuristic: only
+	#   migrate when the provider is a known firmware default.
+	if [ -f "$DATA_ROOT/pi/agent/.firmware-settings-managed" ]; then
+		settings_is_firmware_managed || return 0
+	else
+		case "$current_provider" in
+			office-sglang|cloudcollector|openai|anthropic) ;;
+			*) return 0 ;;
+		esac
+	fi
+
+	backup="$data_settings.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo migration)"
+	cp -p "$data_settings" "$backup" || return 1
+	sed -i 's/"defaultProvider"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultProvider": "commandcode"/' "$data_settings" || {
+		mv "$backup" "$data_settings"
+		return 1
+	}
+	sed -i 's/"defaultModel"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultModel": ""/' "$data_settings" || {
+		mv "$backup" "$data_settings"
+		return 1
+	}
+	# Carry the build-injected auth.json onto /data so Pi finds it at runtime.
+	if [ ! -e "$data_auth" ]; then
+		( umask 077; cp -p "$firmware_auth" "$data_auth.new" ) || return 1
+		mv "$data_auth.new" "$data_auth" || return 1
+	fi
+	mark_settings_firmware_managed
+	log_error "migrated existing Pi settings to CommandCode provider (backup: $backup)"
+}
+
 prepare_agent_storage() {
 	local directory
 	for directory in \
@@ -502,23 +574,33 @@ prepare_agent_storage() {
 	done
 	chmod 0750 "$DATA_ROOT/smb" 2>/dev/null || true
 
-	if [ -f /etc/multica/openwrt-agent.md ]; then
-		cp -p /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
-		cmp -s /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
+	# Upgrade devices that already have /data/pi/agent/settings.json from an
+	# older firmware: if the build injected a CommandCode key and the existing
+	# settings are still firmware-default, flip defaultProvider to commandcode.
+	# This must run BEFORE the copy loop below so that a freshly copied auth.json
+	# does not make the migration think the operator already configured CommandCode.
+	migrate_commandcode_provider || return 1
+
+	if [ -f "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
+		cp -p "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
+		cmp -s "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
 		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
 	for config_file in models.json settings.json auth.json; do
-		[ -r "/etc/pi/agent/$config_file" ] || continue
+		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
-		cp -p "/etc/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
+		cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
 		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
+		if [ "$config_file" = "settings.json" ]; then
+			mark_settings_firmware_managed
+		fi
 	done
 
 	# CommandCode CLI auth: copy the build-injected key onto /data so the
 	# cmd / cmdc CLI finds it at ~/.commandcode/auth.json.  pi-commandcode-provider
 	# reads the same file in addition to ~/.pi/agent/auth.json.
-	if [ -r /etc/commandcode/auth.json ] && [ ! -e "$DATA_ROOT/commandcode/auth.json" ]; then
-		( umask 077; cp -p /etc/commandcode/auth.json "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
+	if [ -r "$FIRMWARE_ETC/commandcode/auth.json" ] && [ ! -e "$DATA_ROOT/commandcode/auth.json" ]; then
+		( umask 077; cp -p "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
 		mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
 	fi
 
