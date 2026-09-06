@@ -488,6 +488,7 @@ prepare_agent_storage() {
 		"$DATA_ROOT/agent_workspaces" \
 		"$DATA_ROOT/pi" \
 		"$DATA_ROOT/pi/agent" \
+		"$DATA_ROOT/pi/agent/secrets" \
 		"$DATA_ROOT/commandcode" \
 		"$DATA_ROOT/uv" \
 		"$DATA_ROOT/uv/cache" \
@@ -523,6 +524,13 @@ prepare_agent_storage() {
 		printf '%s\n' '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' \
 			> "$subagent_cfg_dir/config.json.new" || return 1
 		mv "$subagent_cfg_dir/config.json.new" "$subagent_cfg_dir/config.json" || return 1
+	fi
+
+	# cloudcollector API key placeholder. An empty file keeps the path stable
+	# so Pi/CommandCode can reference it without a missing-file error; the real
+	# key is injected at build time or by the operator.
+	if [ ! -e "$DATA_ROOT/pi/agent/secrets/cloudcollector-api-key" ]; then
+		( umask 077; : >"$DATA_ROOT/pi/agent/secrets/cloudcollector-api-key" ) || return 1
 	fi
 
 	[ -d "$ROOT_HOME" ] || return 0
