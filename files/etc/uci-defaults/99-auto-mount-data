@@ -507,12 +507,20 @@ prepare_agent_storage() {
 		cmp -s /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
 		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
-	for config_file in models.json settings.json; do
+	for config_file in models.json settings.json auth.json; do
 		[ -r "/etc/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
 		cp -p "/etc/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
 		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
 	done
+
+	# CommandCode CLI auth: copy the build-injected key onto /data so the
+	# cmd / cmdc CLI finds it at ~/.commandcode/auth.json.  pi-commandcode-provider
+	# reads the same file in addition to ~/.pi/agent/auth.json.
+	if [ -r /etc/commandcode/auth.json ] && [ ! -e "$DATA_ROOT/commandcode/auth.json" ]; then
+		( umask 077; cp -p /etc/commandcode/auth.json "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
+		mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
+	fi
 
 	# pi-subagents resolves schedule roots against the real project path.
 	# /root/.pi is a symlink to /data/pi, so a "~/"-based store root trips its
