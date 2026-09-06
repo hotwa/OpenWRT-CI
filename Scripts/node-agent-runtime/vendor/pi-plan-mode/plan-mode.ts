@@ -50,6 +50,24 @@ export const MUTATING_GIT_COMMANDS: RegExp[] = [
 export const UNSAFE_SHELL_CHARS = /[;&`\n]/;
 export const REDIRECT_PATTERN = />{1,2}/;
 
+// The CommandCode provider extension fetches its dynamic model catalog by
+// shelling out to uclient-fetch / curl / wget against api.commandcode.ai.
+// In the headless Multica daemon there is no human to click "Allow anyway?",
+// so these read-only catalog probes are whitelisted precisely.  File-output
+// flags are rejected: anything that writes to disk still goes through AI review.
+// An explicit "-" value (e.g. `-O -`, `--output=-`) means stdout and is allowed.
+const COMMANDCODE_API_DOMAIN = "api.commandcode.ai";
+const COMMANDCODE_FETCH_BINARIES = /^\s*(uclient-fetch|curl|wget)\b/;
+const FILE_OUTPUT_FLAGS = /\s(--output|--output-document|--remote-name|-o|-O)(\s|=)/;
+const STDOUT_OUTPUT = /\s(--output|--output-document|-o|-O)(\s|=)-(\s|$)/;
+
+function isCommandCodeModelFetch(command: string): boolean {
+	if (!command.includes(COMMANDCODE_API_DOMAIN)) return false;
+	if (!COMMANDCODE_FETCH_BINARIES.test(command)) return false;
+	if (FILE_OUTPUT_FLAGS.test(command) && !STDOUT_OUTPUT.test(command)) return false;
+	return true;
+}
+
 // Patterns for unsafe pipe targets
 const UNSAFE_PIPE_PATTERNS: RegExp[] = [
 	/\|\s*rm\b/,
@@ -72,7 +90,8 @@ export function isWhitelisted(command: string): boolean {
 	if (UNSAFE_SHELL_CHARS.test(trimmed)) return false;
 	if (REDIRECT_PATTERN.test(trimmed)) return false;
 	if (hasUnsafePipe(trimmed)) return false;
-	return SAFE_COMMAND_PATTERNS.some((p) => p.test(trimmed));
+	if (SAFE_COMMAND_PATTERNS.some((p) => p.test(trimmed))) return true;
+	return isCommandCodeModelFetch(trimmed);
 }
 
 function getBashOverride(entries: any[], command: string): boolean {
