@@ -69,6 +69,14 @@ if [ -r "$multica_config" ]; then
 	[ -z "$multica_token" ] || add_reason multica-pat-token
 fi
 
+# CommandCode provider API key injected by CommandCodeProviderConfig.sh.
+# Either location proves the firmware carries a secret-bearing overlay.
+commandcode_auth="$TARGET_FILES/etc/commandcode/auth.json"
+pi_agent_auth="$TARGET_FILES/etc/pi/agent/auth.json"
+if [ -s "$commandcode_auth" ] || [ -s "$pi_agent_auth" ]; then
+	add_reason commandcode-api-key
+fi
+
 if [ -n "$reasons" ]; then
 	printf 'WRT_PRIVATE_BUILD=true\n'
 	printf 'WRT_PRIVATE_BUILD_REASON=%s\n' "$reasons"

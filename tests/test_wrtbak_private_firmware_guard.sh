@@ -119,4 +119,47 @@ if grep -q 'mul_test_secret_pat' "$WORK_DIR/multica.env" "$WORK_DIR/multica.log"
 	exit 1
 fi
 
+# Only CommandCode key: no wrtbak/headscale/multica secrets, but the
+# CommandCode provider auth.json exists.  The guard must still classify
+# the firmware as private because COMMANDCODE_API_KEY is a credential.
+mkdir -p "$WORK_DIR/commandcode/etc/commandcode" "$WORK_DIR/commandcode/etc/pi/agent"
+printf '%s\n' '{"apiKey":"user_test_commandcode_key"}' >"$WORK_DIR/commandcode/etc/commandcode/auth.json"
+chmod 600 "$WORK_DIR/commandcode/etc/commandcode/auth.json"
+bash "$SCRIPT" "$WORK_DIR/commandcode" >"$WORK_DIR/commandcode.env" 2>"$WORK_DIR/commandcode.log"
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/commandcode.env" || {
+	echo "commandcode auth.json alone should mark firmware private"
+	exit 1
+}
+grep -q 'commandcode-api-key' "$WORK_DIR/commandcode.env" || {
+	echo "commandcode private reason is missing"
+	exit 1
+}
+if grep -q 'user_test_commandcode_key' "$WORK_DIR/commandcode.env" "$WORK_DIR/commandcode.log"; then
+	echo "guard leaked the CommandCode API key"
+	exit 1
+fi
+
+# CommandCode key via Pi agent auth.json only (no /etc/commandcode/auth.json).
+mkdir -p "$WORK_DIR/commandcode-pi/etc/pi/agent"
+printf '%s\n' '{"apiKey":"user_pi_auth_only_key"}' >"$WORK_DIR/commandcode-pi/etc/pi/agent/auth.json"
+chmod 600 "$WORK_DIR/commandcode-pi/etc/pi/agent/auth.json"
+bash "$SCRIPT" "$WORK_DIR/commandcode-pi" >"$WORK_DIR/commandcode-pi.env" 2>/dev/null
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/commandcode-pi.env" || {
+	echo "pi agent auth.json alone should mark firmware private"
+	exit 1
+}
+grep -q 'commandcode-api-key' "$WORK_DIR/commandcode-pi.env" || {
+	echo "commandcode private reason is missing for pi agent auth"
+	exit 1
+}
+
+# Empty auth.json must not trigger private classification (key not actually injected).
+mkdir -p "$WORK_DIR/commandcode-empty/etc/commandcode"
+: >"$WORK_DIR/commandcode-empty/etc/commandcode/auth.json"
+bash "$SCRIPT" "$WORK_DIR/commandcode-empty" >"$WORK_DIR/commandcode-empty.env" 2>/dev/null
+grep -qx 'WRT_PRIVATE_BUILD=false' "$WORK_DIR/commandcode-empty.env" || {
+	echo "empty commandcode auth.json should not mark firmware private"
+	exit 1
+}
+
 echo "wrtbak private firmware guard test passed"
