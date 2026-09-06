@@ -174,10 +174,21 @@ grep -q 'Scripts/HeadscaleAutoEnroll.sh' "$WORKFLOW" || {
 }
 
 for caller_workflow in $(discover_device_workflows); do
-  grep -q 'secrets: inherit' "$caller_workflow" || {
-    echo "$(basename "$caller_workflow") does not pass repository secrets to WRT-CORE"
-    exit 1
-  }
+  workflow_name="$(basename "$caller_workflow")"
+  # WLG builds intentionally use explicit secrets to avoid injecting private
+  # secrets into a friend-facing firmware. Verify the required SSH key secret
+  # is passed instead of requiring full secrets: inherit.
+  if echo "$workflow_name" | grep -qi 'wlg'; then
+    grep -q 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' "$caller_workflow" || {
+      echo "$workflow_name does not pass OPENWRT_DROPBEAR_AUTHORIZED_KEYS to WRT-CORE"
+      exit 1
+    }
+  else
+    grep -q 'secrets: inherit' "$caller_workflow" || {
+      echo "$workflow_name does not pass repository secrets to WRT-CORE"
+      exit 1
+    }
+  fi
 done
 
 grep -q 'auth key redacted' "$CI_INJECTOR" || {
