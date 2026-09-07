@@ -40,14 +40,13 @@ printf '24.20.0\n' > "$WORK/generation/node-version"
 printf '%s\n' '{"dependencies":{"@earendil-works/pi-coding-agent":"0.85.0","command-code":"1.49.1"},"openwrtPiExtensions":["example-extension"]}' > "$WORK/generation/node/agent-runtime-package.json"
 printf '%s\n' '{"lockfileVersion":3,"packages":{}}' > "$WORK/generation/node/agent-runtime-package-lock.json"
 printf '%s\n' '{"schema_version":1,"pi_version":"0.85.0","extension_packages":{"example-extension":"1.0.0"},"aligned_peers":["@earendil-works/pi-coding-agent"],"components":{"@earendil-works/pi-coding-agent":"0.85.0","command-code":"1.49.1"}}' > "$WORK/generation/node/agent-runtime-resolved.json"
-cp -a "$ROOT_DIR/Scripts/node-agent-runtime/vendor/pi-plan-mode" "$WORK/generation/vendor/pi-plan-mode"
 bash "$PACKAGE" --source "$WORK/generation" --output "$WORK/release" --arch x64 --runtime-release 497 >/dev/null
 MANIFEST="$WORK/release/agent-runtime-497-x64-musl.manifest.json"
 BUNDLE="$WORK/release/agent-runtime-497-x64-musl.tar.gz"
 bash "$VERIFY" --manifest "$MANIFEST" --bundle "$BUNDLE" >/dev/null
 node - "$MANIFEST" <<'NODE'
 const m = require(process.argv[2]);
-for (const k of ['runtime_release', 'architecture', 'libc', 'bundle', 'minimum_space_bytes', 'runtime_contract', 'components', 'vendored_extensions', 'lock_sha256', 'critical_elf_sha256']) if (!(k in m)) process.exit(1);
+for (const k of ['runtime_release', 'architecture', 'libc', 'bundle', 'minimum_space_bytes', 'runtime_contract', 'components', 'lock_sha256', 'critical_elf_sha256']) if (!(k in m)) process.exit(1);
 if (m.architecture !== 'x64' || m.libc !== 'musl' || !m.components['command-code']) process.exit(2);
 if (m.components['hermes-agent'] || m.components['opencode-ai']) process.exit(3);
 NODE

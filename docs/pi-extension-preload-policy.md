@@ -17,7 +17,7 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 |---|---|---|
 | `pi-package-manager` | latest | `/packages` 管理界面；不再同时预装旧的 `@aaronkyriesenbach/pi-package-manager` |
 | `pi-commandcode-provider` | latest | Pi 调用 CommandCode provider |
-| `pi-plan-mode` | reviewed vendor | 仓库审查后的 vendored 版本，不作为 npm 根依赖 |
+| `pi-agent-modes` | latest | 支持 `--modes yolo` 无人值守模式，Multica agent 通过 `--custom-args` 启用；交互式 pi 保持正常模式 |
 | `pi-web-search` | latest | 联网搜索 |
 | `pi-mcp-adapter` | latest | MCP 适配器；每次由实际导入校验决定是否放行 |
 | `pi-subagents` | latest | 默认最多并发 1–2 个 |
@@ -26,9 +26,6 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 | `pi-interactive-shell` | latest | 仅在明确需要 SSH/REPL 时调用 |
 | `@narumitw/pi-statusline` / `btw-pi` | latest | 两者都触及 footer，视觉重叠时停用其一 |
 | `pi-wechat-assistant`、Pi、CommandCode、pnpm | latest | 和扩展一起进入同一候选 generation |
-
-`pi-plan-mode` 的 scope 迁移补丁和 provenance 仍由
-`tests/test_pi_plan_mode_vendor.sh` 审核。
 
 构建中的 `ensure_pi_extension_peers.js` 先读取实际装入的 Pi 版本，扫描所有默认扩展
 声明的 `@earendil-works/*` peer/dependency，再把这些 peer 精确对齐到**本次实际 Pi

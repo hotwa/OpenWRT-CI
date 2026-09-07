@@ -385,6 +385,7 @@ try_bootstrap() {
 				--runtime-id "$runtime_id" \
 				--description "本机 OpenWrt 网络与系统管理智能体" \
 				--instructions "$(cat "$instructions_file")" \
+				--custom-args '["--modes","yolo"]' \
 				--max-concurrent-tasks 1 >/dev/null 2>&1; then
 				rm -f "$agent_json"
 				return 1
@@ -402,6 +403,7 @@ try_bootstrap() {
 		--runtime-id "$runtime_id" \
 		--description "OpenWrt 系统与网络管理智能体" \
 		--instructions "$instructions" \
+		--custom-args '["--modes","yolo"]' \
 		--max-concurrent-tasks 1 --output json > "$agent_json" 2>/dev/null; then
 		rm -f "$agent_json"
 		return 1

@@ -29,10 +29,8 @@ commit 或内核变化会改变 ELF、musl 或固件体积契约。
 | :--- | :--- |
 | `command-code`、`@earendil-works/pi-coding-agent`、`pnpm` 及 Pi 扩展 | `Scripts/node-agent-runtime/package.json` 的 latest catalog；候选 generation 内的 `node/agent-runtime-package-lock.json` 与 `node/agent-runtime-resolved.json` |
 | Multica CLI/daemon | `Scripts/fetch_multica_runtime.sh` 的 `MULTICA_VERSION` |
-| 受审查的 `pi-plan-mode` | `Scripts/node-agent-runtime/vendor/pi-plan-mode/` |
 
-`Scripts/bump_agent_runtime.sh` 只处理 Multica 与受审查 vendored extension 的
-source-controlled 更新；Pi 与 npm 扩展采用 **latest-at-build**，由每次候选构建的
+`Scripts/bump_agent_runtime.sh` 只处理 Multica 的 source-controlled 更新；Pi 与 npm 扩展采用 **latest-at-build**，由每次候选构建的
 `ensure_pi_extension_peers.js`/`verify_pi_extensions.js` 解析、对齐并导入。
 它绝不写入底座 pin。设备上的 Runtime Manager 不运行 `npm install`、
 `pnpm update` 或任意 CLI 的自更新。

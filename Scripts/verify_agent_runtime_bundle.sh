@@ -18,7 +18,7 @@ expected="$(node -e 'const m=require(process.argv[1]); process.stdout.write(m.bu
 [ "$actual" = "$expected" ] || die "bundle SHA256 mismatch"
 node - "$MANIFEST" <<'NODE'
 const m = require(process.argv[2]);
-const need = ['schema_version', 'runtime_release', 'architecture', 'libc', 'bundle', 'minimum_space_bytes', 'runtime_contract', 'components', 'vendored_extensions', 'lock_sha256', 'input_sha256', 'critical_elf_sha256'];
+const need = ['schema_version', 'runtime_release', 'architecture', 'libc', 'bundle', 'minimum_space_bytes', 'runtime_contract', 'components', 'lock_sha256', 'input_sha256', 'critical_elf_sha256'];
 for (const k of need) if (!(k in m)) throw new Error(`missing ${k}`);
 if (m.schema_version !== 1 || !Number.isSafeInteger(m.runtime_release) || m.runtime_release < 1) throw new Error('invalid release');
 if (!['arm64', 'x64'].includes(m.architecture) || m.libc !== 'musl') throw new Error('invalid platform');
@@ -27,7 +27,6 @@ if (!Number.isSafeInteger(m.runtime_contract.node_abi)) throw new Error('invalid
 if (!/^\d+\.\d+\.\d+$/.test(m.runtime_contract.uv_version || '') || m.runtime_contract.python_series !== '3.13' || !/^3\.13\.\d+$/.test(m.runtime_contract.python_version || '') || !/^\d{8}$/.test(m.runtime_contract.python_release_tag || '')) throw new Error('invalid pinned Python runtime contract');
 if (!m.components['command-code']) throw new Error('CommandCode is missing from component contract');
 if (!m.components.uv || !m.components.cpython) throw new Error('uv or CPython is missing from component contract');
-if (!m.vendored_extensions['pi-plan-mode'] || m.components['pi-plan-mode'] !== m.vendored_extensions['pi-plan-mode'].version) throw new Error('invalid vendored Pi plan-mode contract');
 NODE
 
 # Do not extract before rejecting archive traversal, absolute paths, or device

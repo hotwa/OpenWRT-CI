@@ -18,7 +18,7 @@ function parseArgs(argv) {
   const options = {};
   for (let index = 2; index < argv.length; index += 1) {
     const key = argv[index];
-    if (!['--directory', '--vendor-extension'].includes(key)) die(`unknown argument: ${key}`);
+    if (!['--directory'].includes(key)) die(`unknown argument: ${key}`);
     const value = argv[++index];
     if (!value) die(`missing value for ${key}`);
     options[key.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase())] = value;
@@ -142,6 +142,5 @@ async function verify(name, entry) {
   for (const name of catalog.openwrtPiExtensions) {
     for (const entry of packageEntries(nodeModules, name)) await verify(name, entry);
   }
-  if (options.vendorExtension) await verify('pi-plan-mode', path.resolve(options.vendorExtension));
   console.log('PI EXTENSIONS OK');
 })().catch(error => die(error instanceof Error ? error.stack || error.message : String(error)));

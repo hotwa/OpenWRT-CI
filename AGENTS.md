@@ -12,7 +12,7 @@
   `Scripts/fetch_uv_runtime.sh` (one pinned CPython 3.13 musl mirror), and
   baseline finalization in `WRT-CORE.yml`.
 - Preserve pre-installed CLI tools and extensions:
-  - `@earendil-works/pi-coding-agent` (`pi` CLI) + `pi-package-manager`, `btw-pi`, `pi-plan-mode`, `pi-web-search`, `pi-commandcode-provider`, `pi-mcp-adapter`, `pi-subagents`, `@capdiem/pi-todo`, `@zephyrdeng/pi-review`, `@luxusai/pi-hindsight`, `pi-interactive-shell`, `@narumitw/pi-statusline`, `pi-wechat-assistant`
+  - `@earendil-works/pi-coding-agent` (`pi` CLI) + `pi-package-manager`, `btw-pi`, `pi-agent-modes`, `pi-web-search`, `pi-commandcode-provider`, `pi-mcp-adapter`, `pi-subagents`, `@capdiem/pi-todo`, `@zephyrdeng/pi-review`, `@luxusai/pi-hindsight`, `pi-interactive-shell`, `@narumitw/pi-statusline`, `pi-wechat-assistant`
   - `command-code` (`cmdc` CLI)
 - Preserve `/etc/profile.d/20-node-agent.sh`, `21-uv-python.sh`, and
   `/etc/profile.d/30-agent-update-check.sh` (24h non-blocking SSH login status
@@ -65,7 +65,7 @@
 ## Development and Subagent Test Policy
 
 - **Targeted verification first**: During active development or subagent execution, do not unconditionally run the full 85+ test suite (`tests/test_*.sh`) in loops. Full-suite execution contains heavy sleep mocks, geodata download fixtures, and mount simulations that cause unnecessary delays.
-- **Focused module tests**: Subagents must only run tests directly relevant to their modified files (e.g. `bash tests/test_agent_runtime_manager.sh` or `bash tests/test_pi_plan_mode_vendor.sh`), which execute in 1-2 seconds.
+- **Focused module tests**: Subagents must only run tests directly relevant to their modified files (e.g. `bash tests/test_agent_runtime_manager.sh`), which execute in 1-2 seconds.
 - **Full-suite fixture/mock simulation is optional during iteration**: Full-suite fixture/mock runs are optional during subagent development and should be reserved for final pre-commit verification or delegated to GitHub Actions CI (`WRT-CORE.yml` smoke tests). Subagents should skip full-suite fixture/mock runs to prevent timeouts.
 
 ## CI string / quoting pitfalls (2026-08-29 RE-SS-01 debug-gate runs)

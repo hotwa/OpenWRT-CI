@@ -51,7 +51,6 @@ SOURCE="$(realpath -e "$SOURCE")"
 [ -s "$SOURCE/uv/python-mirror/manifest.txt" ] || die "generation source is missing pinned Python mirror"
 [ -x "$SOURCE/bin/multica" ] || die "generation source is missing executable bin/multica"
 [ -s "$SOURCE/node-version" ] || die "generation source is missing node-version"
-[ -s "$SOURCE/vendor/pi-plan-mode/provenance.json" ] || die "generation source is missing vendored Pi plan-mode provenance"
 [ -s "$SOURCE/node/agent-runtime-package.json" ] || die "generation source is missing resolved Node catalog"
 [ -s "$SOURCE/node/agent-runtime-package-lock.json" ] || die "generation source is missing resolved Node lockfile"
 [ -s "$SOURCE/node/agent-runtime-resolved.json" ] || die "generation source is missing resolved Node component metadata"
@@ -118,14 +117,11 @@ const packages = resolved.components;
 if (!packages || typeof packages !== 'object' || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(resolved.pi_version || '')) {
   throw new Error('invalid resolved Pi extension metadata');
 }
-const piPlanMode = JSON.parse(fs.readFileSync(path.join(e.SOURCE, 'vendor/pi-plan-mode/provenance.json'), 'utf8'));
 const releaseInputs = [
   e.CATALOG_FILE,
   e.PACKAGES_JSON,
   e.LOCK_FILE,
   e.RESOLVED_FILE,
-  path.join(e.SOURCE, 'vendor/pi-plan-mode/provenance.json'),
-  path.join(e.SOURCE, 'vendor/pi-plan-mode/plan-mode.ts'),
   path.join(path.dirname(e.CATALOG_FILE), 'runtime-release'),
   path.join(path.dirname(path.dirname(e.CATALOG_FILE)), 'fetch_multica_runtime.sh'),
   path.join(path.dirname(path.dirname(e.CATALOG_FILE)), 'fetch_uv_runtime.sh')
@@ -134,8 +130,7 @@ const inputHash = crypto.createHash('sha256');
 for (const file of releaseInputs) inputHash.update(fs.readFileSync(file));
 const criticalCandidates = [
   'node/bin/node', 'uv/uv', 'bin/multica',
-  'node/lib/node_modules/command-code/dist/index.mjs',
-  'vendor/pi-plan-mode/provenance.json'
+  'node/lib/node_modules/command-code/dist/index.mjs'
 ];
 const critical_elf_sha256 = {};
 for (const rel of criticalCandidates) {
@@ -161,8 +156,7 @@ const manifest = {
     python_version: e.PYTHON_VERSION,
     python_release_tag: e.PYTHON_RELEASE_TAG
   },
-  components: { ...packages, multica: e.MULTICA_VERSION, uv: e.UV_VERSION, cpython: e.PYTHON_VERSION, 'pi-plan-mode': piPlanMode.version },
-  vendored_extensions: { 'pi-plan-mode': piPlanMode },
+  components: { ...packages, multica: e.MULTICA_VERSION, uv: e.UV_VERSION, cpython: e.PYTHON_VERSION },
   lock_sha256: sha256(e.LOCK_FILE),
   input_sha256: inputHash.digest('hex'),
   critical_elf_sha256

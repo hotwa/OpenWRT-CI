@@ -55,7 +55,6 @@ const e = process.env;
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const resolved = JSON.parse(fs.readFileSync(e.NODE_RESOLVED, 'utf8'));
 const deps = resolved.components;
-const pi = JSON.parse(fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/node-agent-runtime/vendor/pi-plan-mode/provenance.json')));
 const nodeVersion = fs.readFileSync(e.NODE_VERSION_FILE, 'utf8').trim();
 const multicaScript = fs.readFileSync(path.join(e.ROOT_DIR, 'Scripts/fetch_multica_runtime.sh'), 'utf8');
 const multica = multicaScript.match(/^MULTICA_VERSION="\$\{MULTICA_VERSION:-([0-9.]+)\}"/m)?.[1];
@@ -78,8 +77,7 @@ const manifest = {
     python_version: pythonVersion,
     python_release_tag: pythonReleaseTag
   },
-  components: {...deps, multica, uv, cpython: pythonVersion, 'pi-plan-mode': pi.version},
-  vendored_extensions: {'pi-plan-mode': pi},
+  components: {...deps, multica, uv, cpython: pythonVersion},
   critical_elf_sha256: {'node/bin/node': sha(e.NODE), 'uv/uv': sha(e.UV), 'bin/multica': sha(e.MULTICA)}
 };
 fs.writeFileSync(e.MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`, {mode: 0o644});

@@ -93,4 +93,16 @@ grep -Fq 'try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provid
 	exit 1
 }
 
+# Both agent create and agent update must request the unattended yolo mode
+# through --custom-args so the Multica agent never prompts for confirmation.
+custom_args_count="$(grep -c -F -- '--custom-args' "$BOOTSTRAP_SCRIPT")"
+[ "$custom_args_count" = '2' ] || {
+	echo "multica-agent-bootstrap must pass --custom-args in both agent create and update (found $custom_args_count)"
+	exit 1
+}
+grep -Fq -- "--custom-args '[\"--modes\",\"yolo\"]'" "$BOOTSTRAP_SCRIPT" || {
+	echo "multica-agent-bootstrap --custom-args must request yolo mode"
+	exit 1
+}
+
 echo "multica runtime lifecycle behavior tests passed"

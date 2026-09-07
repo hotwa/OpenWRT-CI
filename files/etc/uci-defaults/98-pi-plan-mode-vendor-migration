@@ -1,3 +1,0 @@
-#!/bin/sh
-[ -x /usr/sbin/pi-plan-mode-reconcile ] && /usr/sbin/pi-plan-mode-reconcile
-exit $?

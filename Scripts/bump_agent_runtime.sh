@@ -25,8 +25,6 @@ ROOT_DIR="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 PACKAGE_JSON="$MANIFEST_DIR/package.json"
 RUNTIME_RELEASE_FILE="${AGENT_RUNTIME_RELEASE_FILE:-$MANIFEST_DIR/runtime-release}"
-PI_PLAN_VENDOR_SCRIPT="$ROOT_DIR/Scripts/refresh_pi_plan_mode_vendor.sh"
-PI_PLAN_PROVENANCE="$MANIFEST_DIR/vendor/pi-plan-mode/provenance.json"
 MULTICA_SCRIPT="$ROOT_DIR/Scripts/fetch_multica_runtime.sh"
 GUARD_DIR="$ROOT_DIR/tests"
 GITHUB_API="https://api.github.com/repos"
@@ -72,32 +70,6 @@ multica_current_version() {
 	sed -n 's/^MULTICA_VERSION="${MULTICA_VERSION:-\([^"]*\)}"$/\1/p' "$MULTICA_SCRIPT"
 }
 
-pi_plan_vendor_current() {
-	node -e '
-		const metadata = require(process.argv[1]);
-		if (!/^\d+\.\d+\.\d+$/.test(metadata.version || "") ||
-			!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(metadata.npm?.integrity || "")) process.exit(3);
-		process.stdout.write(`${metadata.version}\t${metadata.npm.integrity}`);
-	' "$PI_PLAN_PROVENANCE" 2>/dev/null || return 1
-}
-
-pi_plan_vendor_latest() {
-	# Asking npm for dist.integrity produces a flattened JSON key named
-	# "dist.integrity", while the parser below intentionally validates the
-	# nested dist object. Request dist so both sides use the same shape.
-	npm view pi-plan-mode version dist --json |
-		node -e '
-			let input = "";
-			process.stdin.on("data", (chunk) => { input += chunk; });
-			process.stdin.on("end", () => {
-				const metadata = JSON.parse(input);
-				if (!/^\d+\.\d+\.\d+$/.test(metadata.version || "") ||
-					!/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(metadata.dist?.integrity || "")) process.exit(3);
-				process.stdout.write(`${metadata.version}\t${metadata.dist.integrity}`);
-			});
-		' || return 1
-}
-
 multica_latest_version() {
 	local tag
 
@@ -123,22 +95,13 @@ set_multica_version() {
 
 # Emits "name<TAB>current<TAB>latest" for everything that has moved.
 resolve_plan() {
-	local current latest lines="" vendor_current vendor_latest vendor_current_version vendor_current_integrity vendor_latest_version vendor_latest_integrity
+	local current latest lines=""
 
 	current="$(multica_current_version)"
 	[ -n "$current" ] || die "unable to read MULTICA_VERSION from $MULTICA_SCRIPT"
 	latest="$(multica_latest_version)" || die "unable to resolve the latest Multica release"
 	[ "$current" = "$latest" ] ||
 		lines="${lines}multica-cli	${current}	${latest}
-"
-
-	vendor_current="$(pi_plan_vendor_current)" || die "unable to read vendored pi-plan-mode provenance"
-	vendor_latest="$(pi_plan_vendor_latest)" || die "unable to resolve latest pi-plan-mode metadata"
-	IFS=$'\t' read -r vendor_current_version vendor_current_integrity <<<"$vendor_current"
-	IFS=$'\t' read -r vendor_latest_version vendor_latest_integrity <<<"$vendor_latest"
-	[ "$vendor_current_version" = "$vendor_latest_version" ] && \
-		[ "$vendor_current_integrity" = "$vendor_latest_integrity" ] ||
-		lines="${lines}pi-plan-mode-vendor	${vendor_current_version}	${vendor_latest_version}
 "
 
 	printf '%s' "$lines"
@@ -152,11 +115,6 @@ apply_plan() {
 		if [ "$name" = "multica-cli" ]; then
 			set_multica_version "$latest"
 			log_info "Multica ${current} -> ${latest}"
-			continue
-		fi
-		if [ "$name" = "pi-plan-mode-vendor" ]; then
-			bash "$PI_PLAN_VENDOR_SCRIPT" apply "$latest"
-			log_info "vendored pi-plan-mode ${current} -> ${latest}"
 			continue
 		fi
 		die "unexpected source-controlled runtime component: $name"
@@ -208,14 +166,9 @@ main() {
 		advance_runtime_release
 		exit 0
 	fi
-	[ -f "$PI_PLAN_VENDOR_SCRIPT" ] && [ -f "$PI_PLAN_PROVENANCE" ] ||
-		die "vendored pi-plan-mode refresh chain is incomplete"
 	[ -f "$MULTICA_SCRIPT" ] || die "Multica runtime fetch script is missing"
 
 	plan="$(resolve_plan)"
-	# Validate the upstream archive and the narrowly reviewed PR #9 scope patch
-	# even when its version has not moved; registry substitutions fail closed.
-	bash "$PI_PLAN_VENDOR_SCRIPT" plan
 	[ -n "$plan" ] || log_info "Pi/extensions are latest-at-build; no source-controlled component changed"
 
 	while IFS=$'\t' read -r name current latest; do

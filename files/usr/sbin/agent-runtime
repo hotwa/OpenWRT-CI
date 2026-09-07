@@ -301,19 +301,6 @@ publish_node_link() {
 	mv -f "$temporary" "$DATA_ROOT/node"
 }
 
-publish_pi_extension_link() {
-	local runtime="$1" node_dir source link="/tmp/agent-runtime-pi-plan-mode.ts"
-	local temporary="${link}.new.$$"
-	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] || return 1
-	source="$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts"
-	[ -s "$source" ] && [ ! -L "$source" ] || return 1
-	[ ! -e "$link" ] || [ -L "$link" ] || return 1
-	rm -f "$temporary" 2>/dev/null || return 1
-	ln -s "$source" "$temporary" || return 1
-	mv -f "$temporary" "$link"
-}
-
 publish_pi_models() {
 	# Idempotently merge the remote vLLM provider into the persistent Pi model
 	# catalog.  The firmware ships vllm-qwen38 in /etc/pi/agent/models.json and
@@ -376,7 +363,7 @@ set_current() {
 	# restored to the old links below.
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
 	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -s "$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts" ] || return 1
+	[ -n "$node_dir" ] && [ -n "$uv_dir" ] || return 1
 	old_runtime="$(current_runtime)"
 	case "$old_runtime" in
 		"$BASELINE") old_target="$BASELINE" ;;
@@ -384,13 +371,8 @@ set_current() {
 		*) return 1 ;;
 	esac
 	publish_node_link "$runtime" || return 1
-	if ! publish_pi_extension_link "$runtime"; then
-		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
-		return 1
-	fi
 	if ! link_atomically "$ROOT/current" "$target"; then
 		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
-		publish_pi_extension_link "$old_runtime" >/dev/null 2>&1 || true
 		return 1
 	fi
 	# Previous is advisory only; it is derived from the already validated old
@@ -477,7 +459,6 @@ release_number() {
 reconcile_runtime() {
 	local current baseline_release current_release current_num baseline_num
 	if ! data_ready; then
-		publish_pi_extension_link "$BASELINE" || return 1
 		log '/data unavailable; using firmware baseline without publishing mutable links'
 		return 0
 	fi
@@ -502,7 +483,6 @@ reconcile_runtime() {
 		log "selected firmware baseline release $baseline_num"
 	else
 		publish_node_link "$current" || return 1
-		publish_pi_extension_link "$current" || return 1
 		log "retained newer compatible data release $current_num"
 	fi
 	# Repair the persistent Pi model catalog for the active runtime after the

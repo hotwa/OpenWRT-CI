@@ -37,15 +37,11 @@ cp -a "$STAGE/files/opt/node" "$OUTPUT/node"
 cp -a "$STAGE/files/opt/uv" "$OUTPUT/uv"
 install -m 0755 "$STAGE/files/usr/local/bin/multica" "$OUTPUT/bin/multica"
 install -m 0644 "$STAGE/files/etc/agent-runtime/node-version" "$OUTPUT/node-version"
-mkdir -p "$OUTPUT/vendor"
-cp -a "$ROOT_DIR/Scripts/node-agent-runtime/vendor/pi-plan-mode" "$OUTPUT/vendor/pi-plan-mode"
 
-# This is the fixed contract consumed by agent-runtime.  In particular, it
-# does not retain legacy /opt/node or /data/node paths inside a generation.
+# This is the fixed contract consumed by agent-runtime.
 [ -x "$OUTPUT/node/bin/node" ] || die "generation lacks node"
 [ -x "$OUTPUT/uv/uv" ] || die "generation lacks uv"
 [ -s "$OUTPUT/uv/python-mirror/manifest.txt" ] || die "generation lacks pinned Python mirror"
 [ -x "$OUTPUT/bin/multica" ] || die "generation lacks multica"
 [ -s "$OUTPUT/node-version" ] || die "generation lacks selected Node version metadata"
-[ -s "$OUTPUT/vendor/pi-plan-mode/provenance.json" ] || die "generation lacks vendored Pi plan-mode provenance"
 printf 'generation=%s\n' "$OUTPUT"

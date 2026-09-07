@@ -22,10 +22,6 @@ for path in "$BUMP_SCRIPT" "$WORKFLOW" "$POLICY_DOC" "$AGENTS_DOC" "$NODE_FETCH"
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$BUMP_SCRIPT"
-grep -Fq 'bash "$PI_PLAN_VENDOR_SCRIPT" apply "$latest"' "$BUMP_SCRIPT" ||
-  fail "agent bump must invoke the Pi vendor refresher through bash"
-grep -Fq 'bash "$PI_PLAN_VENDOR_SCRIPT" plan' "$BUMP_SCRIPT" ||
-  fail "agent bump must invoke the Pi vendor validation through bash"
 
 for term in 'CommandCode' 'Pi' 'Multica' 'Node.js' 'CPython 3.13'; do
   grep -Fq "$term" "$POLICY_DOC" || fail "policy omits $term"
@@ -47,27 +43,5 @@ done
 grep -Fq 'latest-at-build' "$POLICY_DOC" || fail "policy does not describe latest-at-build Pi/plugin resolution"
 grep -Fq 'verify_pi_extensions.js' "$WORKFLOW" || fail "release workflow does not import-check Pi extensions"
 grep -Fq 'advance-release' "$WORKFLOW" || fail "release workflow does not advance an immutable runtime sequence"
-
-# npm returns a nested `dist` object only when asked for `dist`; asking for
-# `dist.integrity` instead creates a flattened key and makes the bump job fail
-# before it can decide whether the vendored extension needs refreshing.
-FAKE_NPM_DIR="$WORK_DIR/fake-npm"
-FAKE_NPM_LOG="$WORK_DIR/npm.args"
-mkdir -p "$FAKE_NPM_DIR"
-printf '%s\n' \
-  '#!/bin/sh' \
-  'printf "%s\\n" "$*" > "$TEST_NPM_LOG"' \
-  'printf "%s\\n" '\''{"version":"0.4.8","dist":{"integrity":"sha512-test=="}}'\''' \
-  >"$FAKE_NPM_DIR/npm"
-chmod 755 "$FAKE_NPM_DIR/npm"
-(
-  export PATH="$FAKE_NPM_DIR:$PATH"
-  export TEST_NPM_LOG="$FAKE_NPM_LOG"
-  # shellcheck disable=SC1090
-  . <(sed '/^main "\$@"$/d' "$BUMP_SCRIPT")
-  pi_plan_vendor_latest
-) >"$WORK_DIR/pi-plan-latest"
-[ "$(cat "$WORK_DIR/pi-plan-latest")" = $'0.4.8\tsha512-test==' ] || fail "pi-plan vendor metadata parsing broke"
-[ "$(cat "$FAKE_NPM_LOG")" = 'view pi-plan-mode version dist --json' ] || fail "pi-plan vendor query must request nested dist"
 
 echo "agent runtime policy tests passed"
