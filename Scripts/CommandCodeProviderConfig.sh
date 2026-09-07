@@ -12,9 +12,12 @@
 #
 # Because the CommandCode model list changes as the subscription evolves, we no
 # longer hard-code defaultModel.  Instead we fetch the model catalog at build
-# time, cache it in the firmware, and select the first open-source model.  A
-# runtime init.d script (commandcode-model-sync) refreshes the cache and the
-# default model after the network comes up.
+# time, cache it in the firmware, and select a preferred model using ordered
+# wildcard patterns: flash models (cheap + fast) are preferred, with
+# deepseek/qwen/glm flash models first, then any flash model, then any "pro"
+# model.  The live catalog always contains a flash model, so no built-in
+# fallback is needed.  A runtime init.d script (commandcode-model-sync)
+# refreshes the cache and the default model after the network comes up.
 
 set -euo pipefail
 
@@ -28,10 +31,13 @@ COMMANDCODE_MODELS_URL="${COMMANDCODE_MODELS_URL:-https://api.commandcode.ai/pro
 # For tests: if set to a readable file, use it as the cache instead of fetching.
 COMMANDCODE_MODEL_CACHE_INPUT="${COMMANDCODE_MODEL_CACHE_INPUT:-}"
 
-# Open-source model identifier patterns (case-insensitive substring match).
+# Preferred model patterns in priority order (case-insensitive regex, matched
+# against the model id).  After these three, the selector falls through to any
+# flash model and then any "pro" model.  No built-in fallback: the live catalog
+# always contains a flash model, and a missing match indicates an API problem.
 # Keep this list in sync with the runtime selectors in 99-auto-mount-data and
 # commandcode-model-sync.
-OPEN_SOURCE_PATTERNS='qwen|llama|mistral|deepseek|gemma'
+MODEL_PREFERENCE_PATTERNS='deepseek/.*flash.* qwen/.*flash.* glm.*flash.*'
 
 # Built-in minimal fallback cache used when the build-time API fetch fails.
 # Must contain at least one open-source model so defaultModel can be resolved.
@@ -98,31 +104,51 @@ fetch_model_cache() {
 	return 0
 }
 
-# Select the first open-source model from a cache JSON file.  Falls back to the
-# first model in the list if no open-source model matches, and ultimately to
-# Qwen/Qwen3.8-Flash if the cache is unusable.
-select_open_source_model() {
+# Select the preferred default model from a cache JSON file using ordered
+# wildcard patterns.  Matching passes, in priority order (all case-insensitive):
+#   1. deepseek flash  (deepseek/.*flash.*)
+#   2. qwen flash      (qwen/.*flash.*)
+#   3. glm flash       (glm.*flash.*)
+#   4. any flash model (any provider, e.g. stepfun/Step-3.7-Flash)
+#   5. any "pro" model (e.g. deepseek/deepseek-v4-pro, xiaomi/mimo-v2.5-pro)
+# No built-in fallback: the live catalog always contains a flash model.  Returns
+# 0 with the model id on stdout; returns 1 if no pattern matches (caller must
+# decide how to handle a catalog with neither flash nor pro models).
+select_preferred_model() {
 	local cache_file="$1"
-	local selected
+	local selected pat
 
-	# First pass: first model whose id matches an open-source pattern.
-	selected="$(jq -r --arg pat "$OPEN_SOURCE_PATTERNS" \
-		'.data[]?.id | select(ascii_downcase | test($pat))' \
+	# Passes 1-3: preferred flash patterns in priority order.
+	for pat in $MODEL_PREFERENCE_PATTERNS; do
+		selected="$(jq -r --arg p "$pat" \
+			'.data[]?.id | select(ascii_downcase | test($p))' \
+			"$cache_file" 2>/dev/null | head -1)"
+		if [ -n "$selected" ] && [ "$selected" != "null" ]; then
+			printf '%s\n' "$selected"
+			return 0
+		fi
+	done
+
+	# Pass 4: any model with "flash" in the id (any provider).
+	selected="$(jq -r \
+		'.data[]?.id | select(ascii_downcase | test("flash"))' \
 		"$cache_file" 2>/dev/null | head -1)"
 	if [ -n "$selected" ] && [ "$selected" != "null" ]; then
 		printf '%s\n' "$selected"
 		return 0
 	fi
 
-	# Second pass: first model in the list, regardless of licensing.
-	selected="$(jq -r '.data[0].id' "$cache_file" 2>/dev/null)"
+	# Pass 5: any model with "pro" in the id.
+	selected="$(jq -r \
+		'.data[]?.id | select(ascii_downcase | test("pro"))' \
+		"$cache_file" 2>/dev/null | head -1)"
 	if [ -n "$selected" ] && [ "$selected" != "null" ]; then
 		printf '%s\n' "$selected"
 		return 0
 	fi
 
-	# Ultimate fallback.
-	printf '%s\n' "Qwen/Qwen3.8-Flash"
+	# No match: caller decides.
+	return 1
 }
 
 write_auth_file() {
@@ -149,7 +175,7 @@ patch_settings() {
 
 	tmp_file="$settings_file.tmp.$$"
 	# Set defaultProvider to "commandcode" and defaultModel to the dynamically
-	# selected open-source model from the cached catalog.
+	# selected preferred model from the cached catalog.
 	jq --arg model "$default_model" \
 		'.defaultProvider = "commandcode" | .defaultModel = $model' \
 		"$settings_file" >"$tmp_file" || {
@@ -177,7 +203,10 @@ else
 	printf '%s\n' "$BUILTIN_FALLBACK_CACHE" >"$CACHE_FILE"
 fi
 
-DEFAULT_MODEL="$(select_open_source_model "$CACHE_FILE")"
+DEFAULT_MODEL="$(select_preferred_model "$CACHE_FILE")" || {
+	log_error "no preferred model (flash/pro) found in model catalog; refusing to guess"
+	exit 1
+}
 log_info "selected default model from catalog: $DEFAULT_MODEL"
 
 # Pi agent directories: auth.json + settings.json (defaultProvider flip +
@@ -191,4 +220,4 @@ done
 # CommandCode CLI home: auth.json only (the CLI manages its own settings).
 write_auth_file "$COMMANDCODE_ETC_DIR"
 
-log_info "CommandCode zero-config provisioned: Pi defaultProvider=commandcode, defaultModel=$DEFAULT_MODEL, model cache embedded"
+log_info "CommandCode zero-config provisioned: Pi defaultProvider=commandcode, defaultModel=$DEFAULT_MODEL (preferred flash-first), model cache embedded"
