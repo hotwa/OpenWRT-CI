@@ -12,11 +12,21 @@ DEFAULT_SUBNET="10.250.0.0/24"
 SUBNET="$DEFAULT_SUBNET"
 ZONE="container_bridge_nft"
 CNI_TEMPLATE="/usr/share/container-runtime/nerdctl-bridge.conflist.in"
+[ -n "${CONTAINER_BRIDGE_NFT_CNI_TEMPLATE:-}" ] && CNI_TEMPLATE="$CONTAINER_BRIDGE_NFT_CNI_TEMPLATE"
 CNI_ACTIVE="/etc/cni/net.d/nerdctl-bridge.conflist"
+[ -n "${CONTAINER_BRIDGE_NFT_CNI_ACTIVE:-}" ] && CNI_ACTIVE="$CONTAINER_BRIDGE_NFT_CNI_ACTIVE"
 NFT_TEMPLATE="/usr/share/container-runtime/container-bridge-nft.nft"
+[ -n "${CONTAINER_BRIDGE_NFT_NFT_TEMPLATE:-}" ] && NFT_TEMPLATE="$CONTAINER_BRIDGE_NFT_NFT_TEMPLATE"
 NFT_ACTIVE="/etc/nftables.d/99-container-bridge-nft.nft"
+[ -n "${CONTAINER_BRIDGE_NFT_NFT_ACTIVE:-}" ] && NFT_ACTIVE="$CONTAINER_BRIDGE_NFT_NFT_ACTIVE"
 STATE_DIR="/data/containerd/nerdctl"
+[ -n "${CONTAINER_BRIDGE_NFT_STATE_DIR:-}" ] && STATE_DIR="$CONTAINER_BRIDGE_NFT_STATE_DIR"
 SUBNET_FILE="$STATE_DIR/bridge-subnet"
+[ -n "${CONTAINER_BRIDGE_NFT_SUBNET_FILE:-}" ] && SUBNET_FILE="$CONTAINER_BRIDGE_NFT_SUBNET_FILE"
+
+IP_CMD="${CONTAINER_BRIDGE_NFT_IP:-ip}"
+UCI_CMD="${CONTAINER_BRIDGE_NFT_UCI:-uci}"
+PROC_MOUNTS="${CONTAINER_BRIDGE_NFT_PROC_MOUNTS:-/proc/mounts}"
 
 log() {
 	logger -t "$TAG" "$*" 2>/dev/null || true
@@ -24,29 +34,38 @@ log() {
 }
 
 data_mount_ready() {
-	awk '$2 == "/data" && $1 ~ /^\/dev\// && ($3 == "ext4" || $3 == "f2fs") { found = 1 } END { exit !found }' /proc/mounts
+	awk '$2 == "/data" && $1 ~ /^\/dev\// && ($3 == "ext4" || $3 == "f2fs") { found = 1 } END { exit !found }' "$PROC_MOUNTS"
 }
 
 lan_device() {
 	local device
-	device="$(uci -q get network.lan.device 2>/dev/null || true)"
-	[ -n "$device" ] || device="$(uci -q get network.lan.ifname 2>/dev/null || true)"
+	device="$($UCI_CMD -q get network.lan.device 2>/dev/null || true)"
+	[ -n "$device" ] || device="$($UCI_CMD -q get network.lan.ifname 2>/dev/null || true)"
 	[ -n "$device" ] || device="br-lan"
 	printf '%s' "$device"
 }
 
 candidate_route_is_safe() {
-	local subnet="$1" gateway="$2" route query lan
+	local subnet="$1" gateway="$2" route query lan default_route
 	lan="$(lan_device)"
+	default_route="$($IP_CMD -4 route show default 2>/dev/null || true)"
 
 	# A candidate must not be routed into LAN, Tailnet, Nikki, or another
 	# directly connected interface. A normal default route is safe because the
 	# nft policy owns the later masquerade/mark decision.
 	for query in ""; do
-		route="$(ip -4 route get "$gateway" $query 2>/dev/null || true)"
+		route="$($IP_CMD -4 route get "$gateway" $query 2>/dev/null || true)"
 		[ -n "$route" ] || return 1
 		case "$route" in
-			unreachable*|blackhole*|prohibit*|throw*) return 1 ;;
+			unreachable*|blackhole*|prohibit*|throw*)
+				# At boot time before the WAN/PPPoE default route is established,
+				# "ip route get" returns unreachable for every destination because
+				# the kernel has no route table entry at all. That is not an
+				# explicit routing policy and carries no overlap risk, so the
+				# candidate is safe. Once a default route exists, these special
+				# routes indicate an explicit policy and must still be rejected.
+				[ -n "$default_route" ] && return 1
+				;;
 			*" dev $lan "*|*" dev br-lan "*|*" dev tailscale0 "*|*" dev nikki "*|*" dev tun*"*)
 				return 1
 				;;
@@ -66,11 +85,15 @@ candidate_route_is_safe() {
 
 	# Avoid colliding with another CNI network even if that network has not
 	# created its link yet. The generated default file is the only exception.
-	for config in /etc/cni/net.d/*; do
+	for config in "$(dirname "$CNI_ACTIVE")"/*; do
 		[ -f "$config" ] || continue
 		[ "$config" = "$CNI_ACTIVE" ] && continue
 		grep -Fq "\"$subnet\"" "$config" 2>/dev/null && return 1
 	done
+
+	# No conflict found; the loop above must not leak its exit status
+	# (a non-matching grep returns 1) into this function's result.
+	return 0
 }
 
 select_subnet() {
@@ -156,23 +179,23 @@ remove_cni_config() {
 }
 
 ensure_firewall_zone() {
-	uci -q get "firewall.$ZONE" >/dev/null 2>&1 || \
-		uci set "firewall.$ZONE=zone"
-	uci set "firewall.$ZONE.name=$ZONE"
-	uci set "firewall.$ZONE.device=$BRIDGE"
-	uci set "firewall.$ZONE.input=ACCEPT"
-	uci set "firewall.$ZONE.output=ACCEPT"
-	uci set "firewall.$ZONE.forward=ACCEPT"
+	$UCI_CMD -q get "firewall.$ZONE" >/dev/null 2>&1 || \
+		$UCI_CMD set "firewall.$ZONE=zone"
+	$UCI_CMD set "firewall.$ZONE.name=$ZONE"
+	$UCI_CMD set "firewall.$ZONE.device=$BRIDGE"
+	$UCI_CMD set "firewall.$ZONE.input=ACCEPT"
+	$UCI_CMD set "firewall.$ZONE.output=ACCEPT"
+	$UCI_CMD set "firewall.$ZONE.forward=ACCEPT"
 }
 
 ensure_forwarding() {
 	local section="$1"
 	local source="$2"
 	local destination="$3"
-	uci -q get "firewall.$section" >/dev/null 2>&1 || \
-		uci set "firewall.$section=forwarding"
-	uci set "firewall.$section.src=$source"
-	uci set "firewall.$section.dest=$destination"
+	$UCI_CMD -q get "firewall.$section" >/dev/null 2>&1 || \
+		$UCI_CMD set "firewall.$section=forwarding"
+	$UCI_CMD set "firewall.$section.src=$source"
+	$UCI_CMD set "firewall.$section.dest=$destination"
 }
 
 install_nft_policy() {
@@ -216,13 +239,13 @@ reload_firewall() {
 }
 
 remove_firewall_config() {
-	uci -q delete "firewall.$ZONE" 2>/dev/null || true
-	uci -q delete "firewall.${ZONE}_to_wan" 2>/dev/null || true
-	uci -q delete "firewall.${ZONE}_to_lan" 2>/dev/null || true
-	uci -q delete "firewall.${ZONE}_to_tailscale" 2>/dev/null || true
-	uci -q delete "firewall.lan_to_${ZONE}" 2>/dev/null || true
-	uci -q delete "firewall.tailscale_to_${ZONE}" 2>/dev/null || true
-	uci commit firewall
+	$UCI_CMD -q delete "firewall.$ZONE" 2>/dev/null || true
+	$UCI_CMD -q delete "firewall.${ZONE}_to_wan" 2>/dev/null || true
+	$UCI_CMD -q delete "firewall.${ZONE}_to_lan" 2>/dev/null || true
+	$UCI_CMD -q delete "firewall.${ZONE}_to_tailscale" 2>/dev/null || true
+	$UCI_CMD -q delete "firewall.lan_to_${ZONE}" 2>/dev/null || true
+	$UCI_CMD -q delete "firewall.tailscale_to_${ZONE}" 2>/dev/null || true
+	$UCI_CMD commit firewall
 }
 
 configure_uci() {
@@ -234,7 +257,7 @@ configure_uci() {
 	ensure_forwarding "lan_to_${ZONE}" lan "$ZONE"
 	ensure_forwarding "tailscale_to_${ZONE}" tailscale "$ZONE"
 
-	uci commit firewall
+	$UCI_CMD commit firewall
 }
 
 enable_bridge() {
@@ -292,12 +315,19 @@ show_status() {
 	echo "--- UCI network ---"
 	echo "not managed (CNI owns $BRIDGE)"
 	echo "--- UCI firewall ---"
-	uci -q show "firewall.$ZONE" 2>/dev/null || echo "not configured"
+	$UCI_CMD -q show "firewall.$ZONE" 2>/dev/null || echo "not configured"
 	echo "--- bridge link ---"
 	ip -br addr show "$BRIDGE" 2>/dev/null || echo "bridge not created"
 	echo "--- nft policy ---"
 	[ -f "$NFT_ACTIVE" ] && echo "enabled: $NFT_ACTIVE" || echo "disabled"
 }
+
+# TESTING mode: define all functions but skip command dispatch so tests can
+# source the script and invoke functions directly.  Use return (not exit) so
+# that sourcing the script does not terminate the caller's shell.
+if [ "${CONTAINER_BRIDGE_NFT_TESTING:-0}" = "1" ]; then
+	return 0 2>/dev/null || exit 0
+fi
 
 case "${1:-status}" in
 	enable|start)
