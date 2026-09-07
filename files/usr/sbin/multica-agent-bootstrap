@@ -431,8 +431,12 @@ main() {
 	success_flag="$DATA_DIR/.agent_initialized"
 
 	server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
-	expected_runtime_name="$(cfg runtime_name 'Pi (OpenWrt-Router)')"
-	expected_provider="$(cfg runtime_provider 'pi')"
+	# opencode-first: default provider is opencode; if the opencode runtime is
+	# not yet registered (first-boot download still in progress), the loop below
+	# automatically falls back to the pi runtime.  An explicit UCI
+	# runtime_provider=pi disables the opencode attempt.
+	expected_runtime_name="$(cfg runtime_name 'Opencode on OpenWrt')"
+	expected_provider="$(cfg runtime_provider 'opencode')"
 	configured_agent_name="$(cfg agent_name 'OpenWrt 管家')"
 
 	delay=5
@@ -446,11 +450,30 @@ main() {
 		else
 			log "device profile is unavailable; bootstrap will retry"
 		fi
-		if [ -n "$instructions_file" ] && \
-			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
-			write_success_flag "$success_flag"
-			log "default agent is registered on the expected online runtime"
-			return 0
+		if [ -n "$instructions_file" ]; then
+			# opencode-first with automatic pi fallback.  When the configured
+			# provider is opencode (the default), try opencode first; if its
+			# runtime is not online yet (first-boot download in progress), fall
+			# back to the pi runtime so the agent is never blocked.  An explicit
+			# runtime_provider=pi skips the opencode attempt entirely.
+			bootstrap_ok=0
+			if [ "$expected_provider" = "opencode" ]; then
+				if try_bootstrap "$server_url" "$expected_runtime_name" "opencode" "$agent_name" "$instructions_file"; then
+					bootstrap_ok=1
+				elif try_bootstrap "$server_url" "Pi (OpenWrt-Router)" "pi" "$agent_name" "$instructions_file"; then
+					bootstrap_ok=1
+					log "opencode runtime not online; fell back to pi runtime"
+				fi
+			else
+				if try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
+					bootstrap_ok=1
+				fi
+			fi
+			if [ "$bootstrap_ok" -eq 1 ]; then
+				write_success_flag "$success_flag"
+				log "default agent is registered on the expected online runtime"
+				return 0
+			fi
 		fi
 		log "bootstrap prerequisites are not ready; retrying in ${delay}s"
 		sleep "$delay"

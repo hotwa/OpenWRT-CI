@@ -1,0 +1,42 @@
+#!/bin/sh /etc/rc.common
+
+# opencode-runtime: trigger first-boot binary download and maintain config links.
+# START=92 runs after agent-runtime (91) and before multica (95), so the
+# opencode binary is on PATH when Multica's daemon probes for runtime providers.
+
+START=92
+STOP=10
+
+start() {
+	# Kick off the first-boot install in the background.  The 185 MB download
+	# can take several minutes; we must not block the boot sequence.
+	if [ -x /usr/sbin/opencode-runtime ]; then
+		( /usr/sbin/opencode-runtime install >/tmp/opencode-runtime-install.log 2>&1 ) &
+		logger -t opencode-runtime "first-boot install started in background"
+	fi
+
+	# Maintain data-backed config directories and symlinks (idempotent).
+	if [ -d /data ] && [ -w /data ]; then
+		mkdir -p /data/opencode/config /data/opencode/cache \
+			/data/opencode/data /data/opencode/state
+
+		# First-boot migration: copy firmware default config if absent.
+		if [ ! -f /data/opencode/config/opencode.json ] && \
+			[ -f /etc/opencode/opencode.json ]; then
+			cp /etc/opencode/opencode.json /data/opencode/config/opencode.json
+			chmod 0644 /data/opencode/config/opencode.json
+			logger -t opencode-runtime "copied default opencode.json to /data"
+		fi
+
+		# Link /root/.config/opencode -> /data/opencode/config so opencode
+		# finds its config regardless of XDG_CONFIG_HOME.
+		mkdir -p /root/.config
+		if [ ! -e /root/.config/opencode ] || [ -L /root/.config/opencode ]; then
+			ln -sf /data/opencode/config /root/.config/opencode
+		fi
+	fi
+}
+
+restart() {
+	start
+}

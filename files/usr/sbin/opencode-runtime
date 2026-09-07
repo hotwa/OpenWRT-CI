@@ -1,0 +1,283 @@
+#!/bin/sh
+# opencode-runtime - device-side manager for the opencode single binary.
+#
+# Downloads, verifies and installs the opencode musl binary from the npm
+# tarball whose metadata is baked into /etc/opencode/release-url at build
+# time.  The binary lives on /data so it survives firmware upgrades.
+#
+# Subcommands:
+#   install   download + verify + install (idempotent)
+#   status    report installed version, health, /data space
+#   upgrade   re-read release-url and install if newer
+#
+# Exit codes:
+#   0 success
+#   1 generic error
+#   2 usage error
+#   3 /data unavailable
+#   4 download failed
+#   5 checksum failed
+#   6 already latest
+
+set -u
+
+LOG_TAG="opencode-runtime"
+RELEASE_FILE="/etc/opencode/release-url"
+DATA_ROOT="/data"
+INSTALL_ROOT="${DATA_ROOT}/opt/opencode"
+CURRENT_LINK="${INSTALL_ROOT}/current"
+STAGING_DIR="${INSTALL_ROOT}/.staging"
+BIN_PATH="${CURRENT_LINK}/bin/opencode"
+VERSION_FILE="${CURRENT_LINK}/version"
+
+log()  { logger -t "$LOG_TAG" "$*"; printf '[%s] %s\n' "$LOG_TAG" "$*"; }
+warn() { logger -t "$LOG_TAG" "WARN: $*"; printf '[%s] WARN: %s\n' "$LOG_TAG" "$*" >&2; }
+err()  { logger -t "$LOG_TAG" "ERROR: $*"; printf '[%s] ERROR: %s\n' "$LOG_TAG" "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+release_value() {
+	local key="$1"
+	[ -r "$RELEASE_FILE" ] || return 1
+	sed -n "s/^${key}=//p" "$RELEASE_FILE" | sed -n '1p'
+}
+
+data_available() {
+	[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ] || return 1
+	# A real mount beats an empty rootfs directory.
+	grep -qsE "[[:space:]]${DATA_ROOT}[[:space:]]" /proc/mounts 2>/dev/null || return 0
+	return 0
+}
+
+installed_version() {
+	[ -r "$VERSION_FILE" ] || return 1
+	cat "$VERSION_FILE"
+}
+
+binary_healthy() {
+	[ -x "$BIN_PATH" ] || return 1
+	"$BIN_PATH" --version >/dev/null 2>&1
+}
+
+# ELF machine id via od (no `file` dependency on minimal OpenWrt).
+elf_machine_id() {
+	local binary="$1" magic class data lo hi
+	[ -f "$binary" ] || return 1
+	magic="$(od -An -j0 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	class="$(od -An -j4 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	data="$(od -An -j5 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	lo="$(od -An -j18 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	hi="$(od -An -j19 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	[ "$magic" = "127" ] && [ "$class" = "2" ] && [ "$data" = "1" ] || return 1
+	[ -n "$lo" ] && [ -n "$hi" ] || return 1
+	echo $((lo + hi * 256))
+}
+
+download_file() {
+	local url="$1" dest="$2"
+	if command -v uclient-fetch >/dev/null 2>&1; then
+		uclient-fetch -q -O "$dest" "$url" 2>/dev/null
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O "$dest" "$url" 2>/dev/null
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fsSL -o "$dest" "$url" 2>/dev/null
+	else
+		return 1
+	fi
+}
+
+verify_sha512() {
+	local file="$1" expected="$2" actual
+	if command -v sha512sum >/dev/null 2>&1; then
+		actual="$(sha512sum "$file" 2>/dev/null | awk '{print $1}')"
+	elif command -v openssl >/dev/null 2>&1; then
+		actual="$(openssl dgst -sha512 "$file" 2>/dev/null | awk '{print $NF}')"
+	else
+		err "no sha512sum or openssl available for verification"
+		return 1
+	fi
+	[ -n "$actual" ] || return 1
+	[ "$actual" = "$expected" ]
+}
+
+# ---------------------------------------------------------------------------
+# install
+# ---------------------------------------------------------------------------
+
+do_install() {
+	local version url expected_sha tarball dest_dir extracted_bin machine_id
+	local current_version
+
+	version="$(release_value OPENCODE_VERSION)" || { err "cannot read OPENCODE_VERSION from $RELEASE_FILE"; return 1; }
+	url="$(release_value OPENCODE_TARBALL_URL)" || { err "cannot read OPENCODE_TARBALL_URL"; return 1; }
+	expected_sha="$(release_value OPENCODE_SHA512)" || { err "cannot read OPENCODE_SHA512"; return 1; }
+
+	[ -n "$version" ] && [ -n "$url" ] && [ -n "$expected_sha" ] || {
+		err "incomplete release metadata in $RELEASE_FILE"
+		return 1
+	}
+
+	# Idempotent: already at this version and healthy?
+	current_version="$(installed_version 2>/dev/null || true)"
+	if [ "$current_version" = "$version" ] && binary_healthy; then
+		log "opencode ${version} already installed and healthy"
+		return 0
+	fi
+
+	data_available || { err "/data is not writable"; return 3; }
+
+	mkdir -p "$STAGING_DIR" "$INSTALL_ROOT"
+	tarball="${STAGING_DIR}/opencode-${version}.tgz"
+	rm -f "$tarball"
+
+	log "downloading opencode ${version} from npm..."
+	if ! download_file "$url" "$tarball"; then
+		err "download failed: $url"
+		rm -f "$tarball"
+		return 4
+	fi
+	[ -s "$tarball" ] || { err "downloaded tarball is empty"; rm -f "$tarball"; return 4; }
+
+	log "verifying sha512..."
+	if ! verify_sha512 "$tarball" "$expected_sha"; then
+		err "sha512 mismatch for opencode ${version}"
+		rm -f "$tarball"
+		return 5
+	fi
+
+	# Extract into a versioned directory, then atomically flip the symlink.
+	dest_dir="${INSTALL_ROOT}/${version}"
+	rm -rf "$dest_dir"
+	mkdir -p "${dest_dir}/bin"
+
+	log "extracting binary from tarball..."
+	if ! tar -xzf "$tarball" -C "$STAGING_DIR" 2>/dev/null; then
+		err "tar extraction failed"
+		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+		return 1
+	fi
+
+	extracted_bin="${STAGING_DIR}/package/bin/opencode"
+	[ -f "$extracted_bin" ] || {
+		err "tarball does not contain package/bin/opencode"
+		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+		return 1
+	}
+
+	# Verify ELF architecture (aarch64 = machine 183).
+	machine_id="$(elf_machine_id "$extracted_bin" 2>/dev/null || true)"
+	if [ "$machine_id" != "183" ]; then
+		err "extracted binary is not aarch64 ELF (machine id=${machine_id:-unknown})"
+		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+		return 1
+	fi
+
+	mv "$extracted_bin" "${dest_dir}/bin/opencode"
+	chmod +x "${dest_dir}/bin/opencode"
+	printf '%s\n' "$version" > "${dest_dir}/version"
+
+	# Atomic symlink flip.
+	ln -sf "$version" "$CURRENT_LINK"
+
+	# Cleanup staging.
+	rm -rf "$tarball" "${STAGING_DIR}/package"
+
+	# Final health check.
+	if ! binary_healthy; then
+		err "installed binary failed --version health check"
+		return 1
+	fi
+
+	log "opencode ${version} installed successfully to ${INSTALL_ROOT}/${version}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+do_status() {
+	local version healthy data_space
+	version="$(installed_version 2>/dev/null || true)"
+	if [ -n "$version" ]; then
+		if binary_healthy; then
+			healthy="yes"
+		else
+			healthy="no (binary not executable or --version failed)"
+		fi
+	else
+		version="(not installed)"
+		healthy="n/a"
+	fi
+
+	if data_available; then
+		data_space="$(df -h "$DATA_ROOT" 2>/dev/null | awk 'NR==2{print $4" free / "$2" total"}' || echo "unknown")"
+	else
+		data_space="unavailable"
+	fi
+
+	printf 'opencode runtime status\n'
+	printf '  installed version: %s\n' "$version"
+	printf '  healthy:           %s\n' "$healthy"
+	printf '  binary path:       %s\n' "$BIN_PATH"
+	printf '  /data space:       %s\n' "$data_space"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# upgrade
+# ---------------------------------------------------------------------------
+
+do_upgrade() {
+	local target_version current_version
+	target_version="$(release_value OPENCODE_VERSION)" || { err "cannot read release metadata"; return 1; }
+	current_version="$(installed_version 2>/dev/null || true)"
+
+	if [ "$current_version" = "$target_version" ] && binary_healthy; then
+		log "opencode already at latest version ${target_version}"
+		return 6
+	fi
+
+	log "upgrading opencode ${current_version:-none} -> ${target_version}..."
+	do_install
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+usage() {
+	printf 'Usage: %s {install|status|upgrade}\n' "$0" >&2
+}
+
+main() {
+	local cmd="${1:-}"
+	case "$cmd" in
+		install)
+			do_install
+			;;
+		status)
+			do_status
+			;;
+		upgrade)
+			do_upgrade
+			;;
+		-h|--help|help)
+			usage
+			return 0
+			;;
+		'')
+			usage
+			return 2
+			;;
+		*)
+			err "unknown subcommand: $cmd"
+			usage
+			return 2
+			;;
+	esac
+}
+
+main "$@"
