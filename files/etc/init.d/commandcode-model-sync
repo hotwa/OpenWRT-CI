@@ -4,7 +4,9 @@
 # Best-effort background task that runs after boot: waits for network, fetches
 # the latest model catalog from the CommandCode API, updates the on-disk cache,
 # and — only when settings.json is still firmware-managed (not operator-edited)
-# — refreshes defaultModel to the first open-source model in the new catalog.
+# — refreshes defaultModel to the preferred model in the new catalog.  Preferred
+# models are selected by ordered wildcard patterns: deepseek flash, then qwen
+# flash, then glm flash, then any flash model, then any "pro" model.
 #
 # Failures are non-fatal: the existing cache and settings are preserved and the
 # pi-commandcode-provider extension will fetch the catalog on its own next use.
@@ -28,26 +30,62 @@ log_msg() {
 	logger -t "$LOG_TAG" "$*" 2>/dev/null || true
 }
 
-# Select the first open-source model from a cache file.  Mirrors the logic in
-# 99-auto-mount-data (grep/sed only, no jq).  Falls back to the first model in
-# the list if no open-source pattern matches.
+# Select the preferred default model from a cache file.  Mirrors the logic in
+# 99-auto-mount-data (grep/sed/tr only, no jq).  Matching passes, in priority
+# order (all case-insensitive):
+#   1. deepseek flash   (deepseek/*flash*)
+#   2. qwen flash       (qwen/*flash*)
+#   3. glm flash        (*glm*flash*)
+#   4. any flash model  (any provider)
+#   5. any "pro" model
+# No built-in fallback: the live catalog always contains a flash model.
+# Returns 0 with the model id on stdout; returns 1 if the cache is missing,
+# unparseable, or no pattern matches.
 select_model_from_cache() {
 	local cache_file="$1"
-	local model_ids model
+	local model_ids model lower
 	[ -f "$cache_file" ] || return 1
 	model_ids="$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$cache_file" 2>/dev/null | \
 		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 	[ -n "$model_ids" ] || return 1
+
+	# Pass 1: deepseek flash.
 	for model in $model_ids; do
-		case "$model" in
-			*[Qq]wen*|*[Ll]lama*|*[Mm]istral*|*[Dd]eep[Ss]eek*|*[Gg]emma*)
-				printf '%s\n' "$model"
-				return 0
-				;;
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			deepseek/*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	printf '%s\n' "$model_ids" | head -1
-	return 0
+	# Pass 2: qwen flash.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			qwen/*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 3: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*glm*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 4: any model with "flash" in the id (any provider).
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 5: any model with "pro" in the id.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*pro*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# No match: caller decides.
+	return 1
 }
 
 # True only when the settings file is still the firmware-written copy (mtime
