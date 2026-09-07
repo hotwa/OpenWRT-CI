@@ -43,46 +43,46 @@ RESULT="$(select_model_from_cache "$CACHE1")"
 	exit 1
 }
 
-# Case 2: cache with closed-source model first, open-source second.
+# Case 2: cache with closed-source model first, qwen flash second.
 CACHE2="$TMP_ROOT/cache2.json"
 cat >"$CACHE2" <<'EOF'
-{"object":"list","data":[{"id":"openai/gpt-4o","object":"model"},{"id":"deepseek-ai/DeepSeek-V3","object":"model"}]}
+{"object":"list","data":[{"id":"openai/gpt-4o","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
 EOF
 RESULT="$(select_model_from_cache "$CACHE2")"
-[ "$RESULT" = "deepseek-ai/DeepSeek-V3" ] || {
-	echo "FAIL: select_model_from_cache returned '$RESULT', expected 'deepseek-ai/DeepSeek-V3'"
+[ "$RESULT" = "Qwen/Qwen3.8-Flash" ] || {
+	echo "FAIL: select_model_from_cache returned '$RESULT', expected 'Qwen/Qwen3.8-Flash'"
 	exit 1
 }
 
-# Case 3: cache with no open-source models falls back to first.
+# Case 3: cache with neither flash nor pro returns failure (no built-in fallback).
 CACHE3="$TMP_ROOT/cache3.json"
 cat >"$CACHE3" <<'EOF'
 {"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model"},{"id":"openai/gpt-4o","object":"model"}]}
 EOF
-RESULT="$(select_model_from_cache "$CACHE3")"
-[ "$RESULT" = "anthropic/claude-3.5-sonnet" ] || {
-	echo "FAIL: no-open-source fallback returned '$RESULT', expected first model"
+if select_model_from_cache "$CACHE3" 2>/dev/null; then
+	echo "FAIL: select_model_from_cache succeeded with no flash/pro models"
 	exit 1
-}
+fi
 
-# Case 4: mixed case model names (Llama, Gemma, Mistral).
+# Case 4: mixed-case model name with "pro" matches the pro fallback pass.
 CACHE4="$TMP_ROOT/cache4.json"
 cat >"$CACHE4" <<'EOF'
-{"object":"list","data":[{"id":"meta-llama/Llama-3.1-8B","object":"model"}]}
+{"object":"list","data":[{"id":"meta-llama/Llama-3.1-8B-Pro","object":"model"}]}
 EOF
 RESULT="$(select_model_from_cache "$CACHE4")"
-[ "$RESULT" = "meta-llama/Llama-3.1-8B" ] || {
-	echo "FAIL: Llama model not detected as open-source"
+[ "$RESULT" = "meta-llama/Llama-3.1-8B-Pro" ] || {
+	echo "FAIL: pro model not detected by fallback pass"
 	exit 1
 }
 
+# Case 5: any-provider flash model matches pass 4 (e.g. gemma flash).
 CACHE5="$TMP_ROOT/cache5.json"
 cat >"$CACHE5" <<'EOF'
-{"object":"list","data":[{"id":"google/gemma-2-9b","object":"model"}]}
+{"object":"list","data":[{"id":"google/gemma-2-9b-flash","object":"model"}]}
 EOF
 RESULT="$(select_model_from_cache "$CACHE5")"
-[ "$RESULT" = "google/gemma-2-9b" ] || {
-	echo "FAIL: Gemma model not detected as open-source"
+[ "$RESULT" = "google/gemma-2-9b-flash" ] || {
+	echo "FAIL: any-provider flash model not detected"
 	exit 1
 }
 
@@ -194,10 +194,10 @@ printf '%s\n' '{"apiKey":"user_test_sync_key"}' >"$SYNC_AUTH"
 chmod 600 "$SYNC_AUTH"
 touch -r "$SYNC_SETTINGS" "$SYNC_MARKER"
 
-# New API response with a different open-source model first.
+# New API response with a deepseek flash model (higher priority than qwen flash).
 NEW_RESPONSE="$SYNC_DIR/new-response.json"
 cat >"$NEW_RESPONSE" <<'EOF'
-{"object":"list","data":[{"id":"deepseek-ai/DeepSeek-V3","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
+{"object":"list","data":[{"id":"deepseek/deepseek-v4-flash","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
 EOF
 
 # Run do_sync with the mock fetch client on PATH.
@@ -214,8 +214,8 @@ cmp -s "$NEW_RESPONSE" "$SYNC_CACHE" || {
 	echo "FAIL: do_sync did not update the cache file"
 	exit 1
 }
-# defaultModel must be updated to the new first open-source model.
-grep -Fq '"defaultModel": "deepseek-ai/DeepSeek-V3"' "$SYNC_SETTINGS" || {
+# defaultModel must be updated to the new preferred model (deepseek flash).
+grep -Fq '"defaultModel": "deepseek/deepseek-v4-flash"' "$SYNC_SETTINGS" || {
 	echo "FAIL: do_sync did not update defaultModel"
 	exit 1
 }

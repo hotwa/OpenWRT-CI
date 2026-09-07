@@ -138,11 +138,11 @@ jq -e '.data | type == "array"' "$CASE_ROOT/etc/pi/agent/commandcode-models.json
 [ "$(jq -r .defaultModel "$CASE_ROOT/etc/pi/agent/settings.json")" = "Qwen/Qwen3.8-Flash" ]
 
 # Test 7: custom cache input (COMMANDCODE_MODEL_CACHE_INPUT) overrides the API
-# fetch and drives model selection.  Here the first open-source model is a
-# DeepSeek model, so defaultModel must follow it.
+# fetch and drives model selection.  With a deepseek flash model present, it
+# must be selected as the highest-priority preferred model.
 CUSTOM_CACHE="$(mktemp)"
 cat >"$CUSTOM_CACHE" <<'EOF'
-{"object":"list","data":[{"id":"deepseek-ai/DeepSeek-V3","object":"model","owned_by":"deepseek"},{"id":"anthropic/claude-3.5-sonnet","object":"model","owned_by":"anthropic"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}
+{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model","owned_by":"anthropic"},{"id":"deepseek/deepseek-v4-flash","object":"model","owned_by":"deepseek"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}
 EOF
 CASE_CUSTOM="$TMP_ROOT/custom-cache"
 mkdir -p "$CASE_CUSTOM/etc/pi/agent" "$CASE_CUSTOM/root/.pi/agent"
@@ -151,8 +151,8 @@ write_settings "$CASE_CUSTOM/root/.pi/agent"
 COMMANDCODE_API_KEY="user_custom_cache" \
   COMMANDCODE_MODEL_CACHE_INPUT="$CUSTOM_CACHE" \
   bash "$CONFIG_SCRIPT" "$CASE_CUSTOM"
-[ "$(jq -r .defaultModel "$CASE_CUSTOM/etc/pi/agent/settings.json")" = "deepseek-ai/DeepSeek-V3" ] || {
-  echo "FAIL: defaultModel was not selected from custom cache (expected deepseek-ai/DeepSeek-V3)"
+[ "$(jq -r .defaultModel "$CASE_CUSTOM/etc/pi/agent/settings.json")" = "deepseek/deepseek-v4-flash" ] || {
+  echo "FAIL: defaultModel was not selected from custom cache (expected deepseek/deepseek-v4-flash)"
   exit 1
 }
 # The cache file must match the custom input (copied, not fetched).
@@ -162,23 +162,41 @@ cmp -s "$CUSTOM_CACHE" "$CASE_CUSTOM/etc/pi/agent/commandcode-models.json" || {
 }
 rm -f "$CUSTOM_CACHE"
 
-# Test 8: cache with no open-source models falls back to the first model.
-CLOSED_CACHE="$(mktemp)"
-cat >"$CLOSED_CACHE" <<'EOF'
-{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model"},{"id":"openai/gpt-4o","object":"model"}]}
+# Test 8: cache with no flash models falls back to the first "pro" model.
+PRO_CACHE="$(mktemp)"
+cat >"$PRO_CACHE" <<'EOF'
+{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model"},{"id":"deepseek/deepseek-v4-pro","object":"model"},{"id":"Qwen/Qwen3.8-27B","object":"model"}]}
 EOF
-CASE_CLOSED="$TMP_ROOT/closed-cache"
-mkdir -p "$CASE_CLOSED/etc/pi/agent" "$CASE_CLOSED/root/.pi/agent"
-write_settings "$CASE_CLOSED/etc/pi/agent"
-write_settings "$CASE_CLOSED/root/.pi/agent"
-COMMANDCODE_API_KEY="user_closed_cache" \
-  COMMANDCODE_MODEL_CACHE_INPUT="$CLOSED_CACHE" \
-  bash "$CONFIG_SCRIPT" "$CASE_CLOSED"
-[ "$(jq -r .defaultModel "$CASE_CLOSED/etc/pi/agent/settings.json")" = "anthropic/claude-3.5-sonnet" ] || {
-  echo "FAIL: no-open-source fallback did not select first model"
+CASE_PRO="$TMP_ROOT/pro-cache"
+mkdir -p "$CASE_PRO/etc/pi/agent" "$CASE_PRO/root/.pi/agent"
+write_settings "$CASE_PRO/etc/pi/agent"
+write_settings "$CASE_PRO/root/.pi/agent"
+COMMANDCODE_API_KEY="user_pro_cache" \
+  COMMANDCODE_MODEL_CACHE_INPUT="$PRO_CACHE" \
+  bash "$CONFIG_SCRIPT" "$CASE_PRO"
+[ "$(jq -r .defaultModel "$CASE_PRO/etc/pi/agent/settings.json")" = "deepseek/deepseek-v4-pro" ] || {
+  echo "FAIL: no-flash fallback did not select first pro model"
   exit 1
 }
-rm -f "$CLOSED_CACHE"
+rm -f "$PRO_CACHE"
+
+# Test 9: cache with neither flash nor pro models must cause the build to fail
+# (no built-in fallback — a catalog without flash/pro indicates an API problem).
+NOMATCH_CACHE="$(mktemp)"
+cat >"$NOMATCH_CACHE" <<'EOF'
+{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model"},{"id":"openai/gpt-4o","object":"model"}]}
+EOF
+CASE_NOMATCH="$TMP_ROOT/nomatch-cache"
+mkdir -p "$CASE_NOMATCH/etc/pi/agent" "$CASE_NOMATCH/root/.pi/agent"
+write_settings "$CASE_NOMATCH/etc/pi/agent"
+write_settings "$CASE_NOMATCH/root/.pi/agent"
+if COMMANDCODE_API_KEY="user_nomatch_cache" \
+  COMMANDCODE_MODEL_CACHE_INPUT="$NOMATCH_CACHE" \
+  bash "$CONFIG_SCRIPT" "$CASE_NOMATCH" 2>/dev/null; then
+  echo "FAIL: script succeeded with a cache containing neither flash nor pro models"
+  exit 1
+fi
+rm -f "$NOMATCH_CACHE"
 
 # Test 9: cache file must not contain the API key (only model directory).
 if grep -Fq 'user_' "$CASE_ROOT/etc/pi/agent/commandcode-models.json"; then

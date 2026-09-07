@@ -532,9 +532,9 @@ cat >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/settings.json" <<'EOF'
   "defaultThinkingLevel": "medium"
 }
 EOF
-# Firmware model cache with a DeepSeek model first (open-source).
+# Firmware model cache with a deepseek flash model (highest priority).
 cat >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/commandcode-models.json" <<'EOF'
-{"object":"list","data":[{"id":"deepseek-ai/DeepSeek-V3","object":"model"},{"id":"Qwen/Qwen3.8-27B","object":"model"}]}
+{"object":"list","data":[{"id":"deepseek/deepseek-v4-flash","object":"model"},{"id":"Qwen/Qwen3.8-27B","object":"model"}]}
 EOF
 printf '%s\n' '{"apiKey":"user_firstboot_key"}' >"$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/auth.json"
 chmod 600 "$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/auth.json"
@@ -553,8 +553,8 @@ cmp -s "$CASE_CACHE_FIRSTBOOT/firmware_etc/pi/agent/commandcode-models.json" \
 	echo "commandcode-models.json copy does not match firmware source"
 	exit 1
 }
-# defaultModel must be the first open-source model from the cache (DeepSeek).
-grep -Fq '"defaultModel": "deepseek-ai/DeepSeek-V3"' "$CASE_CACHE_FIRSTBOOT/data/pi/agent/settings.json" || {
+# defaultModel must be the preferred model from the cache (deepseek flash).
+grep -Fq '"defaultModel": "deepseek/deepseek-v4-flash"' "$CASE_CACHE_FIRSTBOOT/data/pi/agent/settings.json" || {
 	echo "first-boot defaultModel was not selected from the model cache"
 	exit 1
 }
@@ -578,9 +578,9 @@ cat >"$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" <<'EOF'
 EOF
 printf '%s\n' '{"apiKey":"user_migcache_key"}' >"$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/auth.json"
 chmod 600 "$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/auth.json"
-# Firmware cache with Mistral first.
+# Firmware cache with a deepseek flash model (preferred over non-flash).
 cat >"$CASE_MIGRATE_CACHE/firmware_etc/pi/agent/commandcode-models.json" <<'EOF'
-{"object":"list","data":[{"id":"mistralai/Mistral-Small","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
+{"object":"list","data":[{"id":"mistralai/Mistral-Small","object":"model"},{"id":"deepseek/deepseek-v4-flash","object":"model"}]}
 EOF
 : >"$CASE_MIGRATE_CACHE/mounts"
 printf '%s\n' '/dev/mmcblk0p19: UUID="migcache-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="migcache-part"' >"$CASE_MIGRATE_CACHE/block.info"
@@ -589,8 +589,8 @@ grep -Fq '"defaultProvider": "commandcode"' "$CASE_MIGRATE_CACHE/data/pi/agent/s
 	echo "migration with cache did not flip defaultProvider"
 	exit 1
 }
-grep -Fq '"defaultModel": "mistralai/Mistral-Small"' "$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" || {
-	echo "migration with cache did not select model from cache (expected mistralai/Mistral-Small)"
+grep -Fq '"defaultModel": "deepseek/deepseek-v4-flash"' "$CASE_MIGRATE_CACHE/data/pi/agent/settings.json" || {
+	echo "migration with cache did not select preferred model from cache (expected deepseek/deepseek-v4-flash)"
 	exit 1
 }
 
