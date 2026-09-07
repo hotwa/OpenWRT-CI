@@ -499,14 +499,14 @@ handle_existing_legacy_data() {
 	end="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
 	name="$(printf '%s\n' "$row" | awk -F '\t' '{ print $4 }')"
 	[ "$name" = data ] || return 2
-	valid_number "$number" && [ "$number" -ge 1 ] || return 0
+	valid_number "$number" && [ "$number" -ge 1 ] || return 3
 	LEGACY_DATA_NUMBER="$number"
 
 	# Seeing an old data partition is enough to stop automatic allocation. If
 	# its geometry is not the reviewed tail layout, leave it entirely alone.
 	table_has_required_topology "$disk" || {
 		log "legacy data p${number} has an unreviewed GPT topology; leaving it unchanged"
-		return 0
+		return 3
 	}
 	max_partition="$(table_max_partition "$disk")"
 	max_end="$(table_max_end "$disk")"
@@ -515,18 +515,12 @@ handle_existing_legacy_data() {
 	for value in "$number" "$start" "$end" "$max_partition" "$max_end" "$last_usable" "$prior_end"; do
 		valid_number "$value" || {
 			log "legacy data p${number} has unreadable GPT geometry; leaving it unchanged"
-			return 0
+			return 3
 		}
 	done
-	expected_start=$(( ((prior_end + 1 + 2047) / 2048) * 2048 ))
-	[ "$number" -eq "$max_partition" ] && [ "$start" -eq "$expected_start" ] && \
-		[ "$end" -eq "$max_end" ] && [ "$end" -eq "$last_usable" ] || {
-		log "legacy data p${number} is not the reviewed tail partition; leaving it unchanged"
-		return 0
-	}
 	verify_existing_legacy_data_metadata "$disk" "$number" "$name" "$start" "$end" || {
 		log "legacy data p${number} has unverifiable GPT metadata; leaving it unchanged"
-		return 0
+		return 3
 	}
 
 	device="$(partition_device "$disk" "$number")"
@@ -540,6 +534,27 @@ handle_existing_legacy_data() {
 		log "reviewed legacy data p${number} filesystem probe failed; refusing automatic format"
 		return 1
 	}
+
+	# Common tail geometry: last partition + end-of-disk. Required for both
+	# preserve (ext4/f2fs) and format (raw) in this function. A partition
+	# that fails the tail check falls through to the broader adopt path only
+	# if it already carries ext4/f2fs (strong evidence of a vendor data
+	# partition that may be followed by vendor-reserved partitions). Raw or
+	# unreadable partitions that fail the tail check are rejected outright.
+	if [ "$number" -ne "$max_partition" ] || [ "$end" -ne "$max_end" ] || \
+		[ "$end" -ne "$last_usable" ]; then
+		case "$probe_state" in
+			typed:ext4|typed:f2fs)
+				log "legacy data p${number} is not the reviewed tail partition; falling through to adopt path"
+				return 2
+				;;
+			*)
+				log "legacy data p${number} is not the reviewed tail partition; leaving it unchanged"
+				return 3
+				;;
+		esac
+	fi
+
 	case "$probe_state" in
 		typed:ext4|typed:f2fs)
 			type="${probe_state#typed:}"
@@ -547,6 +562,10 @@ handle_existing_legacy_data() {
 				log "reviewed legacy data p${number} has GPT type $EXISTING_LEGACY_DATA_GPT_TYPE, not Linux filesystem; refusing automatic adoption"
 				return 0
 			}
+			# A vendor-preinstalled ext4/f2fs data partition may not start on a
+			# 1MiB boundary. Its geometry is determined by the factory layout, so
+			# skip the start-sector alignment check and preserve the filesystem
+			# as-is for UUID migration. Never reformat an existing filesystem.
 			log "preserving healthy existing legacy data p${number} filesystem ($type) for UUID migration"
 			write_legacy_approval "$disk" "$number" "$device" "$type" || {
 				log "could not persist reviewed legacy data approval; leaving it unchanged"
@@ -555,6 +574,13 @@ handle_existing_legacy_data() {
 			return 0
 			;;
 		raw)
+			# Raw partitions must pass strict 1MiB start alignment before
+			# they may be formatted (prevents misidentified-partition wipes).
+			expected_start=$(( ((prior_end + 1 + 2047) / 2048) * 2048 ))
+			[ "$start" -eq "$expected_start" ] || {
+				log "raw legacy data p${number} is not 1MiB-aligned; refusing automatic format"
+				return 3
+			}
 			[ "$mounted" -eq 0 ] || {
 				log "reviewed raw legacy data p${number} is already mounted; refusing automatic format"
 				return 0
@@ -596,7 +622,7 @@ handle_existing_unnamed_data_partition() {
 	local max_partition max_end last_usable device mounted probe_state type
 	local label status info code
 
-	candidates="$(partition_rows "$disk" | awk -F '\t' '$4 == "" || $4 == "data" { print }')"
+	candidates="$(partition_rows "$disk" | awk -F '\t' '$4 == "" || $4 == "data" || $4 == "openwrt-data" { print }')"
 	[ -n "$candidates" ] || return 2
 
 	table_has_required_topology "$disk" || {
@@ -630,26 +656,13 @@ handle_existing_unnamed_data_partition() {
 	start="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
 	end="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
 	name="$(printf '%s\n' "$row" | awk -F '\t' '{ print $4 }')"
-	valid_number "$number" && [ "$number" -ge 1 ] || return 0
+	valid_number "$number" && [ "$number" -ge 1 ] || return 3
 	LEGACY_DATA_NUMBER="$number"
 
-	# The candidate must occupy the tail of the partition table.
-	max_partition="$(table_max_partition "$disk")"
-	max_end="$(table_max_end "$disk")"
-	last_usable="$(table_last_sector "$disk")"
-	for value in "$max_partition" "$max_end" "$last_usable"; do
-		valid_number "$value" || {
-			log "unnamed data p${number} has unreadable GPT geometry; leaving it unchanged"
-			return 0
-		}
-	done
-	[ "$number" -eq "$max_partition" ] && [ "$end" -eq "$max_end" ] || {
-		log "unnamed data p${number} is not the reviewed tail partition; leaving it unchanged"
-		return 0
-	}
-
 	# Verify GPT metadata via sgdisk -i: name (empty for unnamed), type 8300,
-	# and exact start/end sectors.
+	# and exact start/end sectors. Tail geometry is enforced only for raw
+	# partitions below; an existing ext4/f2fs is strong enough evidence that
+	# the data partition may be followed by vendor-reserved partitions.
 	info="$(run_sgdisk -i "$number" "$disk" 2>&1)" || {
 		log "unnamed data p${number} has unverifiable GPT metadata; leaving it unchanged"
 		return 0
@@ -698,6 +711,21 @@ handle_existing_unnamed_data_partition() {
 			return 0
 			;;
 		raw)
+			# A raw partition must occupy the tail of the table before it
+			# may be formatted (prevents wiping a middle partition by mistake).
+			max_partition="$(table_max_partition "$disk")"
+			max_end="$(table_max_end "$disk")"
+			last_usable="$(table_last_sector "$disk")"
+			for value in "$max_partition" "$max_end" "$last_usable"; do
+				valid_number "$value" || {
+					log "unnamed data p${number} has unreadable GPT geometry; leaving it unchanged"
+					return 0
+				}
+			done
+			[ "$number" -eq "$max_partition" ] && [ "$end" -eq "$max_end" ] || {
+				log "unnamed data p${number} is not the reviewed tail partition; leaving it unchanged"
+				return 0
+			}
 			[ "$mounted" -eq 0 ] || {
 				log "unnamed data p${number} is already mounted; refusing automatic format"
 				return 0

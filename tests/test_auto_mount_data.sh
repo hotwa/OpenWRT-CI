@@ -18,8 +18,8 @@ if grep -Eq 'lsblk|mkfs|LABEL=\"\(data\|userdata\|' "$SCRIPT"; then
 	echo "auto mount script still guesses or formats generic partitions"
 	exit 1
 fi
-grep -Fq 'find_devices LABEL openwrt-data' "$SCRIPT" || {
-	echo "auto mount script does not require LABEL=openwrt-data"
+grep -Fq 'find_label_opted_data_devices' "$SCRIPT" || {
+	echo "auto mount script does not enumerate label-opted-in data partitions"
 	exit 1
 }
 grep -Fq 'fstab.data.uuid' "$SCRIPT" || {
@@ -242,17 +242,27 @@ fi
 	exit 1
 }
 
-# A p27 with the old label but no approval bound to its UUID/PARTUUID is not
-# sufficient to migrate state. This catches a copied or unexpected layout.
-CASE_LEGACY_UNAPPROVED="$TMP_ROOT/legacy-unapproved"
-mkdir -p "$CASE_LEGACY_UNAPPROVED/root"
-printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_LEGACY_UNAPPROVED/board"
-: >"$CASE_LEGACY_UNAPPROVED/mounts"
-printf '%s\n' '/dev/mmcblk0p27: UUID="legacy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="legacy-part"' >"$CASE_LEGACY_UNAPPROVED/block.info"
-if run_fixture "$CASE_LEGACY_UNAPPROVED"; then
-	echo "unapproved legacy p27 was adopted"
+# A p27 with PARTLABEL=data and ext4 on a supported board is now adopted
+# directly by the dynamic label-opted-in discovery, without requiring an
+# approval file. This is the re-cs-02 / re-ss-01 vendor-preinstalled layout.
+CASE_LEGACY_DIRECT="$TMP_ROOT/legacy-direct-mount"
+mkdir -p "$CASE_LEGACY_DIRECT/root"
+printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_LEGACY_DIRECT/board"
+: >"$CASE_LEGACY_DIRECT/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="direct-uuid-9999" TYPE="ext4" PARTLABEL="data" PARTUUID="direct-part"' >"$CASE_LEGACY_DIRECT/block.info"
+run_fixture "$CASE_LEGACY_DIRECT"
+grep -Fq "/dev/mmcblk0p27 $CASE_LEGACY_DIRECT/data ext4" "$CASE_LEGACY_DIRECT/mounts" || {
+	echo "PARTLABEL=data ext4 was not directly mounted without approval"
 	exit 1
-fi
+}
+grep -Fxq 'uuid=direct-uuid-9999' "$CASE_LEGACY_DIRECT/fstab.record" || {
+	echo "direct-mount PARTLABEL=data ext4 was not persisted by UUID"
+	exit 1
+}
+[ ! -e "$CASE_LEGACY_DIRECT/legacy-approved" ] || {
+	echo "direct-mount should not create an approval file"
+	exit 1
+}
 
 # Legacy JDCloud layouts do not all use p27. The approval record carries the
 # exact reviewed GPT number, so a different tail number is safe to adopt and
@@ -630,6 +640,168 @@ run_fixture "$CASE_USER_LOCKED" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_USER_LOCKED/firmw
 # User's custom model must survive.
 grep -Fq '"defaultModel": "user-custom-model"' "$CASE_USER_LOCKED/data/pi/agent/settings.json" || {
 	echo "user-customized defaultModel was overwritten despite mtime mismatch"
+	exit 1
+}
+
+
+# ============================================================================
+# Dynamic label-opted-in discovery tests (PARTLABEL=data|openwrt-data,
+# LABEL=openwrt-data) — covers re-ss-01, re-cs-02, re-cs-07 layouts.
+# ============================================================================
+
+# --- re-ss-01 scenario: fstab.data.uuid already exists -> main path ---
+# When fstab.data.uuid is set, 99 must go through the requested_uuid branch
+# and mount by UUID, never entering the label fallback. A decoy PARTLABEL=data
+# device with a different UUID must NOT be selected.
+CASE_FSTAB_UUID="$TMP_ROOT/fstab-uuid-mainpath"
+mkdir -p "$CASE_FSTAB_UUID/root"
+printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_FSTAB_UUID/board"
+: >"$CASE_FSTAB_UUID/mounts"
+cat >"$CASE_FSTAB_UUID/block.info" <<'EOF'
+/dev/mmcblk0p27: UUID="resss01-uuid-1234" LABEL="openwrt-data" TYPE="ext4" PARTLABEL="openwrt-data" PARTUUID="resss01-part"
+/dev/mmcblk0p26: UUID="decoy-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="decoy-part"
+EOF
+run_fixture "$CASE_FSTAB_UUID" AUTO_MOUNT_TEST_FSTAB_UUID=resss01-uuid-1234
+grep -Fq "/dev/mmcblk0p27 $CASE_FSTAB_UUID/data ext4" "$CASE_FSTAB_UUID/mounts" || {
+	echo "fstab.uuid main path did not mount the UUID-matched p27"
+	exit 1
+}
+if grep -Fq '/dev/mmcblk0p26' "$CASE_FSTAB_UUID/mounts"; then
+	echo "fstab.uuid main path incorrectly selected the decoy PARTLABEL=data device"
+	exit 1
+fi
+grep -Fxq 'uuid=resss01-uuid-1234' "$CASE_FSTAB_UUID/fstab.record" || {
+	echo "fstab.uuid main path did not persist the correct UUID"
+	exit 1
+}
+
+# --- re-cs-02 scenario: PARTLABEL=data ext4, no fstab, no approval ---
+# A vendor-preinstalled ext4 with PARTLABEL=data (no LABEL) must be mounted
+# directly without an approval file. The anonymous /mnt/mmcblk0p27 mount is
+# detached before the /data mount.
+CASE_PARTLABEL_DATA="$TMP_ROOT/partlabel-data-ext4"
+mkdir -p "$CASE_PARTLABEL_DATA/root"
+printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_PARTLABEL_DATA/board"
+printf '%s\n' '/dev/mmcblk0p27 /mnt/mmcblk0p27 ext4 rw 0 0' >"$CASE_PARTLABEL_DATA/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="recs02-uuid-5678" TYPE="ext4" PARTLABEL="data" PARTUUID="recs02-part"' >"$CASE_PARTLABEL_DATA/block.info"
+run_fixture "$CASE_PARTLABEL_DATA"
+grep -Fq "/dev/mmcblk0p27 $CASE_PARTLABEL_DATA/data ext4" "$CASE_PARTLABEL_DATA/mounts" || {
+	echo "PARTLABEL=data ext4 was not mounted at /data"
+	exit 1
+}
+if grep -Fq '/mnt/mmcblk0p27' "$CASE_PARTLABEL_DATA/mounts"; then
+	echo "anonymous p27 mount was not detached before /data mount"
+	exit 1
+fi
+grep -Fxq 'uuid=recs02-uuid-5678' "$CASE_PARTLABEL_DATA/fstab.record" || {
+	echo "PARTLABEL=data ext4 was not persisted by UUID"
+	exit 1
+}
+[ ! -e "$CASE_PARTLABEL_DATA/legacy-approved" ] || {
+	echo "PARTLABEL=data ext4 should not require an approval file"
+	exit 1
+}
+
+# --- PARTLABEL=openwrt-data ext4, no fstab -> direct mount ---
+CASE_PARTLABEL_OWRT="$TMP_ROOT/partlabel-openwrt-data"
+mkdir -p "$CASE_PARTLABEL_OWRT/root"
+printf '%s\n' 'jdcloud,re-ss-01' >"$CASE_PARTLABEL_OWRT/board"
+: >"$CASE_PARTLABEL_OWRT/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="pl-owrt-uuid" TYPE="ext4" PARTLABEL="openwrt-data" PARTUUID="pl-owrt-part"' >"$CASE_PARTLABEL_OWRT/block.info"
+run_fixture "$CASE_PARTLABEL_OWRT"
+grep -Fq "/dev/mmcblk0p27 $CASE_PARTLABEL_OWRT/data ext4" "$CASE_PARTLABEL_OWRT/mounts" || {
+	echo "PARTLABEL=openwrt-data ext4 was not mounted"
+	exit 1
+}
+grep -Fxq 'uuid=pl-owrt-uuid' "$CASE_PARTLABEL_OWRT/fstab.record" || {
+	echo "PARTLABEL=openwrt-data ext4 was not persisted by UUID"
+	exit 1
+}
+
+# --- f2fs with PARTLABEL=data is also accepted ---
+CASE_PARTLABEL_F2FS="$TMP_ROOT/partlabel-data-f2fs"
+mkdir -p "$CASE_PARTLABEL_F2FS/root"
+printf '%s\n' 'jdcloud,re-cs-07' >"$CASE_PARTLABEL_F2FS/board"
+: >"$CASE_PARTLABEL_F2FS/mounts"
+printf '%s\n' '/dev/mmcblk0p24: UUID="f2fs-uuid" TYPE="f2fs" PARTLABEL="data" PARTUUID="f2fs-part"' >"$CASE_PARTLABEL_F2FS/block.info"
+run_fixture "$CASE_PARTLABEL_F2FS"
+grep -Fq "/dev/mmcblk0p24 $CASE_PARTLABEL_F2FS/data f2fs" "$CASE_PARTLABEL_F2FS/mounts" || {
+	echo "PARTLABEL=data f2fs was not mounted"
+	exit 1
+}
+grep -Fxq 'fstype=f2fs' "$CASE_PARTLABEL_F2FS/fstab.record" || {
+	echo "PARTLABEL=data f2fs was not persisted with fstype=f2fs"
+	exit 1
+}
+
+# --- Non-supported board must NOT recognize PARTLABEL=data ---
+CASE_PARTLABEL_BADBOARD="$TMP_ROOT/partlabel-bad-board"
+mkdir -p "$CASE_PARTLABEL_BADBOARD/root"
+printf '%s\n' 'generic,unsafe' >"$CASE_PARTLABEL_BADBOARD/board"
+: >"$CASE_PARTLABEL_BADBOARD/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="badboard-uuid" TYPE="ext4" PARTLABEL="data" PARTUUID="badboard-part"' >"$CASE_PARTLABEL_BADBOARD/block.info"
+if run_fixture "$CASE_PARTLABEL_BADBOARD"; then
+	echo "PARTLABEL=data ext4 was accepted on an unreviewed board"
+	exit 1
+fi
+[ ! -e "$CASE_PARTLABEL_BADBOARD/fstab.record" ] || {
+	echo "unreviewed board persisted fstab"
+	exit 1
+}
+
+# --- Non ext4/f2fs (e.g. xfs) with PARTLABEL=data must be rejected ---
+CASE_PARTLABEL_XFS="$TMP_ROOT/partlabel-data-xfs"
+mkdir -p "$CASE_PARTLABEL_XFS/root"
+printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_PARTLABEL_XFS/board"
+: >"$CASE_PARTLABEL_XFS/mounts"
+printf '%s\n' '/dev/mmcblk0p27: UUID="xfs-uuid" TYPE="xfs" PARTLABEL="data" PARTUUID="xfs-part"' >"$CASE_PARTLABEL_XFS/block.info"
+if run_fixture "$CASE_PARTLABEL_XFS"; then
+	echo "PARTLABEL=data xfs was incorrectly accepted"
+	exit 1
+fi
+[ ! -e "$CASE_PARTLABEL_XFS/fstab.record" ] || {
+	echo "xfs partition persisted fstab"
+	exit 1
+}
+
+# --- Multiple label-opted-in candidates must be rejected (ambiguous) ---
+CASE_MULTI_CANDIDATE="$TMP_ROOT/multi-label-candidates"
+mkdir -p "$CASE_MULTI_CANDIDATE/root"
+printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_MULTI_CANDIDATE/board"
+: >"$CASE_MULTI_CANDIDATE/mounts"
+cat >"$CASE_MULTI_CANDIDATE/block.info" <<'EOF'
+/dev/mmcblk0p27: UUID="multi-uuid-1" TYPE="ext4" PARTLABEL="data" PARTUUID="multi-part-1"
+/dev/mmcblk0p28: UUID="multi-uuid-2" TYPE="ext4" LABEL="openwrt-data" PARTUUID="multi-part-2"
+EOF
+if run_fixture "$CASE_MULTI_CANDIDATE"; then
+	echo "multiple label-opted-in candidates were not rejected"
+	exit 1
+fi
+[ ! -e "$CASE_MULTI_CANDIDATE/fstab.record" ] || {
+	echo "ambiguous multi-candidate case persisted fstab"
+	exit 1
+}
+
+# --- Priority: PARTLABEL=data ext4 wins over LABEL=openwrt-data when both
+#     exist but only one is a valid candidate (the other has no fs).
+#     Actually both are valid candidates -> ambiguous. Test that a decoy
+#     PARTLABEL=data without ext4/f2fs is filtered out, leaving the
+#     LABEL=openwrt-data ext4 as the sole candidate.
+CASE_DECOY_FILTERED="$TMP_ROOT/decoy-partlabel-raw"
+mkdir -p "$CASE_DECOY_FILTERED/root"
+printf '%s\n' 'jdcloud,re-cs-02' >"$CASE_DECOY_FILTERED/board"
+: >"$CASE_DECOY_FILTERED/mounts"
+cat >"$CASE_DECOY_FILTERED/block.info" <<'EOF'
+/dev/mmcblk0p27: UUID="raw-decoy-uuid" PARTLABEL="data" PARTUUID="raw-decoy-part"
+/dev/mmcblk0p28: UUID="valid-label-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="valid-label-part"
+EOF
+run_fixture "$CASE_DECOY_FILTERED"
+grep -Fq "/dev/mmcblk0p28 $CASE_DECOY_FILTERED/data ext4" "$CASE_DECOY_FILTERED/mounts" || {
+	echo "raw PARTLABEL=data decoy was not filtered out; LABEL=openwrt-data ext4 was not selected"
+	exit 1
+}
+grep -Fxq 'uuid=valid-label-uuid' "$CASE_DECOY_FILTERED/fstab.record" || {
+	echo "filtered-decoy case did not persist the correct UUID"
 	exit 1
 }
 

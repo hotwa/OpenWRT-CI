@@ -56,7 +56,16 @@ block_inventory() {
 }
 
 uci_get() {
-	[ "$TESTING" = "1" ] && return 1
+	if [ "$TESTING" = "1" ]; then
+		case "$1" in
+			fstab.data.enabled) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_ENABLED:-}" ;;
+			fstab.data.uuid) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_UUID:-}" ;;
+			fstab.data.partuuid) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_PARTUUID:-}" ;;
+			fstab.data.label) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_LABEL:-}" ;;
+			*) return 1 ;;
+		esac
+		return 0
+	fi
 	command -v uci >/dev/null 2>&1 || return 1
 	uci -q get "$1" 2>/dev/null
 }
@@ -116,6 +125,33 @@ find_devices() {
 		esac
 		value="$(attribute_from_line "$line" "$key")"
 		[ "$value" = "$expected" ] && printf '%s\n' "${line%%:*}"
+	done | awk '!seen[$0]++'
+}
+
+# Find label-opted-in data partitions: an existing ext4/f2fs filesystem with
+# any of PARTLABEL=data, PARTLABEL=openwrt-data, or LABEL=openwrt-data.
+# These are factory- or provisioner-created data partitions (e.g. re-cs-02
+# p27 PARTLABEL=data, re-ss-01 p27 PARTLABEL/LABEL=openwrt-data) that may
+# be mounted directly by UUID without an approval file and without
+# reformatting. System partitions are inherently excluded because their GPT
+# names (rootfs/HLOS/swap/etc.) never match these opt-in labels.
+find_label_opted_data_devices() {
+	local line device partlabel label fstype
+	block_inventory | while IFS= read -r line; do
+		case "$line" in
+			/dev/*:*) ;;
+			*) continue ;;
+		esac
+		fstype="$(attribute_from_line "$line" TYPE)"
+		case "$fstype" in ext4|f2fs) ;; *) continue ;; esac
+		partlabel="$(attribute_from_line "$line" PARTLABEL)"
+		label="$(attribute_from_line "$line" LABEL)"
+		case "$partlabel" in
+			data|openwrt-data) ;;
+			*) [ "$label" = openwrt-data ] || continue ;;
+		esac
+		device="${line%%:*}"
+		printf '%s\n' "$device"
 	done | awk '!seen[$0]++'
 }
 
@@ -223,7 +259,12 @@ select_candidate() {
 			log_error "only LABEL=openwrt-data is accepted"
 			return 1
 		}
-		matches="$(find_devices LABEL openwrt-data)"
+		# Enumerate all label-opted-in data partitions: ext4/f2fs with
+		# PARTLABEL=data, PARTLABEL=openwrt-data, or LABEL=openwrt-data.
+		# Exactly one candidate is required; multiple matches are ambiguous
+		# and refused (count check below). Approval-file legacy fallback
+		# (select_legacy_data) runs only when no label candidate exists.
+		matches="$(find_label_opted_data_devices)" 
 	fi
 
 	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
