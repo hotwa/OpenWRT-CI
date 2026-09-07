@@ -28,6 +28,20 @@ start() {
 			logger -t opencode-runtime "copied default opencode.json to /data"
 		fi
 
+		# Upgrade migration: if the existing /data config predates the
+		# CommandCode provider (no "commandcode" key), back it up and replace
+		# with the firmware default so all devices get the provider config.
+		# Idempotent: once the config contains "commandcode" this is skipped.
+		if [ -f /data/opencode/config/opencode.json ] && \
+			[ -f /etc/opencode/opencode.json ] && \
+			! grep -q '"commandcode"' /data/opencode/config/opencode.json 2>/dev/null; then
+			cp -p /data/opencode/config/opencode.json \
+				"/data/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)"
+			cp /etc/opencode/opencode.json /data/opencode/config/opencode.json
+			chmod 0644 /data/opencode/config/opencode.json
+			logger -t opencode-runtime "migrated opencode.json to include CommandCode provider (backup kept)"
+		fi
+
 		# Link /root/.config/opencode -> /data/opencode/config so opencode
 		# finds its config regardless of XDG_CONFIG_HOME.
 		mkdir -p /root/.config

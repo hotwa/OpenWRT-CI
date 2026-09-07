@@ -39,4 +39,24 @@ if [ -d /data ] && [ -w /data ]; then
 	mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" 2>/dev/null || true
 fi
 
+# Inject CommandCode API key from auth.json at runtime (never baked into firmware).
+# opencode.json references it via {env:COMMANDCODE_API_KEY}.  Read from /data
+# first (persistent, synced by 99-auto-mount-data), fall back to /etc default.
+if [ -z "${COMMANDCODE_API_KEY:-}" ]; then
+	_CC_AUTH=""
+	if [ -r /data/commandcode/auth.json ]; then
+		_CC_AUTH="/data/commandcode/auth.json"
+	elif [ -r /etc/commandcode/auth.json ]; then
+		_CC_AUTH="/etc/commandcode/auth.json"
+	fi
+	if [ -n "$_CC_AUTH" ]; then
+		_CC_KEY="$(sed -n 's/.*"apiKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_CC_AUTH" | head -1)"
+		if [ -n "$_CC_KEY" ]; then
+			export COMMANDCODE_API_KEY="$_CC_KEY"
+		fi
+		unset _CC_KEY
+	fi
+	unset _CC_AUTH
+fi
+
 exec "$REAL_BIN" "$@"

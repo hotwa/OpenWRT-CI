@@ -1,3 +1,41 @@
 {
-  "permission": "allow"
+  "permission": "allow",
+  "provider": {
+    "commandcode": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CommandCode",
+      "options": {
+        "baseURL": "https://api.commandcode.ai/provider/v1",
+        "apiKey": "{env:COMMANDCODE_API_KEY}"
+      },
+      "models": {
+        "deepseek/deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash"
+        },
+        "deepseek/deepseek-v4-flash-fast": {
+          "name": "DeepSeek V4 Flash Fast"
+        },
+        "Qwen/Qwen3.8-Flash": {
+          "name": "Qwen 3.8 Flash"
+        },
+        "Qwen/Qwen3.7-Flash": {
+          "name": "Qwen 3.7 Flash"
+        },
+        "z-ai/glm-5.3-flash": {
+          "name": "GLM 5.3 Flash"
+        },
+        "stepfun/Step-3.7-Flash": {
+          "name": "Step 3.7 Flash"
+        },
+        "google/gemini-3.8-flash": {
+          "name": "Gemini 3.8 Flash"
+        },
+        "deepseek/deepseek-v4-pro": {
+          "name": "DeepSeek V4 Pro"
+        }
+      }
+    }
+  },
+  "model": "commandcode/deepseek/deepseek-v4-flash",
+  "small_model": "commandcode/Qwen/Qwen3.8-Flash"
 }
