@@ -108,7 +108,7 @@ verify_sha512() {
 
 do_install() {
 	local version url expected_sha tarball dest_dir extracted_bin machine_id
-	local current_version
+	local current_version attempt waited
 
 	version="$(release_value OPENCODE_VERSION)" || { err "cannot read OPENCODE_VERSION from $RELEASE_FILE"; return 1; }
 	url="$(release_value OPENCODE_TARBALL_URL)" || { err "cannot read OPENCODE_TARBALL_URL"; return 1; }
@@ -119,7 +119,8 @@ do_install() {
 		return 1
 	}
 
-	# Idempotent: already at this version and healthy?
+	# Idempotent: already at this version and healthy? (checked again after
+	# the lock so a concurrent installer's success short-circuits us too.)
 	current_version="$(installed_version 2>/dev/null || true)"
 	if [ "$current_version" = "$version" ] && binary_healthy; then
 		log "opencode ${version} already installed and healthy"
@@ -128,70 +129,117 @@ do_install() {
 
 	data_available || { err "/data is not writable"; return 3; }
 
+	# Serialize installs.  The init.d service kicks off a background install at
+	# boot (START=92) while the /usr/bin/opencode wrapper may run a foreground
+	# install at the same moment; both used to rm -f the same staging tarball
+	# and package dir, which produced "machine id=unknown" / "tarball does not
+	# contain package/bin/opencode" failures.  A mkdir lock keeps exactly one
+	# installer running; the other waits and then re-checks the result.
+	LOCK_DIR="${INSTALL_ROOT}/.install.lock"
+	waited=0
+	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+		waited=$((waited + 5))
+		if [ "$waited" -ge 300 ]; then
+			err "timed out waiting for a concurrent install to finish"
+			return 1
+		fi
+		sleep 5
+		current_version="$(installed_version 2>/dev/null || true)"
+		if [ "$current_version" = "$version" ] && binary_healthy; then
+			log "opencode ${version} installed by a concurrent process"
+			return 0
+		fi
+	done
+	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+
 	mkdir -p "$STAGING_DIR" "$INSTALL_ROOT"
 	tarball="${STAGING_DIR}/opencode-${version}.tgz"
-	rm -f "$tarball"
 
-	log "downloading opencode ${version} from npm..."
-	if ! download_file "$url" "$tarball"; then
-		err "download failed: $url"
+	# Transient download/extract failures (flaky upstream, partial writes)
+	# are retried up to 3 times before giving up.
+	attempt=0
+	while [ "$attempt" -lt 3 ]; do
+		attempt=$((attempt + 1))
 		rm -f "$tarball"
-		return 4
-	fi
-	[ -s "$tarball" ] || { err "downloaded tarball is empty"; rm -f "$tarball"; return 4; }
 
-	log "verifying sha512..."
-	if ! verify_sha512 "$tarball" "$expected_sha"; then
-		err "sha512 mismatch for opencode ${version}"
-		rm -f "$tarball"
-		return 5
-	fi
+		log "downloading opencode ${version} from npm (attempt ${attempt}/3)..."
+		if ! download_file "$url" "$tarball"; then
+			err "download failed: $url (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 4
+		fi
+		[ -s "$tarball" ] || {
+			err "downloaded tarball is empty (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 4
+		}
 
-	# Extract into a versioned directory, then atomically flip the symlink.
-	dest_dir="${INSTALL_ROOT}/${version}"
-	rm -rf "$dest_dir"
-	mkdir -p "${dest_dir}/bin"
+		log "verifying sha512 (attempt ${attempt}/3)..."
+		if ! verify_sha512 "$tarball" "$expected_sha"; then
+			err "sha512 mismatch for opencode ${version} (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 5
+		fi
 
-	log "extracting binary from tarball..."
-	if ! tar -xzf "$tarball" -C "$STAGING_DIR" 2>/dev/null; then
-		err "tar extraction failed"
-		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
-		return 1
-	fi
+		# Extract into a versioned directory, then atomically flip the symlink.
+		dest_dir="${INSTALL_ROOT}/${version}"
+		rm -rf "$dest_dir"
+		mkdir -p "${dest_dir}/bin"
 
-	extracted_bin="${STAGING_DIR}/package/bin/opencode"
-	[ -f "$extracted_bin" ] || {
-		err "tarball does not contain package/bin/opencode"
-		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
-		return 1
-	}
+		log "extracting binary from tarball (attempt ${attempt}/3)..."
+		if ! tar -xzf "$tarball" -C "$STAGING_DIR" 2>/dev/null; then
+			err "tar extraction failed (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
 
-	# Verify ELF architecture (aarch64 = machine 183).
-	machine_id="$(elf_machine_id "$extracted_bin" 2>/dev/null || true)"
-	if [ "$machine_id" != "183" ]; then
-		err "extracted binary is not aarch64 ELF (machine id=${machine_id:-unknown})"
-		rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
-		return 1
-	fi
+		extracted_bin="${STAGING_DIR}/package/bin/opencode"
+		if [ ! -f "$extracted_bin" ]; then
+			err "tarball does not contain package/bin/opencode (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
 
-	mv "$extracted_bin" "${dest_dir}/bin/opencode"
-	chmod +x "${dest_dir}/bin/opencode"
-	printf '%s\n' "$version" > "${dest_dir}/version"
+		# Verify ELF architecture (aarch64 = machine 183).
+		machine_id="$(elf_machine_id "$extracted_bin" 2>/dev/null || true)"
+		if [ "$machine_id" != "183" ]; then
+			err "extracted binary is not aarch64 ELF (machine id=${machine_id:-unknown}, attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
 
-	# Atomic symlink flip.
-	ln -sf "$version" "$CURRENT_LINK"
+		mv "$extracted_bin" "${dest_dir}/bin/opencode" || {
+			err "cannot move extracted binary into place (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		}
+		chmod +x "${dest_dir}/bin/opencode"
+		printf '%s\n' "$version" > "${dest_dir}/version"
 
-	# Cleanup staging.
-	rm -rf "$tarball" "${STAGING_DIR}/package"
+		# Atomic symlink flip.
+		ln -sf "$version" "$CURRENT_LINK"
 
-	# Final health check.
-	if ! binary_healthy; then
-		err "installed binary failed --version health check"
-		return 1
-	fi
+		# Cleanup staging.
+		rm -rf "$tarball" "${STAGING_DIR}/package"
 
-	log "opencode ${version} installed successfully to ${INSTALL_ROOT}/${version}"
-	return 0
+		# Final health check.
+		if ! binary_healthy; then
+			err "installed binary failed --version health check (attempt ${attempt}/3)"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		log "opencode ${version} installed successfully to ${INSTALL_ROOT}/${version}"
+		return 0
+	done
+	return 1
 }
 
 # ---------------------------------------------------------------------------

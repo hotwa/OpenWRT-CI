@@ -75,6 +75,19 @@ candidate_route_is_safe() {
 			*" via "*)
 				# The candidate follows a routed default path.
 				;;
+			local*)
+				# "ip route get" reports "local" when the gateway is an address
+				# already assigned to this host. For the persisted container
+				# subnet this normally means our own bridge still holds it
+				# after a restart, so the subnet is safe to reuse. Only allow
+				# reuse when the address really lives on our bridge; a local
+				# address on any other interface is a genuine overlap.
+				if $IP_CMD -4 addr show dev "$BRIDGE" 2>/dev/null | grep -Fq "$gateway/"; then
+					:
+				else
+					return 1
+				fi
+				;;
 			*)
 				# A connected route on any other interface is ambiguous and is
 				# safer to reject than to overlap silently.

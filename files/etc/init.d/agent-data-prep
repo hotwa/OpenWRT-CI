@@ -1,0 +1,262 @@
+#!/bin/sh /etc/rc.common
+# agent-data-prep: idempotent every-boot provisioning of /data-backed agent
+# state.  99-auto-mount-data is a uci-defaults script: it runs only on the
+# first boot after flash, and it can fail or be skipped entirely when the
+# data partition carries no recognizable label (a bare ext4 partition, as on
+# re-ss-01) or when sysupgrade keeps the executed markers.  In those cases
+# /data/pi, /data/multica, /data/commandcode and the /root symlinks would
+# never be created and the Multica daemon would fail its startup checks.
+# This service re-runs the same provisioning on every boot so any device
+# converges without operator intervention.  Every step is idempotent.
+
+START=91
+STOP=10
+
+DATA_ROOT="${AGENT_DATA_PREP_ROOT:-/data}"
+ROOT_HOME="${AGENT_DATA_PREP_HOME:-/root}"
+FIRMWARE_ETC="${AGENT_DATA_PREP_FIRMWARE_ETC:-/etc}"
+PROC_MOUNTS="${AGENT_DATA_PREP_PROC_MOUNTS:-/proc/mounts}"
+
+log_info() {
+	logger -t agent-data-prep "$*" 2>/dev/null || true
+	echo "agent-data-prep: $*"
+}
+
+log_warn() {
+	logger -t agent-data-prep "WARN: $*" 2>/dev/null || true
+	echo "agent-data-prep: WARN: $*" >&2
+}
+
+data_mounted() {
+	grep -qsE "[[:space:]]${DATA_ROOT}[[:space:]]" "$PROC_MOUNTS" 2>/dev/null || \
+		[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ]
+}
+
+wait_data_mount() {
+	local waited=0
+	while [ "$waited" -lt 90 ]; do
+		if data_mounted; then
+			return 0
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+	return 1
+}
+
+ensure_real_directory() {
+	[ ! -L "$1" ] || {
+		log_warn "refusing symlinked data directory: $1"
+		return 1
+	}
+	mkdir -p "$1" || return 1
+	[ -d "$1" ] || return 1
+	chmod 0700 "$1" 2>/dev/null || true
+}
+
+verify_tree() {
+	local source="$1"
+	local destination="$2"
+	(
+		cd "$source" || exit 1
+		find . -mindepth 1 -print
+	) | while IFS= read -r relative; do
+		local src="$source/$relative"
+		local dst="$destination/$relative"
+		if [ -L "$src" ]; then
+			[ -L "$dst" ] && [ "$(readlink "$src")" = "$(readlink "$dst")" ] || exit 1
+		elif [ -d "$src" ]; then
+			[ -d "$dst" ] && [ ! -L "$dst" ] || exit 1
+		elif [ -f "$src" ]; then
+			[ -f "$dst" ] && cmp -s "$src" "$dst" || exit 1
+		else
+			log_warn "unsupported object during migration: $src"
+			exit 1
+		fi
+	done
+}
+
+copy_tree_verified() {
+	local source="$1"
+	local target="$2"
+	local name="$3"
+	local stage="$DATA_ROOT/.migration-stage.$$.$name"
+
+	ensure_real_directory "$stage" || return 1
+	cp -a "$source/." "$stage/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$stage" || {
+		rm -rf "$stage"
+		return 1
+	}
+	cp -a "$stage/." "$target/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$target" || {
+		rm -rf "$stage"
+		return 1
+	}
+	rm -rf "$stage"
+}
+
+# link_directory <target> <link_path> <name>
+# Idempotently turns a real directory into a symlink to target, migrating the
+# existing content to target first (verified copy).  A pre-existing symlink to
+# the same target is left untouched.
+link_directory() {
+	local target="$1"
+	local link_path="$2"
+	local name="$3"
+	local temporary="${link_path}.new.$$"
+	local backup="${link_path}.migration-backup.$$"
+
+	ensure_real_directory "$target" || return 1
+	if [ -L "$link_path" ]; then
+		[ "$(readlink "$link_path")" = "$target" ] || {
+			log_warn "refusing to replace unexpected symlink: $link_path"
+			return 1
+		}
+		return 0
+	fi
+	if [ -e "$link_path" ]; then
+		[ -d "$link_path" ] || {
+			log_warn "refusing to replace non-directory: $link_path"
+			return 1
+		}
+		copy_tree_verified "$link_path" "$target" "$name" || {
+			log_warn "verified copy failed; source preserved: $link_path"
+			return 1
+		}
+		ln -s "$target" "$temporary" || return 1
+		mv "$link_path" "$backup" || {
+			rm -f "$temporary"
+			return 1
+		}
+		if ! mv "$temporary" "$link_path" || [ ! -L "$link_path" ] || \
+		   [ "$(readlink "$link_path")" != "$target" ]; then
+			rm -f "$temporary" "$link_path" 2>/dev/null || true
+			mv "$backup" "$link_path" 2>/dev/null || true
+			return 1
+		fi
+		rm -rf "$backup" || return 1
+		return 0
+	fi
+
+	ln -s "$target" "$temporary" || return 1
+	mv "$temporary" "$link_path" || {
+		rm -f "$temporary"
+		return 1
+	}
+}
+
+# CommandCode auth refresh: keep /data/commandcode/auth.json in sync with the
+# firmware-injected key.  A stale key left by an earlier manual /login (or an
+# older build) shadows the firmware key via the provider auth-path priority
+# and yields 401 once it expires; prefer the firmware key and back up.
+refresh_commandcode_auth() {
+	local firmware_auth="$FIRMWARE_ETC/commandcode/auth.json"
+	local data_auth="$DATA_ROOT/commandcode/auth.json"
+	[ -r "$firmware_auth" ] || return 0
+	if [ ! -e "$data_auth" ] || ! cmp -s "$firmware_auth" "$data_auth"; then
+		if [ -e "$data_auth" ]; then
+			( umask 077; cp -p "$data_auth" \
+				"$data_auth.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo stale)" ) 2>/dev/null || true
+		fi
+		( umask 077; cp -p "$firmware_auth" "$data_auth.new" ) 2>/dev/null || return 1
+		mv "$data_auth.new" "$data_auth" 2>/dev/null || return 1
+	fi
+}
+
+start() {
+	if ! wait_data_mount; then
+		log_warn "skipped: $DATA_ROOT not mounted within 90s"
+		return 0
+	fi
+
+	local directory
+	for directory in \
+		"$DATA_ROOT/multica" \
+		"$DATA_ROOT/multica/workspaces" \
+		"$DATA_ROOT/agent_workspaces" \
+		"$DATA_ROOT/pi" \
+		"$DATA_ROOT/pi/agent" \
+		"$DATA_ROOT/pi/agent/secrets" \
+		"$DATA_ROOT/commandcode" \
+		"$DATA_ROOT/uv" \
+		"$DATA_ROOT/uv/cache" \
+		"$DATA_ROOT/uv/python" \
+		"$DATA_ROOT/pnpm" \
+		"$DATA_ROOT/npm" \
+		"$DATA_ROOT/cache" \
+		"$DATA_ROOT/compose"; do
+		ensure_real_directory "$directory" || log_warn "cannot ensure $directory"
+	done
+
+	# Firmware-default Pi configs land on /data only when absent.
+	local config_file
+	for config_file in models.json settings.json auth.json commandcode-models.json; do
+		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
+		[ -e "$DATA_ROOT/pi/agent/$config_file" ] && continue
+		if cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" 2>/dev/null; then
+			mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" 2>/dev/null || true
+		fi
+	done
+
+	refresh_commandcode_auth || log_warn "cannot refresh CommandCode auth on /data"
+
+	# Multica role card (rendered role markdown used by both Multica and Pi).
+	if [ -r "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
+		cp -p "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md" 2>/dev/null || true
+	fi
+
+	# opencode config migration (same policy as the opencode-runtime init):
+	# seed /data config from firmware default and upgrade pre-commandcode
+	# configs once, with timestamped backups.
+	mkdir -p "$DATA_ROOT/opencode/config" "$DATA_ROOT/opencode/cache" \
+		"$DATA_ROOT/opencode/data" "$DATA_ROOT/opencode/state" 2>/dev/null || true
+	if [ ! -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
+		[ -f "$FIRMWARE_ETC/opencode/opencode.json" ]; then
+		cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null && \
+			chmod 0644 "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+	fi
+	if [ -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
+		[ -f "$FIRMWARE_ETC/opencode/opencode.json" ] && \
+		! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; then
+		cp -p "$DATA_ROOT/opencode/config/opencode.json" \
+			"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)" 2>/dev/null || true
+		cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+	fi
+	mkdir -p "$ROOT_HOME/.config" 2>/dev/null || true
+	if [ ! -e "$ROOT_HOME/.config/opencode" ] || [ -L "$ROOT_HOME/.config/opencode" ]; then
+		ln -sfn "$DATA_ROOT/opencode/config" "$ROOT_HOME/.config/opencode" 2>/dev/null || true
+	fi
+
+	# Home symlinks for the daemons and CLIs.
+	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || log_warn "cannot link /root/.multica"
+	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || \
+		log_warn "cannot link /root/multica-workspaces"
+	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || log_warn "cannot link /root/.pi"
+	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || \
+		log_warn "cannot link /root/.commandcode"
+
+	# Pi's appended system prompt link (idempotent, provided by agent-runtime).
+	if [ -x /usr/sbin/pi-append-system-link ]; then
+		PI_AGENT_DIR="$DATA_ROOT/pi/agent" PI_ROLE_CARD="$ROOT_HOME/.multica/openwrt-agent.md" \
+			/usr/sbin/pi-append-system-link 2>/dev/null || log_warn "pi-append-system-link failed"
+	fi
+
+	log_info "agent data state provisioned on $DATA_ROOT"
+}
+
+restart() {
+	start
+}
+
+# TESTING mode: define all functions but skip rc.common dispatch so tests can
+# source the script and call start() directly.
+if [ "${AGENT_DATA_PREP_TESTING:-0}" = "1" ]; then
+	return 0 2>/dev/null || exit 0
+fi

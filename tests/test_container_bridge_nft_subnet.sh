@@ -29,6 +29,9 @@ case "$args" in
     *"route show default"*)
         [ -n "${MOCK_IP_DEFAULT_ROUTE:-}" ] && printf '%s\n' "$MOCK_IP_DEFAULT_ROUTE"
         ;;
+    *"addr show dev"*)
+        [ -n "${MOCK_IP_ADDR_DEV:-}" ] && printf '%s\n' "$MOCK_IP_ADDR_DEV"
+        ;;
     *"route get"*)
         gateway=""
         for a in "$@"; do
@@ -119,6 +122,7 @@ setup_case() {
     # Mock behaviour env vars
     export MOCK_IP_DEFAULT_ROUTE=""
     export MOCK_IP_ROUTE_GET=""
+    export MOCK_IP_ADDR_DEV=""
     export MOCK_IP_OVERRIDE_DIR="$dir/ip-overrides"
     export MOCK_UCI_LAN_DEVICE=""
     export MOCK_UCI_LAN_IFNAME=""
@@ -255,6 +259,26 @@ cat > "$CASE_DIR/cni/other-network.conflist" <<'CNIEOF'
 }
 CNIEOF
 assert_subnet "no default route + unrelated CNI subnet -> allow 10.250.0.0/24" "10.250.0.0/24" 1
+
+# ===========================================================================
+# 8. local route (gateway held by own bridge) = allow reuse of persisted
+# ===========================================================================
+setup_case "08-local-own-bridge"
+export MOCK_IP_DEFAULT_ROUTE="default via 192.168.1.1 dev eth0"
+# "ip route get" returns local because ctrbr-nft0 still holds the gateway
+printf 'local 10.250.0.1 dev lo table local src 10.250.0.1 uid 0\n' > "$MOCK_IP_OVERRIDE_DIR/10.250.0.1"
+# The address really lives on our bridge -> reuse persisted subnet
+export MOCK_IP_ADDR_DEV="10.250.0.1/24 brd 10.250.0.255 scope global ctrbr-nft0"
+printf '10.250.0.0/24\n' > "$SUBNET_FILE"
+assert_subnet "default route + local route (gateway on own bridge) -> reuse persisted" "10.250.0.0/24" 1
+
+# 8b. local route but the address is NOT on our bridge = reject persisted
+setup_case "08b-local-other-iface"
+export MOCK_IP_DEFAULT_ROUTE="default via 192.168.1.1 dev eth0"
+printf 'local 10.250.0.1 dev lo table local src 10.250.0.1 uid 0\n' > "$MOCK_IP_OVERRIDE_DIR/10.250.0.1"
+export MOCK_IP_ADDR_DEV=""
+printf '10.250.0.0/24\n' > "$SUBNET_FILE"
+assert_subnet "default route + local route not on our bridge -> reject persisted" "" 0
 
 # ===========================================================================
 # Summary
