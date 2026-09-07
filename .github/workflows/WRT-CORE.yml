@@ -546,6 +546,7 @@ jobs:
           mkdir -p ./wrt/files
           $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_node_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
+          $GITHUB_WORKSPACE/Scripts/fetch_opencode_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_viewturbocore.sh
