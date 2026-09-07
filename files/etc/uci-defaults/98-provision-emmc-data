@@ -84,7 +84,7 @@ run_sgdisk() {
 		case "$1" in
 			-p) cat "$TEST_TABLE_FILE" ;;
 			-i) printf "Partition name: '%s'\nPartition GUID code: %s (Linux filesystem)\nFirst sector: %s\nLast sector: %s\n" \
-				"${EMMC_DATA_TEST_INFO_NAME:-$LABEL}" "${EMMC_DATA_TEST_PARTITION_TYPE:-8300}" \
+				"${EMMC_DATA_TEST_INFO_NAME-$LABEL}" "${EMMC_DATA_TEST_PARTITION_TYPE:-8300}" \
 				"${EMMC_DATA_TEST_START:-}" "${EMMC_DATA_TEST_END:-}" ;;
 			--backup=*) : >"${1#--backup=}" ;;
 			-e) : ;;
@@ -320,6 +320,34 @@ write_legacy_approval() {
 	mv -f "$tmp" "$LEGACY_APPROVAL_FILE"
 }
 
+# Persist fstab.data by filesystem UUID so 99-auto-mount-data can mount the
+# adopted partition on the same boot. This is required for unnamed GPT
+# partitions (e.g. 128GB re-cs-07 p24) where the legacy-approval path cannot
+# match because PARTLABEL is empty rather than "data".
+persist_data_mount_config() {
+	local device="$1" fstype="$2" uuid
+	uuid="$(filesystem_uuid "$device")" || return 1
+	valid_identifier "$uuid" || return 1
+	if [ "$TESTING" = "1" ]; then
+		if [ -n "${EMMC_DATA_TEST_FSTAB_FILE:-}" ]; then
+			printf 'target=%s\nuuid=%s\nfstype=%s\noptions=rw,noatime\nenabled=1\n' \
+				"/data" "$uuid" "$fstype" >"$EMMC_DATA_TEST_FSTAB_FILE"
+		fi
+		return 0
+	fi
+	command -v uci >/dev/null 2>&1 || return 1
+	uci -q set fstab.data=mount || return 1
+	uci -q set fstab.data.target='/data' || return 1
+	uci -q set "fstab.data.uuid=$uuid" || return 1
+	uci -q set "fstab.data.fstype=$fstype" || return 1
+	uci -q set fstab.data.options='rw,noatime' || return 1
+	uci -q set fstab.data.enabled='1' || return 1
+	uci -q delete fstab.data.device 2>/dev/null || true
+	uci -q delete fstab.data.partuuid 2>/dev/null || true
+	uci -q delete fstab.data.label 2>/dev/null || true
+	uci -q commit fstab || return 1
+}
+
 write_pending() {
 	local disk="$1" number="$2" start="$3" end="$4" phase="$5" tmp
 	mkdir -p "$OVERLAY_DIR" || return 1
@@ -552,6 +580,153 @@ handle_existing_legacy_data() {
 	esac
 }
 
+# Adopt an existing unnamed (or historically "data"-named) large Linux
+# filesystem partition at the tail of the GPT. This covers the 128GB
+# jdcloud,re-cs-07 layout where p24 is an empty-named 112.6GiB 8300
+# partition with no filesystem. Unlike provision_new_partition, this path
+# never creates, deletes, or relocates GPT entries.
+#
+# Return codes:
+#   0   adopted (formatted or preserved) — caller stops
+#   2   no unnamed candidate — caller falls through to provision_new_partition
+#   1   ambiguous/error — caller stops (non-fatal, next boot retries)
+#   124 mkfs deadline exceeded
+handle_existing_unnamed_data_partition() {
+	local disk="$1" candidates count row number start end name sector_size
+	local max_partition max_end last_usable device mounted probe_state type
+	local label status info code
+
+	candidates="$(partition_rows "$disk" | awk -F '\t' '$4 == "" || $4 == "data" { print }')"
+	[ -n "$candidates" ] || return 2
+
+	table_has_required_topology "$disk" || {
+		log "unnamed data candidate has an unreviewed GPT topology; leaving it unchanged"
+		return 0
+	}
+
+	sector_size="$(cat "$SYS_BLOCK_ROOT/${disk##*/}/queue/logical_block_size" 2>/dev/null || true)"
+	valid_number "$sector_size" || sector_size=512
+	case "$sector_size" in 512|1024|2048|4096) ;; *) sector_size=512 ;; esac
+
+	# Count candidates that meet the minimum size threshold.
+	count="$(printf '%s\n' "$candidates" | awk -F '\t' -v min_mb="$MIN_SIZE_MB" -v sec="$sector_size" '
+		{ if (($3 - $2 + 1) * sec / 1048576 >= min_mb) count++ }
+		END { print count + 0 }
+	')"
+	[ "$count" -eq 1 ] || {
+		if [ "$count" -eq 0 ]; then
+			log "no unnamed/data partition meets the ${MIN_SIZE_MB}MB minimum; falling through to tail allocation"
+			return 2
+		fi
+		log "found $count unnamed/data candidate partitions meeting size threshold; refusing to select"
+		return 0
+	}
+
+	# Extract the sole qualifying candidate.
+	row="$(printf '%s\n' "$candidates" | awk -F '\t' -v min_mb="$MIN_SIZE_MB" -v sec="$sector_size" '
+		{ if (($3 - $2 + 1) * sec / 1048576 >= min_mb) { print; exit } }
+	')"
+	number="$(printf '%s\n' "$row" | awk -F '\t' '{ print $1 }')"
+	start="$(printf '%s\n' "$row" | awk -F '\t' '{ print $2 }')"
+	end="$(printf '%s\n' "$row" | awk -F '\t' '{ print $3 }')"
+	name="$(printf '%s\n' "$row" | awk -F '\t' '{ print $4 }')"
+	valid_number "$number" && [ "$number" -ge 1 ] || return 0
+	LEGACY_DATA_NUMBER="$number"
+
+	# The candidate must occupy the tail of the partition table.
+	max_partition="$(table_max_partition "$disk")"
+	max_end="$(table_max_end "$disk")"
+	last_usable="$(table_last_sector "$disk")"
+	for value in "$max_partition" "$max_end" "$last_usable"; do
+		valid_number "$value" || {
+			log "unnamed data p${number} has unreadable GPT geometry; leaving it unchanged"
+			return 0
+		}
+	done
+	[ "$number" -eq "$max_partition" ] && [ "$end" -eq "$max_end" ] || {
+		log "unnamed data p${number} is not the reviewed tail partition; leaving it unchanged"
+		return 0
+	}
+
+	# Verify GPT metadata via sgdisk -i: name (empty for unnamed), type 8300,
+	# and exact start/end sectors.
+	info="$(run_sgdisk -i "$number" "$disk" 2>&1)" || {
+		log "unnamed data p${number} has unverifiable GPT metadata; leaving it unchanged"
+		return 0
+	}
+	printf '%s\n' "$info" | grep -Fq "Partition name: '$name'" || {
+		log "unnamed data p${number} GPT name mismatch; leaving it unchanged"
+		return 0
+	}
+	printf '%s\n' "$info" | grep -Fq "First sector: $start" || return 0
+	printf '%s\n' "$info" | grep -Fq "Last sector: $end" || return 0
+	code="$(printf '%s\n' "$info" | sed -n 's/^Partition GUID code: \([0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]\).*/\1/p' | head -n 1)"
+	[ -n "$code" ] || return 0
+	code="$(printf '%s' "$code" | tr '[:lower:]' '[:upper:]')"
+	[ "$code" = 8300 ] || {
+		log "unnamed data p${number} has GPT type $code, not Linux filesystem; refusing automatic adoption"
+		return 0
+	}
+
+	# Device node must exist and must not already be mounted.
+	device="$(partition_device "$disk" "$number")"
+	device_is_ready "$device" || {
+		log "unnamed data p${number} device node is unavailable; leaving it unchanged"
+		return 1
+	}
+	mounted=0
+	device_is_mounted "$device" && mounted=1
+
+	# Probe filesystem state. Only a genuinely raw partition may be formatted.
+	probe_state="$(filesystem_probe_state "$device")" || {
+		log "unnamed data p${number} filesystem probe failed; refusing automatic format"
+		return 1
+	}
+
+	case "$probe_state" in
+		typed:ext4|typed:f2fs)
+			type="${probe_state#typed:}"
+			log "preserving healthy existing unnamed data p${number} filesystem ($type)"
+			persist_data_mount_config "$device" "$type" || {
+				log "could not persist unnamed data mount config; leaving it unchanged"
+				return 1
+			}
+			write_legacy_approval "$disk" "$number" "$device" "$type" || {
+				log "could not persist unnamed data approval; leaving it unchanged"
+				return 1
+			}
+			return 0
+			;;
+		raw)
+			[ "$mounted" -eq 0 ] || {
+				log "unnamed data p${number} is already mounted; refusing automatic format"
+				return 0
+			}
+			log "initializing only the reviewed raw unnamed data p${number} as $LABEL"
+			run_mkfs_with_deadline -F -L "$LABEL" "$device"
+			status=$?
+			[ "$status" -eq 0 ] || return "$status"
+			type="$(filesystem_type "$device")"
+			label="$(filesystem_label "$device")"
+			[ "$type" = ext4 ] && [ "$label" = "$LABEL" ] || return 1
+			persist_data_mount_config "$device" ext4 || {
+				log "could not persist unnamed data mount config after format"
+				return 1
+			}
+			write_legacy_approval "$disk" "$number" "$device" ext4 || {
+				log "could not persist unnamed data approval after format"
+				return 1
+			}
+			log "initialized reviewed unnamed data p${number} as $LABEL"
+			return 0
+			;;
+		typed:*)
+			log "unnamed data p${number} has unsupported filesystem '${probe_state#typed:}'; refusing automatic format"
+			return 0
+			;;
+	esac
+}
+
 resume_pending_partition() {
 	local device
 	read_pending || return 1
@@ -679,6 +854,23 @@ main() {
 			;;
 		*)
 		log "reviewed legacy data initialization failed; no other partition will be selected"
+			return 1
+			;;
+	esac
+	handle_existing_unnamed_data_partition "$disk"
+	status=$?
+	case "$status" in
+		0) return 0 ;;
+		2) ;;
+		124)
+			if valid_number "$LEGACY_DATA_NUMBER" && [ "$LEGACY_DATA_NUMBER" -ge 1 ]; then
+				record_initialization_timeout "$disk" "$LEGACY_DATA_NUMBER" || true
+			fi
+			log "data initialization exceeded ${INIT_TIMEOUT_SECONDS}s; skipped without automatic retry"
+			return 0
+			;;
+		*)
+		log "unnamed data partition initialization failed; no other partition will be selected"
 			return 1
 			;;
 	esac

@@ -110,6 +110,32 @@ append_reviewed_p27() {
 	printf '%s\n' "  $number         4175872        15269854   5.3 GiB    8300  data" >>"$path"
 }
 
+# 128GB jdcloud,re-cs-07 layout: p24 is an empty-named 112.6GiB 8300
+# partition with no filesystem. The p24 line deliberately ends after "8300"
+# so that awk sees an empty $7 (GPT name).
+write_128g_table() {
+	local path="$1"
+	printf '%s\n' \
+		'Disk /dev/mmcblk0: 240615424 sectors, 114.7 GiB' \
+		'Partition table holds up to 28 entries' \
+		'First usable sector is 34, last usable sector is 240615416' \
+		'Number  Start (sector)    End (sector)  Size       Code  Name' \
+		'  18           53282         4247137   2.0 GiB    FFFF  rootfs' \
+		'  22         4247138         4288101   20.0 MiB   FFFF  rootfs_data' \
+		'  23         4288102         4289125   512.0 KiB  FFFF  ETHPHYFW' \
+		'  24         4429824       240613375   112.6 GiB  8300' >"$path"
+}
+
+setup_128g_case() {
+	local case_root="$1"
+	mkdir -p "$case_root/sys/block/mmcblk0/queue" "$case_root/state" "$case_root/dev"
+	printf '%s\n' jdcloud,re-cs-07 >"$case_root/board"
+	printf '%s\n' 512 >"$case_root/sys/block/mmcblk0/queue/logical_block_size"
+	printf '%s\n' 240615424 >"$case_root/sys/block/mmcblk0/size"
+	: >"$case_root/mounts"
+	write_128g_table "$case_root/table"
+}
+
 run_fixture() {
 	local case_root="$1"
 	shift
@@ -430,6 +456,249 @@ timeout_elapsed=$(( $(date +%s) - timeout_started ))
 }
 grep -Fxq 'reason=mkfs-timeout' "$CASE_REAL_TIMEOUT/overlay/failed" || {
 	echo "real mkfs timeout was not persisted"
+	exit 1
+}
+
+# --- Unnamed large data partition (128GB re-cs-07 p24) tests ---
+
+# A raw empty-named 8300 tail partition (128GB re-cs-07 p24) is adopted
+# and formatted once. No GPT mutation (no -e/--new/--backup) may occur.
+CASE_UNNAMED_RAW="$TMP_ROOT/unnamed-raw-128g"
+setup_128g_case "$CASE_UNNAMED_RAW"
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_FSTAB_FILE="$CASE_UNNAMED_RAW/fstab" \
+	run_fixture "$CASE_UNNAMED_RAW"
+grep -Fq -- '-F -L openwrt-data' "$CASE_UNNAMED_RAW/state/mkfs.calls" || {
+	echo "raw unnamed p24 was not initialized"
+	exit 1
+}
+if [ -e "$CASE_UNNAMED_RAW/state/sgdisk.calls" ] && \
+	grep -Eq -- '--backup=|--new=|^-e( |$)' "$CASE_UNNAMED_RAW/state/sgdisk.calls"; then
+	echo "unnamed p24 adoption reached a GPT mutation path"
+	exit 1
+fi
+[ -f "$CASE_UNNAMED_RAW/fstab" ] || {
+	echo "raw unnamed p24 did not persist fstab mount config"
+	exit 1
+}
+grep -Fxq 'uuid=legacy-uuid' "$CASE_UNNAMED_RAW/fstab" || {
+	echo "raw unnamed p24 fstab does not carry the filesystem UUID"
+	exit 1
+}
+[ -f "$CASE_UNNAMED_RAW/overlay/.emmc-data-provision.legacy-data-approved" ] || {
+	echo "raw unnamed p24 was not approved for mount"
+	exit 1
+}
+
+# An existing ext4 on an unnamed tail partition is preserved: no mkfs,
+# fstab + approval are written so 99-auto-mount-data can mount by UUID.
+CASE_UNNAMED_EXT4="$TMP_ROOT/unnamed-ext4-preserve"
+setup_128g_case "$CASE_UNNAMED_EXT4"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=ext4 EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_FSTAB_FILE="$CASE_UNNAMED_EXT4/fstab" \
+	run_fixture "$CASE_UNNAMED_EXT4"
+[ ! -e "$CASE_UNNAMED_EXT4/state/mkfs.calls" ] || {
+	echo "healthy ext4 on unnamed p24 was reformatted"
+	exit 1
+}
+[ -f "$CASE_UNNAMED_EXT4/fstab" ] || {
+	echo "ext4 unnamed p24 did not persist fstab mount config"
+	exit 1
+}
+grep -Fxq 'fstype=ext4' "$CASE_UNNAMED_EXT4/fstab" || {
+	echo "ext4 unnamed p24 fstab does not carry ext4 type"
+	exit 1
+}
+[ -f "$CASE_UNNAMED_EXT4/overlay/.emmc-data-provision.legacy-data-approved" ] || {
+	echo "ext4 unnamed p24 was not approved for mount"
+	exit 1
+}
+
+# An existing f2fs on an unnamed tail partition is likewise preserved.
+CASE_UNNAMED_F2FS="$TMP_ROOT/unnamed-f2fs-preserve"
+setup_128g_case "$CASE_UNNAMED_F2FS"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=f2fs EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_FSTAB_FILE="$CASE_UNNAMED_F2FS/fstab" \
+	run_fixture "$CASE_UNNAMED_F2FS"
+[ ! -e "$CASE_UNNAMED_F2FS/state/mkfs.calls" ] || {
+	echo "healthy f2fs on unnamed p24 was reformatted"
+	exit 1
+}
+grep -Fxq 'fstype=f2fs' "$CASE_UNNAMED_F2FS/fstab" || {
+	echo "f2fs unnamed p24 fstab does not carry f2fs type"
+	exit 1
+}
+
+# Multiple unnamed 8300 partitions meeting the size threshold must be
+# rejected: automatic selection is ambiguous and unsafe.
+CASE_UNNAMED_MULTI="$TMP_ROOT/unnamed-multiple"
+mkdir -p "$CASE_UNNAMED_MULTI/sys/block/mmcblk0/queue" "$CASE_UNNAMED_MULTI/state" "$CASE_UNNAMED_MULTI/dev"
+printf '%s\n' jdcloud,re-cs-07 >"$CASE_UNNAMED_MULTI/board"
+printf '%s\n' 512 >"$CASE_UNNAMED_MULTI/sys/block/mmcblk0/queue/logical_block_size"
+printf '%s\n' 240615424 >"$CASE_UNNAMED_MULTI/sys/block/mmcblk0/size"
+: >"$CASE_UNNAMED_MULTI/mounts"
+printf '%s\n' \
+	'Disk /dev/mmcblk0: 240615424 sectors, 114.7 GiB' \
+	'Partition table holds up to 28 entries' \
+	'First usable sector is 34, last usable sector is 240615416' \
+	'Number  Start (sector)    End (sector)  Size       Code  Name' \
+	'  18           53282         4247137   2.0 GiB    FFFF  rootfs' \
+	'  22         4247138         4288101   20.0 MiB   FFFF  rootfs_data' \
+	'  23         4289126         8484897   2.0 GiB    8300' \
+	'  24         8484898       240613375   110.6 GiB  8300' >"$CASE_UNNAMED_MULTI/table"
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_MULTI"
+[ ! -e "$CASE_UNNAMED_MULTI/state/mkfs.calls" ] || {
+	echo "multiple unnamed candidates were not rejected"
+	exit 1
+}
+
+# A filesystem probe failure on an unnamed candidate is ambiguous and must
+# never authorise mkfs.
+CASE_UNNAMED_BLKID="$TMP_ROOT/unnamed-blkid-failure"
+setup_128g_case "$CASE_UNNAMED_BLKID"
+if EMMC_DATA_TEST_BLKID_FAILURE=1 EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_BLKID"; then
+	echo "blkid probe failure on unnamed p24 was treated as a raw partition"
+	exit 1
+fi
+[ ! -e "$CASE_UNNAMED_BLKID/state/mkfs.calls" ] || {
+	echo "blkid probe failure formatted unnamed p24"
+	exit 1
+}
+
+# An unnamed partition below the minimum size is not adopted; the script
+# falls through to tail allocation (which fails here with no tail space).
+CASE_UNNAMED_SMALL="$TMP_ROOT/unnamed-too-small"
+mkdir -p "$CASE_UNNAMED_SMALL/sys/block/mmcblk0/queue" "$CASE_UNNAMED_SMALL/state" "$CASE_UNNAMED_SMALL/dev"
+printf '%s\n' jdcloud,re-cs-07 >"$CASE_UNNAMED_SMALL/board"
+printf '%s\n' 512 >"$CASE_UNNAMED_SMALL/sys/block/mmcblk0/queue/logical_block_size"
+printf '%s\n' 5000000 >"$CASE_UNNAMED_SMALL/sys/block/mmcblk0/size"
+: >"$CASE_UNNAMED_SMALL/mounts"
+printf '%s\n' \
+	'Disk /dev/mmcblk0: 5000000 sectors, 2.4 GiB' \
+	'Partition table holds up to 28 entries' \
+	'First usable sector is 34, last usable sector is 4999966' \
+	'Number  Start (sector)    End (sector)  Size       Code  Name' \
+	'  18           53282         4247137   2.0 GiB    FFFF  rootfs' \
+	'  22         4247138         4288101   20.0 MiB   FFFF  rootfs_data' \
+	'  24         4288102         4999966   347.6 MiB  8300' >"$CASE_UNNAMED_SMALL/table"
+if EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4288102 EMMC_DATA_TEST_END=4999966 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_SMALL"; then
+	echo "too-small unnamed p24 was unexpectedly adopted"
+	exit 1
+fi
+[ ! -e "$CASE_UNNAMED_SMALL/state/mkfs.calls" ] || {
+	echo "too-small unnamed p24 was formatted"
+	exit 1
+}
+
+# An unnamed 8300 partition that is not at the tail of the table is left
+# untouched; automatic adoption requires the reviewed tail geometry.
+CASE_UNNAMED_NONTAIL="$TMP_ROOT/unnamed-non-tail"
+mkdir -p "$CASE_UNNAMED_NONTAIL/sys/block/mmcblk0/queue" "$CASE_UNNAMED_NONTAIL/state" "$CASE_UNNAMED_NONTAIL/dev"
+printf '%s\n' jdcloud,re-cs-07 >"$CASE_UNNAMED_NONTAIL/board"
+printf '%s\n' 512 >"$CASE_UNNAMED_NONTAIL/sys/block/mmcblk0/queue/logical_block_size"
+printf '%s\n' 240615424 >"$CASE_UNNAMED_NONTAIL/sys/block/mmcblk0/size"
+: >"$CASE_UNNAMED_NONTAIL/mounts"
+printf '%s\n' \
+	'Disk /dev/mmcblk0: 240615424 sectors, 114.7 GiB' \
+	'Partition table holds up to 28 entries' \
+	'First usable sector is 34, last usable sector is 240615416' \
+	'Number  Start (sector)    End (sector)  Size       Code  Name' \
+	'  18           53282         4247137   2.0 GiB    FFFF  rootfs' \
+	'  22         4247138         4288101   20.0 MiB   FFFF  rootfs_data' \
+	'  23         4289126         8484897   2.0 GiB    8300' \
+	'  24         8484898       240613375   110.6 GiB  FFFF  reserved' >"$CASE_UNNAMED_NONTAIL/table"
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4289126 EMMC_DATA_TEST_END=8484897 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_NONTAIL"
+[ ! -e "$CASE_UNNAMED_NONTAIL/state/mkfs.calls" ] || {
+	echo "non-tail unnamed p23 was formatted"
+	exit 1
+}
+
+# An unnamed partition with a non-8300 GPT type is refused.
+CASE_UNNAMED_BADTYPE="$TMP_ROOT/unnamed-bad-gpt-type"
+setup_128g_case "$CASE_UNNAMED_BADTYPE"
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=FFFF \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_BADTYPE"
+[ ! -e "$CASE_UNNAMED_BADTYPE/state/mkfs.calls" ] || {
+	echo "unnamed p24 with non-8300 GPT type was formatted"
+	exit 1
+}
+
+# An unsupported filesystem (e.g. xfs) on an unnamed tail partition is left
+# untouched; only ext4/f2fs may be preserved.
+CASE_UNNAMED_UNKNOWNFS="$TMP_ROOT/unnamed-unknown-fs"
+setup_128g_case "$CASE_UNNAMED_UNKNOWNFS"
+EMMC_DATA_TEST_FILESYSTEM_TYPE=xfs EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_UNKNOWNFS"
+[ ! -e "$CASE_UNNAMED_UNKNOWNFS/state/mkfs.calls" ] || {
+	echo "xfs on unnamed p24 was reformatted"
+	exit 1
+}
+[ ! -f "$CASE_UNNAMED_UNKNOWNFS/overlay/.emmc-data-provision.legacy-data-approved" ] || {
+	echo "xfs on unnamed p24 was approved for mount"
+	exit 1
+}
+
+# A hung mkfs on an unnamed raw partition is recorded as non-retryable.
+CASE_UNNAMED_TIMEOUT="$TMP_ROOT/unnamed-raw-timeout"
+setup_128g_case "$CASE_UNNAMED_TIMEOUT"
+EMMC_DATA_TEST_FORMAT_TIMEOUT=1 EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_TIMEOUT"
+grep -Fxq 'reason=mkfs-timeout' "$CASE_UNNAMED_TIMEOUT/overlay/failed" || {
+	echo "timed-out unnamed p24 initialization was not recorded as non-retryable"
+	exit 1
+}
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_TIMEOUT"
+[ ! -e "$CASE_UNNAMED_TIMEOUT/state/mkfs.calls" ] || {
+	echo "timed-out unnamed p24 initialization retried on a later boot"
+	exit 1
+}
+
+# Idempotency: after a successful unnamed p24 adoption, a second run must
+# skip everything because approved_data_exists finds LABEL=openwrt-data.
+CASE_UNNAMED_IDEMPOTENT="$TMP_ROOT/unnamed-idempotent"
+setup_128g_case "$CASE_UNNAMED_IDEMPOTENT"
+EMMC_DATA_TEST_INFO_NAME= EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 \
+	EMMC_DATA_TEST_FSTAB_FILE="$CASE_UNNAMED_IDEMPOTENT/fstab" \
+	run_fixture "$CASE_UNNAMED_IDEMPOTENT"
+grep -Fq -- '-F -L openwrt-data' "$CASE_UNNAMED_IDEMPOTENT/state/mkfs.calls" || {
+	echo "first-run unnamed p24 was not initialized"
+	exit 1
+}
+# Second run: the formatted marker makes filesystem_type return ext4 and
+# approved_data_exists returns true, so no further mkfs should occur.
+: >"$CASE_UNNAMED_IDEMPOTENT/state/mkfs.calls"
+EMMC_DATA_TEST_EXISTING_DATA=1 EMMC_DATA_TEST_INFO_NAME= \
+	EMMC_DATA_TEST_PARTITION_TYPE=8300 \
+	EMMC_DATA_TEST_START=4429824 EMMC_DATA_TEST_END=240613375 \
+	EMMC_DATA_TEST_DEVICE_READY=1 run_fixture "$CASE_UNNAMED_IDEMPOTENT"
+[ ! -s "$CASE_UNNAMED_IDEMPOTENT/state/mkfs.calls" ] || {
+	echo "second run reformatted an already-approved unnamed p24"
 	exit 1
 }
 
