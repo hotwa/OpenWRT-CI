@@ -801,12 +801,25 @@ prepare_agent_storage() {
 	# operator already customized settings.
 	ensure_default_model_from_cache || true
 
-	# CommandCode CLI auth: copy the build-injected key onto /data so the
+	# CommandCode CLI auth: sync the build-injected key onto /data so the
 	# cmd / cmdc CLI finds it at ~/.commandcode/auth.json.  pi-commandcode-provider
 	# reads the same file in addition to ~/.pi/agent/auth.json.
-	if [ -r "$FIRMWARE_ETC/commandcode/auth.json" ] && [ ! -e "$DATA_ROOT/commandcode/auth.json" ]; then
-		( umask 077; cp -p "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
-		mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
+	# A stale key left behind by an earlier manual /login (or an older build)
+	# shadows the firmware key through the provider's auth-path priority and
+	# yields 401 Unauthorized once that key expires.  When the existing file
+	# differs from the firmware key, prefer the firmware key and keep a
+	# timestamped backup of the previous one so the operator can recover a
+	# newer manually logged-in credential if it is still valid.
+	if [ -r "$FIRMWARE_ETC/commandcode/auth.json" ]; then
+		if [ ! -e "$DATA_ROOT/commandcode/auth.json" ] || \
+		   ! cmp -s "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json"; then
+			if [ -e "$DATA_ROOT/commandcode/auth.json" ]; then
+				( umask 077; cp -p "$DATA_ROOT/commandcode/auth.json" \
+					"$DATA_ROOT/commandcode/auth.json.bak.$(date +%Y%m%d%H%M%S)" ) 2>/dev/null || true
+			fi
+			( umask 077; cp -p "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
+			mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
+		fi
 	fi
 
 	# Pi loads "npm:pi-commandcode-provider" from /data/pi/agent/npm/node_modules.

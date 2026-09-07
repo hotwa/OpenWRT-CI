@@ -384,6 +384,40 @@ grep -Fq 'user_migrate_test_key' "$CASE_MIGRATE/data/pi/agent/auth.json" || {
 	exit 1
 }
 
+# Case 1b: a stale /data/commandcode/auth.json left over from an earlier
+# manual /login (or an older build) must be replaced by the firmware key,
+# with a timestamped backup kept.  The provider resolves
+# ~/.commandcode/auth.json before ~/.pi/agent/auth.json, so a dead key there
+# would otherwise shadow the injected credential and produce 401s.
+CASE_STALE="$TMP_ROOT/cc-stale-key"
+mkdir -p "$CASE_STALE/root" "$CASE_STALE/data/pi/agent" "$CASE_STALE/data/commandcode" \
+	"$CASE_STALE/firmware_etc/pi/agent" "$CASE_STALE/firmware_etc/commandcode"
+printf '%s\n' '{"apiKey":"user_stale_expired_key"}' >"$CASE_STALE/data/commandcode/auth.json"
+chmod 600 "$CASE_STALE/data/commandcode/auth.json"
+printf '%s\n' '{"apiKey":"user_firmware_fresh_key"}' >"$CASE_STALE/firmware_etc/commandcode/auth.json"
+chmod 600 "$CASE_STALE/firmware_etc/commandcode/auth.json"
+printf '%s\n' '{"apiKey":"user_firmware_fresh_key"}' >"$CASE_STALE/firmware_etc/pi/agent/auth.json"
+chmod 600 "$CASE_STALE/firmware_etc/pi/agent/auth.json"
+: >"$CASE_STALE/mounts"
+printf '%s\n' '/dev/mmcblk0p14: UUID="stale-uuid" LABEL="openwrt-data" TYPE="ext4" PARTUUID="stale-part"' >"$CASE_STALE/block.info"
+run_fixture "$CASE_STALE" "AUTO_MOUNT_FIRMWARE_ETC=$CASE_STALE/firmware_etc"
+grep -Fq 'user_firmware_fresh_key' "$CASE_STALE/data/commandcode/auth.json" || {
+	echo "stale /data/commandcode/auth.json was not replaced by the firmware key"
+	exit 1
+}
+ls "$CASE_STALE/data/commandcode/"auth.json.bak.* >/dev/null 2>&1 || {
+	echo "stale-key replacement did not keep a timestamped backup"
+	exit 1
+}
+grep -Fq 'user_stale_expired_key' "$CASE_STALE/data/commandcode/"auth.json.bak.* || {
+	echo "stale-key backup does not contain the previous key"
+	exit 1
+}
+[ "$(stat -c '%a' "$CASE_STALE/data/commandcode/auth.json")" = "600" ] || {
+	echo "replaced commandcode auth.json is not mode 0600"
+	exit 1
+}
+
 # Case 2: user-customized defaultProvider (not in known firmware-default list)
 # must NOT be auto-migrated.
 CASE_NOMIGRATE_CUSTOM="$TMP_ROOT/cc-nomigrate-custom"
