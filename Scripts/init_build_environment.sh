@@ -161,6 +161,14 @@ function install_dependencies() {
 
 	apt clean -y
 
+	# Configure the Go module proxy at the user level so downstream builds
+	# resolve modules reliably. tests/test_go_module_stability.sh asserts
+	# these exact quoted settings exist in this script (stability guard).
+	if command -v go >/dev/null 2>&1; then
+		go env -w GOPROXY="https://proxy.golang.org|https://goproxy.cn|direct"
+		go env -w GOSUMDB=sum.golang.org
+	fi
+
 	if TMP_DIR="$(mktemp -d)"; then
 		pushd "$TMP_DIR"
 	else
