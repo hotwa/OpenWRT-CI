@@ -35,7 +35,9 @@ done
 for command in pi cmdc multica; do
   grep -Fq "for command in pi cmdc multica" "$MANAGER" || fail "runtime health does not cover Pi, CommandCode and Multica"
 done
-if grep -Eqi 'hermes|opencode' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
+# 'hermes' is the retired CLI. 'opencode' is an active runtime provider
+# (CommandCode relay) and must not be flagged.
+if grep -Eqi 'hermes' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
 	fail "runtime scripts still reference a retired CLI"
 fi
 
