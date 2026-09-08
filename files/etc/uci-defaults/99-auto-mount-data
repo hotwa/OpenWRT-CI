@@ -18,6 +18,7 @@ BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
 LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
 COMMANDCODE_ROLE_LINK_BIN="${AUTO_MOUNT_COMMANDCODE_ROLE_LINK_BIN:-/usr/sbin/commandcode-role-link}"
+OPENCODE_ROLE_LINK_BIN="${AUTO_MOUNT_OPENCODE_ROLE_LINK_BIN:-/usr/sbin/opencode-role-link}"
 AGENT_TOOLS_LINK_BIN="${AUTO_MOUNT_AGENT_TOOLS_LINK_BIN:-/usr/sbin/agent-tools-link}"
 FIRMWARE_ETC="${AUTO_MOUNT_FIRMWARE_ETC:-/etc}"
 
@@ -859,6 +860,13 @@ prepare_agent_storage() {
 	if [ -x "$COMMANDCODE_ROLE_LINK_BIN" ]; then
 		COMMANDCODE_HOME="$DATA_ROOT/commandcode" COMMANDCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
 			"$COMMANDCODE_ROLE_LINK_BIN" || return 1
+	fi
+	# opencode reads a user-level AGENTS.md (global rules) next to its config.
+	# Bind it to the same rendered role card; a missing config dir (device
+	# without opencode, e.g. re-ss-01) is a silent no-op inside the script.
+	if [ -x "$OPENCODE_ROLE_LINK_BIN" ]; then
+		OPENCODE_CONFIG_DIR="$DATA_ROOT/opencode/config" OPENCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
+			"$OPENCODE_ROLE_LINK_BIN" || return 1
 	fi
 	if [ -x "$AGENT_TOOLS_LINK_BIN" ]; then
 		AGENT_TOOLS_ROOT="$DATA_ROOT/shared/agent-tools" \
