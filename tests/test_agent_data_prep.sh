@@ -104,8 +104,10 @@ check "stale key kept as timestamped backup" test -n "$(find "$DATA/commandcode"
 export AGENT_DATA_PREP_PROC_MOUNTS="$TMP_ROOT/no-mounts"
 printf '' > "$TMP_ROOT/no-mounts"
 rm -rf "$DATA"
+mkdir -p "$DATA"   # overlay-style dir exists but is NOT a real mount
 start
 check "start with no /data mount exits cleanly" true
+check "no provisioning happened without a real mount" test -z "$(ls -A "$DATA")"
 
 # ---------------------------------------------------------------------------
 # Summary

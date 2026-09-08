@@ -28,8 +28,14 @@ log_warn() {
 }
 
 data_mounted() {
-	grep -qsE "[[:space:]]${DATA_ROOT}[[:space:]]" "$PROC_MOUNTS" 2>/dev/null || \
-		[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ]
+	# Read the mounts source at call time so tests can re-export
+	# AGENT_DATA_PREP_PROC_MOUNTS after sourcing the script.
+	local proc_mounts="${AGENT_DATA_PREP_PROC_MOUNTS:-${PROC_MOUNTS:-/proc/mounts}}"
+	# A real data partition only counts when /proc/mounts shows a block
+	# device mounted on DATA_ROOT with an on-disk filesystem.  The old
+	# fallback (dir exists and is writable) misfires on overlay-only dirs
+	# left behind after a failed mount and would write state to overlay.
+	grep -qsE "^/dev/(mmcblk[0-9]+p[0-9]+|sd[a-z]+[0-9]+)[[:space:]]+${DATA_ROOT}[[:space:]]+(ext4|f2fs)[[:space:]]" "$proc_mounts" 2>/dev/null
 }
 
 wait_data_mount() {
