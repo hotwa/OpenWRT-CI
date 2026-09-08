@@ -689,6 +689,7 @@ jobs:
           cp -f ./files/usr/sbin/openwrt-data-storage-diagnose ./wrt/files/usr/sbin/openwrt-data-storage-diagnose
           cp -f ./files/usr/sbin/pi-append-system-link ./wrt/files/usr/sbin/pi-append-system-link
           cp -f ./files/usr/sbin/commandcode-role-link ./wrt/files/usr/sbin/commandcode-role-link
+          cp -f ./files/usr/sbin/opencode-role-link ./wrt/files/usr/sbin/opencode-role-link
           cp -f ./files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
@@ -706,6 +707,7 @@ jobs:
             ./wrt/files/usr/sbin/openwrt-data-storage-diagnose \
             ./wrt/files/usr/sbin/pi-append-system-link \
             ./wrt/files/usr/sbin/commandcode-role-link \
+            ./wrt/files/usr/sbin/opencode-role-link \
             ./wrt/files/usr/sbin/agent-tools-link \
             ./wrt/files/usr/sbin/rclone-data-backup \
             ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
