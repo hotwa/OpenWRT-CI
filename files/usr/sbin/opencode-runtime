@@ -129,6 +129,13 @@ do_install() {
 
 	data_available || { err "/data is not writable"; return 3; }
 
+	# The lock lives inside INSTALL_ROOT, so the parent must exist before we
+	# try to take it: otherwise `mkdir "$LOCK_DIR"` fails with "No such file
+	# or directory" and every installer mistakes that for a concurrently held
+	# lock, spinning 300s and never installing anything (observed on fresh
+	# /data after reflash).
+	mkdir -p "$INSTALL_ROOT" || { err "cannot create $INSTALL_ROOT"; return 1; }
+
 	# Serialize installs.  The init.d service kicks off a background install at
 	# boot (START=92) while the /usr/bin/opencode wrapper may run a foreground
 	# install at the same moment; both used to rm -f the same staging tarball
