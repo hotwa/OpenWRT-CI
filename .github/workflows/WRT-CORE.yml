@@ -289,7 +289,7 @@ jobs:
           echo "WRT_IP=$LAN_IP" >> "$GITHUB_ENV"
 
       - name: Initialization Environment
-        timeout-minutes: 30
+        timeout-minutes: 120
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
