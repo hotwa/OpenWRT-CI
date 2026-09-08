@@ -339,7 +339,7 @@ grep -Fq 'elif' "$WRAPPER_SCRIPT" && pass "wrapper has /etc fallback branch" || 
 echo "== init.d CommandCode migration =="
 
 grep -Fq 'commandcode' "$INIT_SCRIPT" && pass "init.d references commandcode for migration" || fail "init.d references commandcode for migration"
-grep -Fq 'opencode.json.bak' "$INIT_SCRIPT" && pass "init.d backs up old config before migration" || fail "init.d backs up old config before migration"
+grep -Fq 'CONFIG_FILE.bak' "$INIT_SCRIPT" && pass "init.d backs up old config before migration" || fail "init.d backs up old config before migration"
 grep -Fq 'migrated opencode.json' "$INIT_SCRIPT" && pass "init.d logs migration" || fail "init.d logs migration"
 
 # Idempotency: migration only runs when config lacks "commandcode"

@@ -17,28 +17,42 @@ start() {
 
 	# Maintain data-backed config directories and symlinks (idempotent).
 	if [ -d /data ] && [ -w /data ]; then
-		mkdir -p /data/opencode/config /data/opencode/cache \
+		mkdir -p /data/opencode/config/opencode /data/opencode/cache \
 			/data/opencode/data /data/opencode/state
 
+		# opencode 1.18+ reads $XDG_CONFIG_HOME/opencode/opencode.json
+		# (it appends an "opencode" subdirectory under XDG_CONFIG_HOME), NOT
+		# the flat $XDG_CONFIG_HOME/opencode.json.  The flat path was written
+		# by older firmware and is ignored by the running binary, leaving the
+		# CommandCode provider unconfigured.  Target the nested path here.
+		CONFIG_DIR=/data/opencode/config/opencode
+		CONFIG_FILE="$CONFIG_DIR/opencode.json"
+
+		# Upgrade migration: carry over a config written to the old flat path.
+		if [ -f /data/opencode/config/opencode.json ] && [ ! -f "$CONFIG_FILE" ]; then
+			cp -p /data/opencode/config/opencode.json "$CONFIG_FILE"
+			logger -t opencode-runtime "migrated flat opencode.json to nested path"
+		fi
+
 		# First-boot migration: copy firmware default config if absent.
-		if [ ! -f /data/opencode/config/opencode.json ] && \
+		if [ ! -f "$CONFIG_FILE" ] && \
 			[ -f /etc/opencode/opencode.json ]; then
-			cp /etc/opencode/opencode.json /data/opencode/config/opencode.json
-			chmod 0644 /data/opencode/config/opencode.json
-			logger -t opencode-runtime "copied default opencode.json to /data"
+			cp /etc/opencode/opencode.json "$CONFIG_FILE"
+			chmod 0644 "$CONFIG_FILE"
+			logger -t opencode-runtime "copied default opencode.json to nested /data path"
 		fi
 
 		# Upgrade migration: if the existing /data config predates the
 		# CommandCode provider (no "commandcode" key), back it up and replace
 		# with the firmware default so all devices get the provider config.
 		# Idempotent: once the config contains "commandcode" this is skipped.
-		if [ -f /data/opencode/config/opencode.json ] && \
+		if [ -f "$CONFIG_FILE" ] && \
 			[ -f /etc/opencode/opencode.json ] && \
-			! grep -q '"commandcode"' /data/opencode/config/opencode.json 2>/dev/null; then
-			cp -p /data/opencode/config/opencode.json \
-				"/data/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)"
-			cp /etc/opencode/opencode.json /data/opencode/config/opencode.json
-			chmod 0644 /data/opencode/config/opencode.json
+			! grep -q '"commandcode"' "$CONFIG_FILE" 2>/dev/null; then
+			cp -p "$CONFIG_FILE" \
+				"$CONFIG_FILE.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)"
+			cp /etc/opencode/opencode.json "$CONFIG_FILE"
+			chmod 0644 "$CONFIG_FILE"
 			logger -t opencode-runtime "migrated opencode.json to include CommandCode provider (backup kept)"
 		fi
 
