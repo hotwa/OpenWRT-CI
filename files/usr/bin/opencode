@@ -8,6 +8,13 @@
 REAL_BIN="/data/opt/opencode/current/bin/opencode"
 RUNTIME_MGR="/usr/sbin/opencode-runtime"
 
+# opencode is intentionally not provisioned on low-memory devices (re-ss-01,
+# 896MB RAM): firmware built for that board ships without release metadata.
+if [ ! -f /etc/opencode/release-url ]; then
+	echo "opencode: not enabled on this device (low-memory board build)" >&2
+	exit 1
+fi
+
 # Ensure runtime is installed (foreground; user is waiting).
 if [ ! -x "$REAL_BIN" ]; then
 	if [ -x "$RUNTIME_MGR" ]; then

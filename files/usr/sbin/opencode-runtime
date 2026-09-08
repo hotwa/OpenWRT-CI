@@ -309,6 +309,22 @@ usage() {
 
 main() {
 	local cmd="${1:-}"
+
+	# opencode is intentionally not provisioned on low-memory devices
+	# (re-ss-01, 896MB RAM): those firmware builds ship no release metadata,
+	# so install/upgrade are no-ops and status reports the disabled state.
+	if [ ! -f "$RELEASE_FILE" ]; then
+		case "$cmd" in
+			status)
+				printf 'opencode runtime status\n'
+				printf '  enabled:           no (this device build has no opencode release metadata)\n'
+				return 0
+				;;
+		esac
+		log "opencode not enabled on this device; nothing to do"
+		return 0
+	fi
+
 	case "$cmd" in
 		install)
 			do_install
