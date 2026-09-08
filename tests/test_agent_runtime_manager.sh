@@ -35,7 +35,11 @@ done
 for command in pi cmdc multica; do
   grep -Fq "for command in pi cmdc multica" "$MANAGER" || fail "runtime health does not cover Pi, CommandCode and Multica"
 done
-if grep -Eqi 'hermes|opencode' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
+# opencode is a first-class runtime provider since 111ff1b (per-device
+# provisioning: re-cs-02/re-cs-07 default multica runtime_provider=opencode,
+# gated on /etc/opencode/release-url), so only the truly retired CLI
+# (hermes) must stay out of runtime scripts.
+if grep -Eqi 'hermes' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
 	fail "runtime scripts still reference a retired CLI"
 fi
 
