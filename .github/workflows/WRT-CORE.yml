@@ -361,10 +361,10 @@ jobs:
             echo "GO_INSTALLED=false" >> "$GITHUB_ENV"
           fi
           if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            ${SUDO} systemctl daemon-reload
+            timeout 30 ${SUDO} systemctl daemon-reload || echo "::warning::systemctl daemon-reload skipped (timeout/failure)"
           fi
           if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            ${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."
+            timeout 30 ${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."
           fi
 #          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 #          sudo mkdir -p /mnt/build_wrt
