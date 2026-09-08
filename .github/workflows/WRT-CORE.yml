@@ -348,23 +348,22 @@ jobs:
 
           run_apt purge firefox || true
           apt_retry_update
-          retry_cmd 3 15 run_apt full-upgrade
           run_apt autoremove --purge
           run_apt autoclean
           run_apt clean
           retry_cmd 3 15 run_apt install dos2unix libfuse-dev libncurses-dev libncursesw5-dev libssl-dev libelf-dev musl musl-tools qemu-user qemu-user-static
           dos2unix "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"
           ${SUDO} bash "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"
-          if command -v go >/dev/null 2>&1; then
+          if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -Eq 'go1\.(2[6-9]|[3-9][0-9])(\.|$)'; then
             echo "GO_INSTALLED=true" >> "$GITHUB_ENV"
           else
             echo "GO_INSTALLED=false" >> "$GITHUB_ENV"
           fi
           if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            timeout 30 ${SUDO} systemctl daemon-reload || echo "::warning::systemctl daemon-reload skipped (timeout/failure)"
+            timeout --kill-after=30 30 ${SUDO} systemctl daemon-reload || echo "::warning::systemctl daemon-reload skipped (timeout/failure)"
           fi
           if command -v timedatectl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            timeout 30 ${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."
+            timeout --kill-after=30 30 ${SUDO} timedatectl set-timezone "Asia/Shanghai" || echo "::warning::Unable to set runner timezone; continuing with explicit TZ timestamps."
           fi
 #          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
 #          sudo mkdir -p /mnt/build_wrt
