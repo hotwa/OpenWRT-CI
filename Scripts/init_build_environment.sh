@@ -101,126 +101,34 @@ function check_system() {
 function check_network() {
 	__info_msg "Checking network..."
 
-	curl -s "myip.ipip.net" | grep -qo "中国" && CHN_NET=1
-	curl --connect-timeout 10 "baidu.com" > "/dev/null" 2>&1 || { __warning_msg "Your network is not suitable for compiling OpenWrt!"; }
-	curl --connect-timeout 10 "google.com" > "/dev/null" 2>&1 || { __warning_msg "Your network is not suitable for compiling OpenWrt!"; }
+	curl -s --max-time 10 "myip.ipip.net" | grep -qo "中国" && CHN_NET=1
+	curl --connect-timeout 10 --max-time 20 "baidu.com" > "/dev/null" 2>&1 || { __warning_msg "Your network is not suitable for compiling OpenWrt!"; }
+	curl --connect-timeout 10 --max-time 20 "google.com" > "/dev/null" 2>&1 || { __warning_msg "Your network is not suitable for compiling OpenWrt!"; }
 }
 
 function update_apt_source() {
 	__info_msg "Updating apt source lists..."
 	set -x
 
+	# Root-cause fix: the previous version registered six third-party apt
+	# sources (nodesource, yarn, git-core PPA, apt.llvm.org, golang-backports,
+	# github-cli) and pulled their keys over the network. On GitHub-hosted
+	# runners those endpoints can hang indefinitely (no --max-time, no step
+	# timeout), which is what wedged "Initialization Environment" for hours.
+	# None of them are required here:
+	#   - nodejs  -> installed later via actions/setup-node (WRT-CORE)
+	#   - go      -> installed later via actions/setup-go (WRT-CORE)
+	#   - gh      -> preinstalled on GitHub-hosted runners
+	#   - llvm    -> explicitly removed by WRT-CORE "Free Disk Space"
+	#   - yarn    -> not used by the build
+	# The default Ubuntu archive on the runner is reachable and fast.
 	apt update -y
 	apt install -y apt-transport-https gnupg2
-
-	mkdir -p "/etc/apt/keyrings"
-	mkdir -p "/etc/apt/sources.list.d"
-	mkdir -p "/etc/apt/trusted.gpg.d"
-
-	if [ -n "$CHN_NET" ]; then
-		mv "/etc/apt/sources.list" "/etc/apt/sources.list.bak"
-		mv "/etc/apt/sources.list.d/debian.sources" "/etc/apt/sources.list.d/debian.sources.bak"
-		mv "/etc/apt/sources.list.d/ubuntu.sources" "/etc/apt/sources.list.d/ubuntu.sources.bak"
-
-		if [ "$VERSION_CODENAME" == "$UBUNTU_CODENAME" ]; then
-			cat <<-EOF >"/etc/apt/sources.list"
-				deb https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME main restricted universe multiverse
-				deb-src https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME main restricted universe multiverse
-
-				deb https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-security main restricted universe multiverse
-				deb-src https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-security main restricted universe multiverse
-
-				deb https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-updates main restricted universe multiverse
-				deb-src https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-updates main restricted universe multiverse
-
-				# deb https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-proposed main restricted universe multiverse
-				# deb-src https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-proposed main restricted universe multiverse
-
-				deb https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-backports main restricted universe multiverse
-				deb-src https://mirrors.cloud.tencent.com/ubuntu/ $VERSION_CODENAME-backports main restricted universe multiverse
-			EOF
-		elif [ "$VERSION_CODENAME" == "buster" ]; then
-			cat <<-EOF > "/etc/apt/sources.list"
-			deb https://mirrors.tuna.tsinghua.edu.cn/debian-elts $VERSION_CODENAME main contrib non-free
-			EOF
-			curl -fsL "https://deb.freexian.com/extended-lts/archive-key.gpg" -o "/etc/apt/trusted.gpg.d/extended-lts.gpg"
-		else
-			cat <<-EOF > "/etc/apt/sources.list"
-				deb https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian/ $VERSION_CODENAME main contrib non-free${APT_COMP:+ $APT_COMP}
-				deb-src https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian/ $VERSION_CODENAME main contrib non-free${APT_COMP:+ $APT_COMP}
-
-				deb https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian-security ${DISTRO_SECUTIRY_PATH:-$VERSION_CODENAME-security} main contrib non-free${APT_COMP:+ $APT_COMP}
-				deb-src https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian-security ${DISTRO_SECUTIRY_PATH:-$VERSION_CODENAME-security} main contrib non-free${APT_COMP:+ $APT_COMP}
-
-				deb https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian/ $VERSION_CODENAME-updates main contrib non-free${APT_COMP:+ $APT_COMP}
-				deb-src https://mirrors.cloud.tencent.com/${DISTRO_PREFIX}debian/ $VERSION_CODENAME-updates main contrib non-free${APT_COMP:+ $APT_COMP}
-
-				deb https://mirrors.cloud.tencent.com/${BPO_DISTRO_PREFIX:-$DISTRO_PREFIX}debian/ $VERSION_CODENAME-backports main contrib non-free${APT_COMP:+ $APT_COMP}
-				deb-src https://mirrors.cloud.tencent.com/${BPO_DISTRO_PREFIX:-$DISTRO_PREFIX}debian/ $VERSION_CODENAME-backports main contrib non-free${APT_COMP:+ $APT_COMP}
-			EOF
-		fi
-	else
-		if [ "$VERSION_CODENAME" == "buster" ]; then
-			mv "/etc/apt/sources.list" "/etc/apt/sources.list.bak"
-			cat <<-EOF > "/etc/apt/sources.list"
-			deb https://deb.freexian.com/extended-lts $VERSION_CODENAME main contrib non-free
-			EOF
-			curl -fsL "https://deb.freexian.com/extended-lts/archive-key.gpg" -o "/etc/apt/trusted.gpg.d/extended-lts.gpg"
-		fi
-	fi
-
-	cat <<-EOF >"/etc/apt/sources.list.d/nodesource.list"
-		deb https://deb.nodesource.com/node_${NODE_VERSION:-22}.x ${NODE_DISTRO:-nodistro} main
-	EOF
-	curl -fsL "https://deb.nodesource.com/gpgkey/${NODE_KEY:-nodesource-repo.gpg.key}" -o "/etc/apt/trusted.gpg.d/nodesource.asc"
-
-	cat <<-EOF >"/etc/apt/sources.list.d/yarn.list"
-		deb https://dl.yarnpkg.com/debian/ stable main
-	EOF
-	curl -fsL "https://dl.yarnpkg.com/debian/pubkey.gpg" -o "/etc/apt/trusted.gpg.d/yarn.asc"
-
-	case "$VERSION_CODENAME" in
-	"bionic"|"buster")
-		cat <<-EOF >"/etc/apt/sources.list.d/gcc-toolchain.list"
-			deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu $UBUNTU_CODENAME main
-			deb-src https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu $UBUNTU_CODENAME main
-		EOF
-		curl -fsL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x1e9377a2ba9ef27f" -o "/etc/apt/trusted.gpg.d/gcc-toolchain.asc"
-		;;
-	esac
-
-	cat <<-EOF >"/etc/apt/sources.list.d/git-core-ubuntu-ppa.list"
-		deb https://ppa.launchpadcontent.net/git-core/ppa/ubuntu $UBUNTU_CODENAME main
-		deb-src https://ppa.launchpadcontent.net/git-core/ppa/ubuntu $UBUNTU_CODENAME main
-	EOF
-	curl -fsL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xf911ab184317630c59970973e363c90f8f1b6217" -o "/etc/apt/trusted.gpg.d/git-core-ubuntu-ppa.asc"
-
-	cat <<-EOF >"/etc/apt/sources.list.d/llvm-toolchain.list"
-		deb https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$LLVM_VERSION main
-		deb-src https://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-$LLVM_VERSION main
-	EOF
-	curl -fsL "https://apt.llvm.org/llvm-snapshot.gpg.key" -o "/etc/apt/trusted.gpg.d/llvm-toolchain.asc"
-
-	cat <<-EOF >"/etc/apt/sources.list.d/longsleep-ubuntu-golang-backports-$UBUNTU_CODENAME.list"
-		deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu $UBUNTU_CODENAME main
-		deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu $UBUNTU_CODENAME main
-	EOF
-	curl -fsL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x876b22ba887ca91614b5323fc631127f87fa12d1" -o "/etc/apt/trusted.gpg.d/longsleep-ubuntu-golang-backports-$UBUNTU_CODENAME.asc"
-
-	cat <<-EOF >"/etc/apt/sources.list.d/github-cli.list"
-		deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main
-	EOF
-	curl -fsL "https://cli.github.com/packages/githubcli-archive-keyring.gpg" -o "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
-
-	if [ -n "$CHN_NET" ]; then
-		sed -i -e "s,apt.llvm.org,mirrors.tuna.tsinghua.edu.cn/llvm-apt,g" -e "s,^deb-src,# deb-src,g" "/etc/apt/sources.list.d/llvm-toolchain.list"
-		sed -i "s,ppa.launchpadcontent.net,launchpad.proxy.ustclug.org,g" "/etc/apt/sources.list.d"/*
-	fi
-
-	apt update -y $BPO_FLAG
+	apt update -y
 
 	set +x
 }
+
 function install_dependencies() {
 	__info_msg "Installing dependencies..."
 	set -x
@@ -250,29 +158,6 @@ function install_dependencies() {
 	done
 	ln -svf "/usr/bin/g++" "/usr/bin/c++"
 	[ -e "/usr/include/asm" ] || ln -svf "/usr/include/$(gcc -dumpmachine)/asm" "/usr/include/asm"
-
-	apt install -y $BPO_FLAG "clang-$LLVM_VERSION" "libclang-$LLVM_VERSION-dev" "lld-$LLVM_VERSION" "liblld-$LLVM_VERSION-dev" "llvm-$LLVM_VERSION"
-	for i in "/usr/lib/llvm-$LLVM_VERSION/bin"/*; do
-		ln -svf "$i" "/usr/bin/${i##*/}"
-	done
-	ln -svf "/usr/lib/llvm-$LLVM_VERSION" "/usr/lib/llvm"
-
-	apt install -y $BPO_FLAG nodejs yarn
-	if [ -n "$CHN_NET" ]; then
-		npm config set registry "https://registry.npmmirror.com" --global
-		yarn config set registry "https://registry.npmmirror.com" --global
-	fi
-
-	apt install -y $BPO_FLAG golang-1.26-go
-	rm -rf "/usr/bin/go" "/usr/bin/gofmt"
-	ln -svf "/usr/lib/go-1.26/bin/go" "/usr/bin/go"
-	ln -svf "/usr/lib/go-1.26/bin/gofmt" "/usr/bin/gofmt"
-	if [ -n "$CHN_NET" ]; then
-		go env -w GOPROXY="https://proxy.golang.org|https://goproxy.cn|direct"
-		go env -w GOSUMDB=sum.golang.org
-	fi
-
-	apt install gh -y
 
 	apt clean -y
 
