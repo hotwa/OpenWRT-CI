@@ -17,7 +17,6 @@ CONFIG_PACKAGE_gre=y
 CONFIG_PACKAGE_luci-proto-gre=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_luci-app-wrtbak=y
-CONFIG_PACKAGE_vm103-failover=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/.config" "$DEVICE"
 
@@ -47,7 +46,6 @@ gre - 1
 luci-proto-gre - 1
 ip-full - 1
 luci-app-wrtbak - 1
-vm103-failover - 1
 EOT
 cp "$WORK_DIR/.config" "$WORK_DIR/upload/Config-IPQ60XX-RE-CS-07-NOWIFI.txt"
 bash "$SCRIPT" stage "$WORK_DIR/bin/targets" "$WORK_DIR/upload" "$DEVICE"
@@ -57,15 +55,6 @@ printf 'nerdctl=2.3.5\ncontainerd=2.3.3\n' >"$WORK_DIR/upload/ContainerRuntime-v
 bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE"
 [ "$(find "$WORK_DIR/upload" -maxdepth 1 -type f | wc -l)" -eq 6 ]
 (cd "$WORK_DIR/upload" && sha256sum -c SHA256SUMS >/dev/null)
-
-# Verification rejects a manifest missing the topology-specific package.
-cp -a "$WORK_DIR/upload" "$WORK_DIR/missing-package-upload"
-sed -i '/^vm103-failover[[:space:]]/d' "$WORK_DIR/missing-package-upload/qualcommax-ipq60xx-generic.manifest"
-if bash "$SCRIPT" verify "$WORK_DIR/missing-package-upload" "$DEVICE" >"$WORK_DIR/missing-package.err" 2>&1; then
-	echo "artifact guard accepted a manifest without vm103-failover"
-	exit 1
-fi
-grep -Fq 'manifest is missing required package: vm103-failover' "$WORK_DIR/missing-package.err"
 
 # Verification rejects nested paths, even when the four top-level files are valid.
 mkdir -p "$WORK_DIR/upload/nested"
@@ -111,8 +100,6 @@ printf '%s\n' 'CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
 ! bash "$SCRIPT" defconfig "$WORK_DIR/multi.config" "$DEVICE" >/dev/null 2>&1
 grep -v '^CONFIG_PACKAGE_gre=y$' "$WORK_DIR/.config" >"$WORK_DIR/missing.config"
 ! bash "$SCRIPT" defconfig "$WORK_DIR/missing.config" "$DEVICE" >/dev/null 2>&1
-grep -v '^CONFIG_PACKAGE_vm103-failover=y$' "$WORK_DIR/.config" >"$WORK_DIR/missing-vm103.config"
-! bash "$SCRIPT" defconfig "$WORK_DIR/missing-vm103.config" "$DEVICE" >/dev/null 2>&1
 bash "$SCRIPT" verify "$WORK_DIR/upload" "$DEVICE"
 
 # Stage rejects a non-flat upload staging tree.

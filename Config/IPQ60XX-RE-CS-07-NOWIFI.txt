@@ -27,4 +27,3 @@ CONFIG_PACKAGE_gre=y
 CONFIG_PACKAGE_luci-proto-gre=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_luci-app-wrtbak=y
-CONFIG_PACKAGE_vm103-failover=y

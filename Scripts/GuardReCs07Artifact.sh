@@ -11,7 +11,7 @@ die() {
 validate_device() {
 	case "$1" in
 		jdcloud_re-cs-07)
-			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak vm103-failover)
+			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak)
 			;;
 		jdcloud_re-cs-02)
 			required_packages=(luci-app-wrtbak)
