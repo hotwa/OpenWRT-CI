@@ -1,0 +1,17 @@
+# Dependabot 自动更新 GitHub Actions 引用（SHA pin 方式）
+# - 每两周检查一次 actions 更新
+# - 提交 PR 时同步更新 commit SHA 与行内版本注释
+# - CI 跑通后人工合并；缓存类 action 升级失败时 job 不中断（restore miss 不 fail、save 失败为 warning）
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"
