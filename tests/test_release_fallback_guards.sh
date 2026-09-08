@@ -41,13 +41,13 @@ if grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW"; then
   exit 1
 fi
 
-grep -q 'uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the SHA-pinned Node24 cache v5 action"
+grep -q 'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0' "$WORKFLOW" || {
+  echo "WRT-CORE.yml does not use the SHA-pinned Node24 cache v6.1.0 action"
   exit 1
 }
 
-if grep -q 'uses: actions/cache@v4' "$WORKFLOW"; then
-  echo "WRT-CORE.yml still uses cache@v4, which targets Node.js 20"
+if grep -Eq 'uses:[[:space:]]*actions/cache@(v4|v5)\b' "$WORKFLOW"; then
+  echo "WRT-CORE.yml still uses an unpinned/legacy cache action (v4/v5)"
   exit 1
 fi
 

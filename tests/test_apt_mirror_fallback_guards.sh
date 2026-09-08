@@ -26,10 +26,12 @@ grep -q 'reset_ubuntu_mirrors' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'retry_cmd 3 15 run_apt full-upgrade' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not retry apt full-upgrade"
+# The duplicate full-upgrade was intentionally removed (single upgrade path);
+# guard against it silently returning.
+if grep -q 'run_apt full-upgrade' "$WORKFLOW"; then
+  echo "WRT-CORE.yml must not run a duplicate apt full-upgrade"
   exit 1
-}
+fi
 
 grep -q 'retry_cmd 3 15 run_apt install dos2unix libfuse-dev' "$WORKFLOW" || {
   echo "WRT-CORE.yml does not retry apt package installation"
