@@ -87,7 +87,17 @@ else
 fi
 
 RELEASE_URL="$FETCH_OUT_DIR/etc/opencode/release-url"
-if [ -f "$RELEASE_URL" ]; then
+# re-ss-01 (896MB RAM) intentionally disables opencode at build time:
+# fetch_opencode_runtime.sh drops release metadata and exits 0, so the
+# release-url file must NOT exist on that device.  All other devices
+# (re-cs-02 / re-cs-07) provision opencode and must create it.
+if [ "${WRT_EXPECTED_DEVICE:-}" = "jdcloud_re-ss-01" ]; then
+	if [ ! -f "$RELEASE_URL" ]; then
+		pass "release-url absent on re-ss-01 (opencode disabled by design)"
+	else
+		fail "release-url absent on re-ss-01 (opencode disabled by design)"
+	fi
+elif [ -f "$RELEASE_URL" ]; then
 	pass "release-url file created"
 
 	# Check all 4 keys exist.
