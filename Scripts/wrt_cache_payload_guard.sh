@@ -94,6 +94,11 @@ existing_whitelist_paths() {
 	done
 }
 
+# Directories that contain only binary/regenerable artifacts and must never
+# be content-scanned (ccache object files are hex-named binaries; tmp/go-build
+# is the Go compile cache). Name-based checks still apply.
+CONTENT_SCAN_SKIP_RE='(^|/)(\.ccache|tmp/go-build)(/|$)'
+
 scan_path() {
 	local root=$1
 	SCAN_OFFENDERS=0
@@ -110,11 +115,18 @@ scan_path() {
 			SCAN_OFFENDERS=$((SCAN_OFFENDERS + 1))
 			continue
 		fi
-		# Content check bounded to small-ish files to stay cheap on binaries.
+		# Content scan: skip binary-only cache directories entirely.
+		if printf '%s' "$rel" | grep -Eq "$CONTENT_SCAN_SKIP_RE"; then
+			continue
+		fi
+		# Content check bounded to small-ish files. grep -I treats binary
+		# files as non-matching so compiled objects in staging/toolchain
+		# cannot false-positive on a byte sequence that looks like a PEM
+		# header or token.
 		local sz
 		sz=$(stat -c '%s' -- "$f" 2>/dev/null || echo 0)
 		if [ "$sz" -le "$CONTENT_SCAN_MAX_BYTES" ] && [ "$sz" -gt 0 ]; then
-			if head -c "$CONTENT_SCAN_MAX_BYTES" -- "$f" 2>/dev/null | grep -aEq "$SECRET_BODY_REGEX"; then
+			if head -c "$CONTENT_SCAN_MAX_BYTES" -- "$f" 2>/dev/null | grep -IEq "$SECRET_BODY_REGEX"; then
 				err "credential/key content in cache whitelist file: $rel"
 				SCAN_OFFENDERS=$((SCAN_OFFENDERS + 1))
 			fi

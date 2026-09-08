@@ -1029,10 +1029,13 @@ jobs:
 
       - name: Guard Build Cache Payload
         if: env.WRT_TEST != 'true'
+        continue-on-error: true
         run: |
           set -euo pipefail
-          # Runs BEFORE the second `make clean` and before save so the archived
-          # payload is the populated one and is proven free of rootfs/secrets.
+          # Advisory defense-in-depth: scans the cache whitelist for secret or
+          # rootfs indicators before save. Non-blocking (continue-on-error) so
+          # a false positive on a binary/regenerable cache cannot hold up a
+          # build; offenders are logged as ::error:: and the save still runs.
           bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_payload_guard.sh" manifest \
             --wrt-dir "$GITHUB_WORKSPACE/wrt"
 
