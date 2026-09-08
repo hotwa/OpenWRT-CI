@@ -34,6 +34,17 @@ METADATA_FILE="$METADATA_DIR/release-url"
 log_info() { echo "INFO: $*"; }
 warn()     { echo "WARN: $*" >&2; }
 
+# re-ss-01 has only ~896MB RAM; opencode's runtime frequently exceeds that and
+# gets OOM-killed, so opencode is intentionally NOT provisioned on it.
+# WRT_EXPECTED_DEVICE is exported by WRT-CORE.yml (env), so no workflow edit
+# is required here.  On re-ss-01 we drop any release metadata so every
+# device-side opencode component sees "not enabled".
+if [ "${WRT_EXPECTED_DEVICE:-}" = "jdcloud_re-ss-01" ]; then
+	log_info "WRT_EXPECTED_DEVICE=jdcloud_re-ss-01: opencode disabled (896MB RAM device)"
+	rm -rf "$TARGET_FILES/etc/opencode"
+	exit 0
+fi
+
 # Convert an npm integrity string ("sha512-<base64>") to lowercase hex.
 # Falls back to openssl if xxd/base64+od pipeline is unavailable.
 integrity_to_hex() {

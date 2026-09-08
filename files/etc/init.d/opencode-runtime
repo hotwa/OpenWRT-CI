@@ -8,6 +8,14 @@ START=92
 STOP=10
 
 start() {
+	# opencode is intentionally not provisioned on low-memory devices
+	# (re-ss-01, 896MB RAM): firmware built for that board ships without
+	# /etc/opencode/release-url, so every opencode component is a no-op here.
+	[ -f /etc/opencode/release-url ] || {
+		logger -t opencode-runtime "opencode not enabled on this device (no release metadata)"
+		return 0
+	}
+
 	# Kick off the first-boot install in the background.  The 185 MB download
 	# can take several minutes; we must not block the boot sequence.
 	if [ -x /usr/sbin/opencode-runtime ]; then

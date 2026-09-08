@@ -214,24 +214,25 @@ start() {
 
 	# opencode config migration (same policy as the opencode-runtime init):
 	# seed /data config from firmware default and upgrade pre-commandcode
-	# configs once, with timestamped backups.
-	mkdir -p "$DATA_ROOT/opencode/config" "$DATA_ROOT/opencode/cache" \
-		"$DATA_ROOT/opencode/data" "$DATA_ROOT/opencode/state" 2>/dev/null || true
-	if [ ! -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
-		[ -f "$FIRMWARE_ETC/opencode/opencode.json" ]; then
-		cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null && \
-			chmod 0644 "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
-	fi
-	if [ -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
-		[ -f "$FIRMWARE_ETC/opencode/opencode.json" ] && \
-		! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; then
-		cp -p "$DATA_ROOT/opencode/config/opencode.json" \
-			"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)" 2>/dev/null || true
-		cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
-	fi
-	mkdir -p "$ROOT_HOME/.config" 2>/dev/null || true
-	if [ ! -e "$ROOT_HOME/.config/opencode" ] || [ -L "$ROOT_HOME/.config/opencode" ]; then
-		ln -sfn "$DATA_ROOT/opencode/config" "$ROOT_HOME/.config/opencode" 2>/dev/null || true
+	# configs once, with timestamped backups.  Skipped entirely on low-memory
+	# builds (re-ss-01) that ship no /etc/opencode/opencode.json.
+	if [ -f "$FIRMWARE_ETC/opencode/opencode.json" ]; then
+		mkdir -p "$DATA_ROOT/opencode/config" "$DATA_ROOT/opencode/cache" \
+			"$DATA_ROOT/opencode/data" "$DATA_ROOT/opencode/state" 2>/dev/null || true
+		if [ ! -f "$DATA_ROOT/opencode/config/opencode.json" ]; then
+			cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null && \
+				chmod 0644 "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+		fi
+		if [ -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
+			! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; then
+			cp -p "$DATA_ROOT/opencode/config/opencode.json" \
+				"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)" 2>/dev/null || true
+			cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+		fi
+		mkdir -p "$ROOT_HOME/.config" 2>/dev/null || true
+		if [ ! -e "$ROOT_HOME/.config/opencode" ] || [ -L "$ROOT_HOME/.config/opencode" ]; then
+			ln -sfn "$DATA_ROOT/opencode/config" "$ROOT_HOME/.config/opencode" 2>/dev/null || true
+		fi
 	fi
 
 	# Home symlinks for the daemons and CLIs.
