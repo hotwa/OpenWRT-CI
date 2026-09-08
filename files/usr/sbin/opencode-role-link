@@ -1,0 +1,55 @@
+#!/bin/sh
+# Bind opencode's user-level AGENTS.md to the same dynamic role card that
+# Pi appends through APPEND_SYSTEM.md and CommandCode links. An existing
+# regular AGENTS.md is kept.
+#
+# opencode is only provisioned on >=2GB devices (re-cs-02 / re-cs-07);
+# low-memory builds (re-ss-01) ship no /data/opencode/config, in which case
+# this is a silent no-op so callers are never interrupted.
+
+set -eu
+
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-/data/opencode/config}"
+ROLE_CARD="${OPENCODE_ROLE_CARD:-/data/multica/openwrt-agent.md}"
+AGENTS_FILE="$OPENCODE_CONFIG_DIR/AGENTS.md"
+
+log_message() {
+	logger -t opencode-role-link -- "$*" 2>/dev/null || true
+	printf '%s\n' "opencode-role-link: $*" >&2
+}
+
+main() {
+	[ -d "$OPENCODE_CONFIG_DIR" ] || {
+		log_message "opencode config dir unavailable (opencode not provisioned on this device): $OPENCODE_CONFIG_DIR"
+		return 0
+	}
+	[ -r "$ROLE_CARD" ] || {
+		log_message "role card is unavailable: $ROLE_CARD"
+		return 0
+	}
+
+	if [ -L "$AGENTS_FILE" ]; then
+		[ "$(readlink "$AGENTS_FILE")" = "$ROLE_CARD" ] || {
+			log_message "leaving existing AGENTS.md symlink unchanged: $AGENTS_FILE"
+			return 0
+		}
+		return 0
+	fi
+	if [ -e "$AGENTS_FILE" ]; then
+		log_message "leaving existing regular AGENTS.md unchanged: $AGENTS_FILE"
+		return 0
+	fi
+
+	temporary="${AGENTS_FILE}.new.$$"
+	ln -s "$ROLE_CARD" "$temporary" || return 1
+	mv "$temporary" "$AGENTS_FILE" || {
+		rm -f "$temporary"
+		return 1
+	}
+	[ -L "$AGENTS_FILE" ] && [ "$(readlink "$AGENTS_FILE")" = "$ROLE_CARD" ] || {
+		log_message "failed to set opencode AGENTS.md link"
+		return 1
+	}
+}
+
+main "$@"
