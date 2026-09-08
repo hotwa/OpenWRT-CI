@@ -137,7 +137,19 @@ start_service() {
 
 	device_name="$(derive_device_name "$(cfg device_name '')")"
 	runtime_name="$(cfg runtime_name 'Pi on OpenWrt')"
-	runtime_provider="$(cfg runtime_provider 'pi')"
+	# runtime_provider default by build capability: builds that ship opencode
+	# release metadata (/etc/opencode/release-url, re-cs-02/re-cs-07 >=2GB) run
+	# Multica tasks through opencode (CommandCode relay); low-memory builds
+	# (re-ss-01, no release-url) fall back to pi (whose default provider is
+	# commandcode).  An explicitly configured UCI value always wins.
+	runtime_provider="$(cfg runtime_provider '')"
+	if [ -z "$runtime_provider" ]; then
+		if [ -f /etc/opencode/release-url ]; then
+			runtime_provider="opencode"
+		else
+			runtime_provider="pi"
+		fi
+	fi
 	workspaces_root="$(cfg workspaces_root '/data/multica/workspaces')"
 	max_tasks="$(cfg max_concurrent_tasks '1')"
 	poll_interval="$(cfg poll_interval '30s')"

@@ -243,6 +243,20 @@ start() {
 	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || \
 		log_warn "cannot link /root/.commandcode"
 
+	# Multica runtime_provider migration: sysupgrade keeps the previous UCI
+	# value (ebd46aa-era builds left runtime_provider='pi' via the init
+	# default), which would otherwise override the build-time per-device
+	# injection.  On opencode-capable builds (release-url present, re-cs-02/
+	# re-cs-07) migrate a stale 'pi' to 'opencode'; low-memory builds
+	# (re-ss-01, no release-url) keep 'pi'.  Idempotent.
+	if [ -f /etc/opencode/release-url ] 2>/dev/null; then
+		if [ "$(uci -q get multica.main.runtime_provider)" = "pi" ]; then
+			uci set multica.main.runtime_provider='opencode'
+			uci commit multica
+			log "migrated multica.main.runtime_provider pi -> opencode (opencode-capable build)"
+		fi
+	fi
+
 	# Pi's appended system prompt link (idempotent, provided by agent-runtime).
 	if [ -x /usr/sbin/pi-append-system-link ]; then
 		PI_AGENT_DIR="$DATA_ROOT/pi/agent" PI_ROLE_CARD="$ROOT_HOME/.multica/openwrt-agent.md" \
