@@ -198,44 +198,17 @@ function install_dependencies() {
 		go env -w GOSUMDB=sum.golang.org
 	fi
 
-	if TMP_DIR="$(mktemp -d)"; then
-		pushd "$TMP_DIR"
-	else
-		__error_msg "Failed to create a tmp directory."
-		exit 1
-	fi
-
-	UPX_REV="5.0.2"
-	curl -fLO "https://github.com/upx/upx/releases/download/v${UPX_REV}/upx-$UPX_REV-amd64_linux.tar.xz"
-	tar -Jxf "upx-$UPX_REV-amd64_linux.tar.xz"
-	rm -rf "/usr/bin/upx" "/usr/bin/upx-ucl"
-	cp -fp "upx-$UPX_REV-amd64_linux/upx" "/usr/bin/upx-ucl"
-	chmod 0755 "/usr/bin/upx-ucl"
-	ln -svf "/usr/bin/upx-ucl" "/usr/bin/upx"
-
-	curl -fLO "https://raw.githubusercontent.com/openwrt/openwrt/d06b68fe83ebb969baa64335779045d80bc41f89/tools/padjffs2/src/padjffs2.c"
-	gcc -Wall -Werror -o "padjffs2" "padjffs2.c"
-	strip "padjffs2"
-	rm -rf "padjffs2.c" "/usr/bin/padjffs2"
-	cp -fp "padjffs2" "/usr/bin/padjffs2"
-
-	git clone --filter=blob:none --no-checkout "https://github.com/openwrt/luci.git" "po2lmo"
-	pushd "po2lmo"
-	git config core.sparseCheckout true
-	echo "modules/luci-base/src" >> ".git/info/sparse-checkout"
-	git checkout
-	cd "modules/luci-base/src"
-	make po2lmo
-	strip "po2lmo"
-	rm -rf "/usr/bin/po2lmo"
-	cp -fp "po2lmo" "/usr/bin/po2lmo"
-	popd
-
-	curl -fL "https://build-scripts.immortalwrt.org/modify-firmware.sh" -o "/usr/bin/modify-firmware"
-	chmod 0755 "/usr/bin/modify-firmware"
-
-	popd
-	rm -rf "$TMP_DIR"
+	# NOTE: previous versions of this script downloaded UPX (github.com/upx),
+	# padjffs2.c (raw.githubusercontent.com/openwrt), a luci po2lmo sparse
+	# clone (github.com/openwrt/luci) and modify-firmware
+	# (build-scripts.immortalwrt.org) into /usr/bin. None of these are
+	# referenced anywhere else in this repository (WRT-CORE.yml and all
+	# Scripts/*.sh), and the OpenWrt build tree builds its own copies into
+	# staging_dir/host/bin (tools/padjffs2, feeds luci po2lmo). On GitHub
+	# hosted runners those third-party fetches were the unbounded network
+	# calls that wedged "Initialization Environment" for ~1h15m until the
+	# runner was declared lost; they are removed so this step only talks to
+	# the Ubuntu archive (already bounded via the apt() shadow below).
 
 	set +x
 	__success_msg "All dependencies have been installed."
