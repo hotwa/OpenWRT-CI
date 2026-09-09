@@ -41,12 +41,15 @@ if grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW"; then
   exit 1
 fi
 
-grep -q 'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the SHA-pinned Node24 cache v6.1.0 action"
+# The cache action may be used as a single combined step (actions/cache@) or
+# split into explicit restore/save sub-actions (actions/cache/restore@ and
+# actions/cache/save@). At least one SHA-pinned v6.1.0 cache action must exist.
+if ! grep -Eq 'uses:[[:space:]]*actions/cache(/(restore|save))?@55cc8345863c7cc4c66a329aec7e433d2d1c52a9[[:space:]]*# v6.1.0' "$WORKFLOW"; then
+  echo "WRT-CORE.yml does not use the SHA-pinned Node24 cache v6.1.0 action (combined or split restore/save)"
   exit 1
-}
+fi
 
-if grep -Eq 'uses:[[:space:]]*actions/cache@(v4|v5)\b' "$WORKFLOW"; then
+if grep -Eq 'uses:[[:space:]]*actions/cache(/(restore|save))?@(v4|v5)\b' "$WORKFLOW"; then
   echo "WRT-CORE.yml still uses an unpinned/legacy cache action (v4/v5)"
   exit 1
 fi
@@ -101,14 +104,12 @@ grep -q 'for asset in "${assets\[@\]}"; do' "$WORKFLOW" || {
   exit 1
 }
 
-grep -Fq 'gh cache delete "$WRT_CACHE_KEY" || \' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not make scoped cache deletion non-blocking"
+# The split restore/save architecture uses a unique per-run save key, so it
+# never needs to delete a cache entry before saving. Assert that the old
+# delete-before-save pattern is gone.
+if grep -Eq 'gh[[:space:]]+cache[[:space:]]+delete' "$WORKFLOW"; then
+  echo "WRT-CORE.yml still deletes caches before save; the split restore/save architecture must not"
   exit 1
-}
-
-grep -Fq 'INFO: no existing cache entry to refresh for $WRT_CACHE_KEY' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not report a non-blocking scoped cache deletion failure"
-  exit 1
-}
+fi
 
 echo "release fallback guards test passed"

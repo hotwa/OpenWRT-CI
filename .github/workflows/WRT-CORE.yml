@@ -244,6 +244,14 @@ env:
   WRT_PRIVATE_BUILD: 'false'
   WRT_PRIVATE_BUILD_REASON: ''
   WRT_ARTIFACT_PRIVACY_SUFFIX: public
+  # Build-cache governance knobs. Validated by Scripts/wrt_cache_reclaim.sh.
+  # Caches are retained while free space is above the low-water mark; below it
+  # reclamation is ordered and bounded and never touches staging/build/dl/tools.
+  WRT_CACHE_LOW_WATER_GB: '12'
+  WRT_CACHE_TARGET_FREE_GB: '20'
+  WRT_CCACHE_MAX_SIZE: '5G'
+  WRT_GO_BUILD_MAX: '2G'
+  WRT_GOMOD_MAX: '3G'
 
 jobs:
   core:
@@ -452,71 +460,133 @@ jobs:
       - name: Compute Build Cache Identity
         run: |
           set -euo pipefail
+          . "$GITHUB_WORKSPACE/Scripts/wrt_cache_lib.sh"
+
           device_config="$GITHUB_WORKSPACE/Config/${WRT_CONFIG}.txt"
-          cache_inputs=(
-            "$GITHUB_WORKSPACE/repo_flag"
-            "$GITHUB_WORKSPACE/Config/GENERAL.txt"
-            "$device_config"
-            "$GITHUB_WORKSPACE/Scripts/Packages.sh"
-            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
-            "$GITHUB_WORKSPACE/Scripts/Settings.sh"
-          )
+          # The manifest pairs a FIXED logical label with each input's content
+          # digest. Absolute $GITHUB_WORKSPACE / $RUNNER_TEMP paths never enter
+          # the hash, so identical inputs yield the same scope in any checkout
+          # directory. The compatibility scope never rotates by date; run
+          # uniqueness is appended only to the save key.
+          manifest="$RUNNER_TEMP/wrt-cache-manifest"
+          : > "$manifest"
 
-          printf '%s\n' "${WRT_PACKAGE:-}" > "$RUNNER_TEMP/wrt-package-input"
-          printf '%s\n' "${WRT_CONTAINER_RUNTIME_TEST:-false}" > "$RUNNER_TEMP/container-runtime-test-input"
-          printf '%s\n' "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}" > "$RUNNER_TEMP/container-runtime-mode-input"
-          printf '%s\n' "${WRT_CONTAINER_RUNTIME_VERSION:-latest}" > "$RUNNER_TEMP/container-runtime-version-input"
-          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
-            (
-              cd "$GITHUB_WORKSPACE/files-container-runtime-test"
-              find . -type f -print0 | sort -z | while IFS= read -r -d '' file; do
-                sha256sum "$file"
-              done
-            ) > "$RUNNER_TEMP/container-runtime-overlay-input"
-          else
-            printf '%s\n' disabled > "$RUNNER_TEMP/container-runtime-overlay-input"
-          fi
-          cache_inputs+=(
-            "$RUNNER_TEMP/wrt-package-input"
-            "$RUNNER_TEMP/container-runtime-test-input"
-            "$RUNNER_TEMP/container-runtime-mode-input"
-            "$RUNNER_TEMP/container-runtime-version-input"
-            "$RUNNER_TEMP/container-runtime-overlay-input"
-          )
-
-          for cache_input in "${cache_inputs[@]}"; do
-            [ -s "$cache_input" ] || {
-              echo "ERROR: cache identity input is missing: $cache_input" >&2
+          # Required repository/config/script files: fail closed if missing.
+          add_file() {
+            local label=$1 path=$2
+            [ -s "$path" ] || {
+              echo "ERROR: required cache identity input missing/empty: $label ($path)" >&2
               exit 1
             }
-          done
-
-          cache_scope="$(sha256sum "${cache_inputs[@]}" | sha256sum | awk '{print $1}')" || {
-            echo "ERROR: failed to compute the build cache identity" >&2
-            exit 1
+            printf '%s\t%s\n' "$label" "$(wrt_cache_file_digest "$path")" >> "$manifest"
           }
-          cache_key="${WRT_ARCH}-${cache_scope}"
-          echo "WRT_CACHE_KEY=$cache_key" >> "$GITHUB_ENV"
-          echo "Build cache identity: $cache_key"
+          # Normalized scalar dimensions: always represented, even when empty,
+          # so a dimension can never silently disappear into a broad key.
+          add_value() {
+            local label=$1 value=$2
+            local digest
+            digest="$(printf '%s' "$value" | sha256sum | awk '{print $1}')"
+            printf '%s\t%s\n' "$label" "$digest" >> "$manifest"
+          }
 
-      - name: Cache Dependencies
-        id: cache_dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+          add_file source                       "$GITHUB_WORKSPACE/repo_flag"
+          add_file config/general               "$GITHUB_WORKSPACE/Config/GENERAL.txt"
+          add_file "config/device/${WRT_CONFIG}" "$device_config"
+          add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+          add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
+          add_value input/package               "${WRT_PACKAGE:-}"
+          add_value container/test              "${WRT_CONTAINER_RUNTIME_TEST:-false}"
+          add_value container/mode              "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}"
+          add_value container/version           "${WRT_CONTAINER_RUNTIME_VERSION:-latest}"
+          if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
+            overlay_digest="$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/files-container-runtime-test")"
+          else
+            overlay_digest="$(printf '%s' disabled | sha256sum | awk '{print $1}')"
+          fi
+          printf '%s\t%s\n' container/overlay "$overlay_digest" >> "$manifest"
+
+          [ -s "$manifest" ] || { echo "ERROR: empty cache identity manifest" >&2; exit 1; }
+          cache_scope="$(wrt_cache_scope_from_manifest < "$manifest")"
+
+          echo "---- build cache identity manifest (fixed label + content digest) ----"
+          cat "$manifest"
+          echo "--------------------------------------------------------------------"
+
+          # WRT_ARCH is the device/job identity. run_id/run_attempt make the
+          # save key unique per run; the restore prefix keeps the full scope as
+          # an explicit "-run" boundary so it can never match another scope.
+          mapfile -t cache_keys < <(
+            wrt_cache_build_keys "$WRT_ARCH" "$cache_scope" \
+              "$GITHUB_RUN_ID" "${GITHUB_RUN_ATTEMPT:-1}"
+          )
+          echo "WRT_CACHE_SCOPE=${cache_keys[0]}" >> "$GITHUB_ENV"
+          echo "WRT_CACHE_RESTORE_PREFIX=${cache_keys[1]}" >> "$GITHUB_ENV"
+          echo "WRT_CACHE_SAVE_KEY=${cache_keys[2]}" >> "$GITHUB_ENV"
+          echo "Compatibility scope : ${cache_keys[0]}"
+          echo "Restore prefix       : ${cache_keys[1]}  (same full scope only)"
+          echo "Per-run save key     : ${cache_keys[2]}"
+
+      - name: Restore Build Cache
+        id: cache_restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          # Keep this allow-list identical to Scripts/wrt_cache_payload_guard.sh.
+          # Only regenerable caches and host/toolchain staging are cached;
+          # staging_dir/target-* (staged rootfs), build_dir, files and bin are
+          # intentionally excluded.
           path: |
             ./wrt/.ccache
-            ./wrt/staging_dir
+            ./wrt/staging_dir/host
+            ./wrt/staging_dir/toolchain-*
             ./wrt/dl/go-mod-cache
             ./wrt/tmp/go-build
-          key: ${{ env.WRT_CACHE_KEY }}
+          # Unique per run, so an exact primary hit is the exception; a normal
+          # warm build recovers the newest prior generation via restore-keys.
+          key: ${{ env.WRT_CACHE_SAVE_KEY }}
+          # Bounded prefix: it embeds the full compatibility scope hash, so a
+          # different source SHA/config/device/input can never be restored.
+          restore-keys: ${{ env.WRT_CACHE_RESTORE_PREFIX }}
+
+      - name: Log Cache Restore Result
+        env:
+          CACHE_HIT: ${{ steps.cache_restore.outputs.cache-hit }}
+          CACHE_RESTORED_KEY: ${{ steps.cache_restore.outputs.cache-primary-key }}
+          SAVE_KEY: ${{ env.WRT_CACHE_SAVE_KEY }}
+          RESTORE_PREFIX: ${{ env.WRT_CACHE_RESTORE_PREFIX }}
+        run: |
+          set -euo pipefail
+          echo "========cache restore result========"
+          echo "unique save key : $SAVE_KEY"
+          echo "restore prefix  : $RESTORE_PREFIX"
+          if [ "$CACHE_HIT" = "true" ]; then
+            echo "restore state   : EXACT primary-key hit ($CACHE_RESTORED_KEY)"
+          elif [ -n "$CACHE_RESTORED_KEY" ]; then
+            echo "restore state   : PREFIX recovery of prior generation ($CACHE_RESTORED_KEY)"
+            case "$CACHE_RESTORED_KEY" in
+              "$RESTORE_PREFIX"*) echo "recovered key stays inside the bounded same-scope prefix" ;;
+              *) echo "ERROR: recovered key escapes the bounded restore prefix" >&2; exit 1 ;;
+            esac
+          else
+            echo "restore state   : MISS (cold build for this compatibility scope)"
+          fi
+          if [ -d ./wrt ]; then
+            df -h ./wrt || true
+            du -sh ./wrt/.ccache ./wrt/staging_dir/host ./wrt/staging_dir/toolchain-* \
+              ./wrt/dl/go-mod-cache ./wrt/tmp/go-build 2>/dev/null || true
+          fi
 
       - name: Refresh the cache
         run: |
+          # Refresh mtimes of restored host/toolchain stamp files so OpenWrt
+          # does not treat them as stale right after extraction. This only
+          # updates timestamps; it does NOT prevent GitHub-side cache eviction
+          # (service retention is unrelated to mtime) and never touches target/*.
           if [ -d "./wrt/staging_dir" ]; then
             find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
-                find "$dir" -type f -exec touch {} +
+              find "$dir" -type f -exec touch {} +
             done
-          fi            
+          fi
 
 
 
@@ -527,6 +597,25 @@ jobs:
 
           retry_cmd 5 15 ./scripts/feeds update -a
           retry_cmd 5 15 ./scripts/feeds install -a
+
+      - name: Record Go Cache Path Evidence
+        run: |
+          # Evidence only: do NOT blindly override the feed's Go cache rules.
+          # OpenWrt cross builds pin GOCACHE/GOMODCACHE in the golang feed
+          # (often with GOENV=off), which can differ from the host `go env`.
+          set -uo pipefail
+          echo "---- host go env (NOT authoritative for OpenWrt cross builds) ----"
+          go env GOCACHE GOMODCACHE GOENV 2>/dev/null || echo "host go unavailable"
+          echo "---- OpenWrt golang feed build rules ----"
+          golang_values="$(find ./wrt/feeds -path '*lang/golang/golang-values.mk' 2>/dev/null | head -n 1 || true)"
+          if [ -n "$golang_values" ] && [ -f "$golang_values" ]; then
+            echo "rules file: $golang_values"
+            grep -nE 'GO_CACHE|GO_MOD_CACHE|GOCACHE|GOMODCACHE|GOENV' "$golang_values" || \
+              echo "WARN: no GOCACHE/GOMODCACHE/GOENV token found in $golang_values"
+          else
+            echo "WARN: feeds lang/golang/golang-values.mk not found; cross-build GOCACHE/GOMODCACHE not verified from source"
+          fi
+          echo "Cached payload paths (expected: GOCACHE=./wrt/tmp/go-build GOMODCACHE=./wrt/dl/go-mod-cache)"
 
       - name: Setup Node.js for Agent Runtime Packaging
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -874,32 +963,40 @@ jobs:
 
       - name: Reserve Disk Space Before Compile
         if: env.WRT_TEST != 'true'
+        env:
+          WRT_CACHE_LOW_WATER_GB: ${{ env.WRT_CACHE_LOW_WATER_GB }}
+          WRT_CACHE_TARGET_FREE_GB: ${{ env.WRT_CACHE_TARGET_FREE_GB }}
+          WRT_CCACHE_MAX_SIZE: ${{ env.WRT_CCACHE_MAX_SIZE }}
+          WRT_GO_BUILD_MAX: ${{ env.WRT_GO_BUILD_MAX }}
+          WRT_GOMOD_MAX: ${{ env.WRT_GOMOD_MAX }}
         run: |
-          if command -v sudo >/dev/null 2>&1; then
-            sudo apt-get clean 2>/dev/null || true
-            sudo rm -rf /var/lib/apt/lists/* 2>/dev/null || true
-            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" 2>/dev/null || true
-          fi
+          set -euo pipefail
+          # The early "Free Disk Space" action already reclaims hosted-only
+          # bulk before Go/Node are installed. Here we never delete the active
+          # AGENT_TOOLSDIRECTORY and never unconditionally clear ccache/Go.
+          self_hosted=false
+          case '${{ inputs.RUNNER_LABELS }}' in
+            *self-hosted*) self_hosted=true ;;
+          esac
 
-          cd ./wrt/
-
+          reserve_started_at=$(date +%s)
           echo "========disk before reserve========"
-          df -h .
-          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+          df -h ./wrt || true
 
-          # Reclaim git metadata space from feeds
-          find ./feeds -name ".git" -exec rm -rf {} + 2>/dev/null || true
-
-          if command -v ccache >/dev/null 2>&1; then
-            CCACHE_DIR="$PWD/.ccache" ccache -s || true
-            CCACHE_DIR="$PWD/.ccache" ccache -C || true
-          fi
-
-          rm -rf tmp/go-build tmp/ccache 2>/dev/null || true
+          bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_reclaim.sh" discover-ccache \
+            --wrt-dir "$GITHUB_WORKSPACE/wrt"
+          bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_reclaim.sh" reclaim \
+            --wrt-dir "$GITHUB_WORKSPACE/wrt" \
+            --self-hosted "$self_hosted" \
+            --low-water-gb "$WRT_CACHE_LOW_WATER_GB" \
+            --target-free-gb "$WRT_CACHE_TARGET_FREE_GB" \
+            --ccache-max "$WRT_CCACHE_MAX_SIZE" \
+            --go-build-max "$WRT_GO_BUILD_MAX" \
+            --gomod-max "$WRT_GOMOD_MAX"
 
           echo "========disk after reserve========"
-          df -h .
-          du -sh .ccache dl tmp staging_dir build_dir 2>/dev/null || true
+          df -h ./wrt || true
+          echo "Reserve disk stage elapsed: $(( $(date +%s) - reserve_started_at ))s"
 
       - name: Compile Firmware
         id: compile_firmware
@@ -907,23 +1004,76 @@ jobs:
         run: |
           cd ./wrt/
 
+          # Time the compile without swallowing the real exit code. The exact
+          # parallel-then-serial fallback is preserved.
+          compile_started_at=$(date +%s)
+          set +e
           make -j$(nproc) || make -j1 V=s
+          compile_rc=$?
+          set -e
+          echo "Compile stage elapsed: $(( $(date +%s) - compile_started_at ))s (rc=$compile_rc)"
+          if [ "$compile_rc" -ne 0 ]; then
+            exit "$compile_rc"
+          fi
 
           "$GITHUB_WORKSPACE/Scripts/GuardAthenaLedArtifact.sh" \
             "$PWD/.config" "$PWD/bin/targets"
 
-      - name: Delete Old Cache
+      - name: Record Compile Cache Stats
+        if: env.WRT_TEST != 'true'
         run: |
-          # Cache entries are immutable. Remove only this completed build's
-          # identity so actions/cache saves its refreshed ccache/staging data
-          # in the post step. Do not evict other device profiles from a matrix.
-          gh cache delete "$WRT_CACHE_KEY" || \
-            echo "INFO: no existing cache entry to refresh for $WRT_CACHE_KEY"
+          set -uo pipefail
+          echo "========post-compile cache stats========"
+          bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_reclaim.sh" stats \
+            --wrt-dir "$GITHUB_WORKSPACE/wrt"
 
-          # 输出缓存状态
-          echo "========cache status========"
-          echo "ccache: $(du -sh ./wrt/.ccache | cut -f 1)"
-          echo "staging: $(du -sh ./wrt/staging_dir | cut -f 1)"
+      - name: Guard Build Cache Payload
+        if: env.WRT_TEST != 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Advisory defense-in-depth: scans the cache whitelist for secret or
+          # rootfs indicators before save. Non-blocking (continue-on-error) so
+          # a false positive on a binary/regenerable cache cannot hold up a
+          # build; offenders are logged as ::error:: and the save still runs.
+          bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_payload_guard.sh" manifest \
+            --wrt-dir "$GITHUB_WORKSPACE/wrt"
+
+      - name: Save Build Cache
+        # Publish a new generation only for a successful, non-test, non-cancelled
+        # build. The key is unique per run/attempt, so this never overwrites a
+        # prior generation and no entry is deleted to make room.
+        if: ${{ !cancelled() && steps.compile_firmware.outcome == 'success' && env.WRT_TEST != 'true' }}
+        id: cache_save
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Identical allow-list to the restore step / payload guard.
+          path: |
+            ./wrt/.ccache
+            ./wrt/staging_dir/host
+            ./wrt/staging_dir/toolchain-*
+            ./wrt/dl/go-mod-cache
+            ./wrt/tmp/go-build
+          key: ${{ env.WRT_CACHE_SAVE_KEY }}
+
+      - name: Report Cache Save Result
+        if: ${{ !cancelled() && env.WRT_TEST != 'true' }}
+        env:
+          SAVE_OUTCOME: ${{ steps.cache_save.outcome }}
+          SAVE_KEY: ${{ env.WRT_CACHE_SAVE_KEY }}
+        run: |
+          set -uo pipefail
+          echo "========cache save result========"
+          echo "save key: $SAVE_KEY"
+          du -sh ./wrt/.ccache ./wrt/staging_dir/host ./wrt/staging_dir/toolchain-* \
+            ./wrt/dl/go-mod-cache ./wrt/tmp/go-build 2>/dev/null || true
+          echo "actions/cache/save step outcome: ${SAVE_OUTCOME:-<not-run>}"
+          if [ "${SAVE_OUTCOME:-}" = "success" ]; then
+            echo "save step finished; confirm the action log line 'Cache saved' and its size for the actual upload."
+            echo "NOTE: a green save step is necessary but not proof of a usable remote cache entry."
+          else
+            echo "::warning::no new cache generation was reliably published (outcome=${SAVE_OUTCOME:-<not-run>}); the previously restored cache was left untouched (nothing deleted)."
 
       - name: Machine Information
         run: |
