@@ -51,12 +51,16 @@ grep -Fq 'workspace_id is not configured' "$INIT_SCRIPT"
 grep -Fq "max_concurrent_tasks '1'" "$CONFIG_FILE"
 grep -Fq 'runtime_provider '\''opencode'\''' "$CONFIG_FILE"
 grep -Fq "procd_open_instance bootstrap" "$INIT_SCRIPT"
-grep -Fq 'multica-device-profile write' "$INIT_SCRIPT"
+grep -Fq '/usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
 grep -Fq 'pi-append-system-link' "$INIT_SCRIPT"
-grep -Fq 'PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin"' "$INIT_SCRIPT" || {
+grep -Fq 'agent_path="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' "$INIT_SCRIPT" || {
 	echo "the multica daemon must export a PATH that prefers agent-runtime generations and node upgrades over the read-only baked /opt/node/bin"
 	exit 1
 }
+grep -Fq 'PATH="$agent_path"' "$INIT_SCRIPT"
+grep -Fq 'MULTICA_WORKSPACES_ROOT="$workspaces_root" /usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
+grep -Fq 'cd "$MULTICA_WORKSPACES_ROOT" || exit 1; exec "$@"' "$INIT_SCRIPT"
+grep -Fq '/data/opencode/config/opencode' "$INIT_SCRIPT"
 grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
 grep -Fq "matches\" -eq 1" "$BOOTSTRAP_SCRIPT"

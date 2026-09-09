@@ -12,6 +12,24 @@ DATA_RUNTIME_STATUS_FILE="${MULTICA_DATA_RUNTIME_STATUS_FILE:-/var/run/data-runt
 DATA_BACKUP_STATUS_FILE="${MULTICA_DATA_BACKUP_STATUS_FILE:-/var/run/agent-data-backup.status}"
 FIRMWARE_COMMIT_FILE="${MULTICA_FIRMWARE_COMMIT_FILE:-/etc/openwrt-ci/firmware-commit}"
 
+# Callers may be a login shell, firstboot or procd. Never hide native router
+# tools merely because the caller inherited an abbreviated PATH. Multica
+# passes its complete generation-first PATH when rendering before startup.
+PATH="${PATH:-/usr/bin:/bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin"
+export PATH
+
+workspaces_root() {
+	local directory
+	directory="${MULTICA_WORKSPACES_ROOT:-}"
+	[ -n "$directory" ] || directory="$(uci -q get multica.main.workspaces_root 2>/dev/null || true)"
+	case "$directory" in
+		*/../*|*/..|*/./*|*/.) directory="" ;;
+		/data/*) ;;
+		*) directory="" ;;
+	esac
+	printf '%s' "${directory:-/data/multica/workspaces}"
+}
+
 command_path() {
 	command -v "$1" 2>/dev/null || true
 }
@@ -130,7 +148,10 @@ tool_line() {
 	local tool path version
 	tool="$1"
 	path="$(command_path "$tool")"
-	[ -n "$path" ] || return 0
+	if [ -z "$path" ]; then
+		printf -- '- `%s`: 未在当前 PATH 找到；先核查目录/构建能力，不要直接安装。\n' "$tool"
+		return 0
+	fi
 	version=""
 	case "$tool" in
 		pi|cmdc|node|npm|pnpm|python3|uv) version="$(first_line "$tool" --version)" ;;
@@ -174,16 +195,20 @@ render_profile() {
 		printf -- '- **Tailnet 提示**：以上通告与动态路由表是本次采集的状态，不是固定拓扑；路由授权或通告变更必须另行确认。\n'
 		printf -- '- **内存**：`%s`；**数据盘**：`%s`\n' "$memory" "$data_mount"
 		printf -- '- **固件配置仓库提交**：`%s`（来源：`%s`）\n' "$firmware_commit" "$FIRMWARE_COMMIT_FILE"
-		printf -- '- **任务根目录**：`/data/multica/workspaces`（所有项目、下载、虚拟环境和产物均须位于此处）\n'
+		printf -- '- **任务根目录**：`%s`（以实际配置为准；每个任务使用独立子目录，先核实 /data 挂载与 pwd -P）\n' "$(workspaces_root)"
 		printf '\n### 数据盘与备份实时状态（可选）\n\n'
 		printf -- '- **data-runtime**（`/var/run/data-runtime.status`）：`%s`\n' "$(runtime_status_summary data-runtime "$DATA_RUNTIME_STATUS_FILE")"
 		printf -- '- **rclone 配置备份**（`/var/run/agent-data-backup.status`）：`%s`\n' "$(runtime_status_summary agent-data-backup "$DATA_BACKUP_STATUS_FILE")"
 		printf '%s\n' '- 状态文件缺失仅表示尚未初始化/未知；不得自动挂载、格式化、重分区、启动备份或宣称备份成功。'
 		printf '\n### 当前可调用工具（运行时探测）\n\n'
-		for tool in uci ubus ip nft logread pi cmdc node npm pnpm python3 uv nerdctl containerd; do
+		printf -- '- **探测 PATH**：`%s`。此表是采集快照，不是安装/执行授权；任务内再次用 command -v 核实。\n' "$PATH"
+		for tool in uci ubus ip nft fw4 logread block mount df du lsblk free top ps \
+			curl wget ssh rsync rclone git jq rg fd find xargs grep gawk awk sed sort tar gzip unzip sha256sum \
+			multica pi cmdc opencode node npm pnpm python3 uv nerdctl containerd container-bridge-nft; do
 			tool_line "$tool"
 		done
-		if [ -x /usr/sbin/container-bridge-nft ] && command_path nerdctl >/dev/null 2>&1; then
+		printf '%s\n' '- 包装器路径存在不等于运行时已安装/可启动；尤其不要用 opencode --version 作为无副作用探测，它可能触发首次安装。'
+		if [ -x /usr/sbin/container-bridge-nft ] && [ -n "$(command_path nerdctl)" ]; then
 			printf '\n### 容器运行时策略（运行时探测）\n\n'
 			printf '%s\n' '- 默认模式：`bridge+nft`（nerdctl 网络名 `bridge`，策略由 `container-bridge-nft` 管理）。'
 			printf '%s\n' '- Compose 根目录：`/data/compose/<service>/compose.yaml`。'

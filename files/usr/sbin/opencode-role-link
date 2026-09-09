@@ -4,12 +4,15 @@
 # regular AGENTS.md is kept.
 #
 # opencode is only provisioned on >=2GB devices (re-cs-02 / re-cs-07);
-# low-memory builds (re-ss-01) ship no /data/opencode/config, in which case
+# low-memory builds (re-ss-01) ship no /data/opencode/config/opencode, in which case
 # this is a silent no-op so callers are never interrupted.
 
 set -eu
 
-OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-/data/opencode/config}"
+# This is the effective application directory, not XDG_CONFIG_HOME:
+# the wrapper sets XDG_CONFIG_HOME=/data/opencode/config and OpenCode
+# appends /opencode when looking for its global AGENTS.md.
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-/data/opencode/config/opencode}"
 ROLE_CARD="${OPENCODE_ROLE_CARD:-/data/multica/openwrt-agent.md}"
 AGENTS_FILE="$OPENCODE_CONFIG_DIR/AGENTS.md"
 

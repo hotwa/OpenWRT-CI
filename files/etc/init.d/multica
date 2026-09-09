@@ -91,7 +91,7 @@ valid_duration() {
 start_service() {
 	local enabled token workspace_id server_url app_url
 	local device_name runtime_name runtime_provider workspaces_root
-	local max_tasks poll_interval heartbeat_interval prog uv_root config_dir config_json config_tmp
+	local max_tasks poll_interval heartbeat_interval prog uv_root agent_path config_dir config_json config_tmp
 
 	enabled="$(cfg enabled 0)"
 	case "$enabled" in
@@ -182,20 +182,29 @@ start_service() {
 		*[!A-Za-z0-9_-]*|'') log_error "runtime_provider contains invalid characters"; return 1 ;;
 	esac
 	case "$workspaces_root" in
+		*/../*|*/..|*/./*|*/.) log_error "workspaces_root must not contain dot path components"; return 1 ;;
 		/data/*) ;;
 		*) log_error "workspaces_root must be an absolute path below /data"; return 1 ;;
 	esac
+	if has_control_character "$workspaces_root"; then
+		log_error "workspaces_root contains an invalid control character"
+		return 1
+	fi
 
 	# Agent state must never silently fall back to the root overlay.
 	grep -qsE '[[:space:]]/data[[:space:]]' /proc/mounts || {
 		log_error "/data is not mounted; refusing to start Multica on the root overlay"
 		return 1
 	}
+	# procd does not source profile.d. Use the same PATH for device discovery,
+	# the daemon and bootstrap; children must see OpenWrt's sbin utilities too.
+	agent_path="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	export PATH="$agent_path"
 	# Render the data-backed role card before Pi can accept a daemon task, then
 	# repair the link that makes Pi append exactly that same card. This also
 	# covers upgraded systems whose first-boot migration predates this convention.
 	if [ -x /usr/sbin/multica-device-profile ]; then
-		MULTICA_DATA_DIR=/data/multica /usr/sbin/multica-device-profile write || {
+		MULTICA_DATA_DIR=/data/multica MULTICA_WORKSPACES_ROOT="$workspaces_root" /usr/sbin/multica-device-profile write || {
 			log_error "could not render the Multica role card"
 			return 1
 		}
@@ -210,6 +219,13 @@ start_service() {
 		COMMANDCODE_HOME=/data/commandcode COMMANDCODE_ROLE_CARD=/data/multica/openwrt-agent.md \
 			/usr/sbin/commandcode-role-link || {
 			log_error "CommandCode AGENTS.md link is unavailable; refusing to start Multica"
+			return 1
+		}
+	fi
+	if [ -f /etc/opencode/release-url ] && [ -x /usr/sbin/opencode-role-link ]; then
+		OPENCODE_CONFIG_DIR=/data/opencode/config/opencode OPENCODE_ROLE_CARD=/data/multica/openwrt-agent.md \
+			/usr/sbin/opencode-role-link || {
+			log_error "OpenCode AGENTS.md link is unavailable; refusing to start Multica"
 			return 1
 		}
 	fi
@@ -285,12 +301,15 @@ EOF
 	fi
 
 	procd_open_instance daemon
-	procd_set_param command "$prog" daemon start --foreground \
+	# Set a real initial CWD, not only a prompt or PWD environment hint. Use
+	# positional arguments so paths are never interpolated as shell commands.
+	procd_set_param command /bin/sh -c 'cd "$MULTICA_WORKSPACES_ROOT" || exit 1; exec "$@"' multica-launch \
+		"$prog" daemon start --foreground \
 		--max-concurrent-tasks "$max_tasks" \
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
-		PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin" \
+		PATH="$agent_path" \
 		COMMANDCODE_SKIP_UPDATES=1 \
 		UV_CACHE_DIR=/data/uv/cache \
 		UV_PYTHON_INSTALL_DIR=/data/uv/python \
@@ -314,7 +333,8 @@ EOF
 	if [ -x /usr/sbin/multica-agent-bootstrap ]; then
 		procd_open_instance bootstrap
 		procd_set_param command /usr/sbin/multica-agent-bootstrap
-		procd_set_param env HOME=/root MULTICA_BIN="$prog" MULTICA_DATA_DIR=/data/multica COMMANDCODE_SKIP_UPDATES=1
+		procd_set_param env HOME=/root PATH="$agent_path" MULTICA_BIN="$prog" MULTICA_DATA_DIR=/data/multica \
+			MULTICA_WORKSPACES_ROOT="$workspaces_root" COMMANDCODE_SKIP_UPDATES=1
 		procd_set_param stdout 1
 		procd_set_param stderr 1
 		procd_close_instance

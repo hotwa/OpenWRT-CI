@@ -36,6 +36,13 @@ start() {
 		CONFIG_DIR=/data/opencode/config/opencode
 		CONFIG_FILE="$CONFIG_DIR/opencode.json"
 
+		# The role may already exist on upgrades; Multica repairs this again
+		# after rendering it on first boot. Missing roles are a safe no-op.
+		if [ -x /usr/sbin/opencode-role-link ]; then
+			OPENCODE_CONFIG_DIR="$CONFIG_DIR" /usr/sbin/opencode-role-link || \
+				logger -t opencode-runtime "could not repair OpenCode role link"
+		fi
+
 		# Upgrade migration: carry over a config written to the old flat path.
 		if [ -f /data/opencode/config/opencode.json ] && [ ! -f "$CONFIG_FILE" ]; then
 			cp -p /data/opencode/config/opencode.json "$CONFIG_FILE"
@@ -64,11 +71,15 @@ start() {
 			logger -t opencode-runtime "migrated opencode.json to include CommandCode provider (backup kept)"
 		fi
 
-		# Link /root/.config/opencode -> /data/opencode/config so opencode
-		# finds its config regardless of XDG_CONFIG_HOME.
+		# Default-XDG compatibility must point at the effective app directory.
+		# Only repair our known legacy link; keep user directories and links.
 		mkdir -p /root/.config
-		if [ ! -e /root/.config/opencode ] || [ -L /root/.config/opencode ]; then
-			ln -sf /data/opencode/config /root/.config/opencode
+		if [ -L /root/.config/opencode ]; then
+			if [ "$(readlink /root/.config/opencode)" = /data/opencode/config ]; then
+				ln -sfn "$CONFIG_DIR" /root/.config/opencode
+			fi
+		elif [ ! -e /root/.config/opencode ]; then
+			ln -s "$CONFIG_DIR" /root/.config/opencode
 		fi
 	fi
 }

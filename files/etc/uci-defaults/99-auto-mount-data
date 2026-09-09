@@ -865,7 +865,7 @@ prepare_agent_storage() {
 	# Bind it to the same rendered role card; a missing config dir (device
 	# without opencode, e.g. re-ss-01) is a silent no-op inside the script.
 	if [ -x "$OPENCODE_ROLE_LINK_BIN" ]; then
-		OPENCODE_CONFIG_DIR="$DATA_ROOT/opencode/config" OPENCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
+		OPENCODE_CONFIG_DIR="$DATA_ROOT/opencode/config/opencode" OPENCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
 			"$OPENCODE_ROLE_LINK_BIN" || return 1
 	fi
 	if [ -x "$AGENT_TOOLS_LINK_BIN" ]; then
