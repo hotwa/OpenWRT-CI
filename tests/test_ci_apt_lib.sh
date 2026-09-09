@@ -204,9 +204,13 @@ fi
 # ---------------------------------------------------------------------------
 # 8) non-root WITHOUT sudo must fail loudly, never silently no-op
 #    (parent dir must be world-traversable or os.walk cannot even reach the
-#    read-only files and the function would silently no-op)
+#    read-only files and the function would silently no-op). GitHub-hosted
+#    Actions steps run as the non-root `runner` user, so `runuser` cannot be
+#    invoked directly there; use passwordless sudo only to enter the `nobody`
+#    shell. SUDO remains empty inside that shell so the function itself is
+#    still tested without sudo.
 # ---------------------------------------------------------------------------
-if command -v runuser >/dev/null 2>&1; then
+if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
   RO_ROOT="$(mktemp -d)"
   chmod 0755 "$RO_ROOT"
   APT_ROOT="$RO_ROOT/ro"
@@ -216,7 +220,7 @@ if command -v runuser >/dev/null 2>&1; then
   chmod 0555 "$APT_ROOT"
 
   set +e
-  runuser -u nobody -- bash -c "
+  sudo -n -u nobody -- bash -c "
     cd '$ROOT_DIR' || exit 9
     . Scripts/ci-apt-lib.sh
     reset_ubuntu_mirrors '$APT_ROOT'
@@ -231,4 +235,3 @@ if command -v runuser >/dev/null 2>&1; then
 fi
 
 echo "ci apt lib test passed"
-
