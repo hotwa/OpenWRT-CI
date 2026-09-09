@@ -45,28 +45,84 @@ lan_device() {
 	printf '%s' "$device"
 }
 
+candidate_inventory_is_safe() {
+	# Check every table, including prefixes broader/narrower than the /24.
+	# An exact-prefix query alone misses blackhole supernets and host routes.
+	printf '%s\n' "$2" | awk -v candidate="$1" -v bridge="$BRIDGE" -v lan="$3" '
+		function block_size(bits, result) {
+			# BusyBox awk can be built without floating-point math/pow().
+			result = 1
+			while (bits++ < 32) result *= 2
+			return result
+		}
+		function address(value, octets, count, i, result) {
+			count = split(value, octets, ".")
+			if (count != 4) return -1
+			result = 0
+			for (i = 1; i <= 4; i++) {
+				if (octets[i] !~ /^[0-9]+$/ || octets[i] > 255) return -1
+				result = result * 256 + octets[i]
+			}
+			return result
+		}
+		function overlaps(value, parts, count, base, bits, size, first) {
+			if (value == "default") value = "0.0.0.0/0"
+			count = split(value, parts, "/")
+			base = address(parts[1])
+			bits = count == 1 ? 32 : parts[2]
+			# Unknown route syntax cannot establish safety.
+			if (base < 0 || count > 2 || bits !~ /^[0-9]+$/ || bits > 32) return 1
+			size = block_size(bits)
+			first = int(base / size) * size
+			return first <= candidate_last && first + size - 1 >= candidate_first
+		}
+		BEGIN {
+			split(candidate, selected, "/")
+			size = block_size(selected[2])
+			candidate_first = int(address(selected[1]) / size) * size
+			candidate_last = candidate_first + size - 1
+		}
+		$1 ~ /^(unreachable|blackhole|prohibit|throw)$/ {
+			if (overlaps($2)) conflict = 1
+			next
+		}
+		{
+			prefix = $1 ~ /^(unicast|local)$/ ? $2 : $1
+			if (prefix == "default" || prefix == "0.0.0.0/0" ||
+			    $1 ~ /^(broadcast|multicast|anycast)$/) next
+			device = ""; via = 0
+			for (i = 1; i < NF; i++) {
+				if ($i == "dev") device = $(i + 1)
+				if ($i == "via") via = 1
+			}
+			protected = device == lan || device == "br-lan" || device == "tailscale0" ||
+			            device == "nikki" || device ~ /^tun/
+			if (device != "" && device != bridge && (!via || protected) && overlaps(prefix)) conflict = 1
+		}
+		END { exit conflict ? 1 : 0 }
+	'
+}
+
 candidate_route_is_safe() {
-	local subnet="$1" gateway="$2" route query lan default_route
+	local subnet="$1" gateway="$2" route query lan routes route_device
 	lan="$(lan_device)"
-	default_route="$($IP_CMD -4 route show default 2>/dev/null || true)"
+	routes="$($IP_CMD -4 route show table all 2>/dev/null)" || return 1
+	candidate_inventory_is_safe "$subnet" "$routes" "$lan" || return 1
 
 	# A candidate must not be routed into LAN, Tailnet, Nikki, or another
 	# directly connected interface. A normal default route is safe because the
 	# nft policy owns the later masquerade/mark decision.
 	for query in ""; do
-		route="$($IP_CMD -4 route get "$gateway" $query 2>/dev/null || true)"
+		route="$(LC_ALL=C $IP_CMD -4 route get "$gateway" $query 2>&1 || true)"
 		[ -n "$route" ] || return 1
-		case "$route" in
-			unreachable*|blackhole*|prohibit*|throw*)
-				# At boot time before the WAN/PPPoE default route is established,
-				# "ip route get" returns unreachable for every destination because
-				# the kernel has no route table entry at all. That is not an
-				# explicit routing policy and carries no overlap risk, so the
-				# candidate is safe. Once a default route exists, these special
-				# routes indicate an explicit policy and must still be rejected.
-				[ -n "$default_route" ] && return 1
+		# Pad the final token so protected devices also match at end-of-line.
+		case "$route " in
+			unreachable*|"RTNETLINK answers: Network is unreachable "|"ip: RTNETLINK answers: Network is unreachable ")
+				# No route, or an unresolved PPPoE default, is not by itself
+				# an explicit policy. The table inventory above already rejects
+				# overlapping negative/connected routes, even without a WAN.
 				;;
-			*" dev $lan "*|*" dev br-lan "*|*" dev tailscale0 "*|*" dev nikki "*|*" dev tun*"*)
+			*" dev $lan "*|*" dev br-lan "*|*" dev tailscale0 "*|*" dev nikki "*|*" dev tun"*)
 				return 1
 				;;
 			*" dev $BRIDGE "*)
@@ -74,6 +130,15 @@ candidate_route_is_safe() {
 				;;
 			*" via "*)
 				# The candidate follows a routed default path.
+				;;
+			*" dev pppoe-"*|*" dev ppp"[0-9]*)
+				# Point-to-point WAN defaults need not contain a "via" peer.
+				# Require a matching unicast default, not merely a PPP name.
+				route_device="$(printf '%s\n' "$route" | awk '{ for (i=1; i<NF; i++) if ($i == "dev") { print $(i+1); exit } }')"
+				printf '%s\n' "$routes" | awk -v device="$route_device" '
+					$1 == "default" { for (i=1; i<NF; i++) if ($i == "dev" && $(i+1) == device) found=1 }
+					END { exit !found }
+				' || return 1
 				;;
 			local*)
 				# "ip route get" reports "local" when the gateway is an address
@@ -193,11 +258,11 @@ remove_cni_config() {
 
 ensure_firewall_zone() {
 	$UCI_CMD -q get "firewall.$ZONE" >/dev/null 2>&1 || \
-		$UCI_CMD set "firewall.$ZONE=zone"
-	$UCI_CMD set "firewall.$ZONE.name=$ZONE"
-	$UCI_CMD set "firewall.$ZONE.device=$BRIDGE"
-	$UCI_CMD set "firewall.$ZONE.input=ACCEPT"
-	$UCI_CMD set "firewall.$ZONE.output=ACCEPT"
+		$UCI_CMD set "firewall.$ZONE=zone" || return 1
+	$UCI_CMD set "firewall.$ZONE.name=$ZONE" || return 1
+	$UCI_CMD set "firewall.$ZONE.device=$BRIDGE" || return 1
+	$UCI_CMD set "firewall.$ZONE.input=ACCEPT" || return 1
+	$UCI_CMD set "firewall.$ZONE.output=ACCEPT" || return 1
 	$UCI_CMD set "firewall.$ZONE.forward=ACCEPT"
 }
 
@@ -206,8 +271,8 @@ ensure_forwarding() {
 	local source="$2"
 	local destination="$3"
 	$UCI_CMD -q get "firewall.$section" >/dev/null 2>&1 || \
-		$UCI_CMD set "firewall.$section=forwarding"
-	$UCI_CMD set "firewall.$section.src=$source"
+		$UCI_CMD set "firewall.$section=forwarding" || return 1
+	$UCI_CMD set "firewall.$section.src=$source" || return 1
 	$UCI_CMD set "firewall.$section.dest=$destination"
 }
 
@@ -262,13 +327,13 @@ remove_firewall_config() {
 }
 
 configure_uci() {
-	ensure_firewall_zone
+	ensure_firewall_zone || return 1
 
-	ensure_forwarding "${ZONE}_to_wan" "$ZONE" wan
-	ensure_forwarding "${ZONE}_to_lan" "$ZONE" lan
-	ensure_forwarding "${ZONE}_to_tailscale" "$ZONE" tailscale
-	ensure_forwarding "lan_to_${ZONE}" lan "$ZONE"
-	ensure_forwarding "tailscale_to_${ZONE}" tailscale "$ZONE"
+	ensure_forwarding "${ZONE}_to_wan" "$ZONE" wan || return 1
+	ensure_forwarding "${ZONE}_to_lan" "$ZONE" lan || return 1
+	ensure_forwarding "${ZONE}_to_tailscale" "$ZONE" tailscale || return 1
+	ensure_forwarding "lan_to_${ZONE}" lan "$ZONE" || return 1
+	ensure_forwarding "tailscale_to_${ZONE}" tailscale "$ZONE" || return 1
 
 	$UCI_CMD commit firewall
 }

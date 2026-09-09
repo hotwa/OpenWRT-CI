@@ -1,0 +1,3 @@
+config containerd-test 'main'
+	# Explicit emergency escape only; stale CNI and unguaranteed Nikki policy.
+	option run_without_bridge '0'

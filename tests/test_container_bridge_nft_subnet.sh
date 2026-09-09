@@ -26,6 +26,10 @@ cat > "$MOCK_BIN/ip" <<'MOCKEOF'
 #   MOCK_IP_OVERRIDE_DIR   - if set, files named <gateway> override per-gw
 args="$*"
 case "$args" in
+    *"route show table all"*)
+        [ "${MOCK_IP_TABLE_FAIL:-0}" = 0 ] || exit 1
+        [ -z "${MOCK_IP_ROUTES:-}" ] || printf '%s\n' "$MOCK_IP_ROUTES"
+        ;;
     *"route show default"*)
         [ -n "${MOCK_IP_DEFAULT_ROUTE:-}" ] && printf '%s\n' "$MOCK_IP_DEFAULT_ROUTE"
         ;;
@@ -33,6 +37,10 @@ case "$args" in
         [ -n "${MOCK_IP_ADDR_DEV:-}" ] && printf '%s\n' "$MOCK_IP_ADDR_DEV"
         ;;
     *"route get"*)
+        if [ -n "${MOCK_IP_ROUTE_ERROR:-}" ]; then
+            printf '%s\n' "$MOCK_IP_ROUTE_ERROR" >&2
+            exit 2
+        fi
         gateway=""
         for a in "$@"; do
             case "$a" in
@@ -123,6 +131,9 @@ setup_case() {
     export MOCK_IP_DEFAULT_ROUTE=""
     export MOCK_IP_ROUTE_GET=""
     export MOCK_IP_ADDR_DEV=""
+    export MOCK_IP_ROUTES=""
+    export MOCK_IP_TABLE_FAIL=0
+    export MOCK_IP_ROUTE_ERROR=""
     export MOCK_IP_OVERRIDE_DIR="$dir/ip-overrides"
     export MOCK_UCI_LAN_DEVICE=""
     export MOCK_UCI_LAN_IFNAME=""
@@ -170,11 +181,12 @@ printf '10.250.0.0/24\n' > "$SUBNET_FILE"
 assert_subnet "default route + via route on persisted" "10.250.0.0/24" 1
 
 # ===========================================================================
-# 5. Has default route + unreachable = reject (security semantics preserved)
+# 5. Pending PPPoE default + synthetic unreachable must not reject candidates.
 # ===========================================================================
-setup_case "05-default-unreachable-reject"
-export MOCK_IP_DEFAULT_ROUTE="default via 192.168.1.1 dev eth0"
-# All candidates return unreachable -> all rejected -> select_subnet fails
+setup_case "05-pppoe-unreachable-allow"
+export MOCK_IP_DEFAULT_ROUTE="default via 100.64.1.1 dev pppoe-wan linkdown"
+export MOCK_IP_ROUTES="$MOCK_IP_DEFAULT_ROUTE"
+# All route lookups are unreachable while the PPP link is not ready.
 printf 'unreachable 10.250.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/10.250.0.1"
 printf 'unreachable 10.251.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/10.251.0.1"
 printf 'unreachable 10.252.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/10.252.0.1"
@@ -182,7 +194,103 @@ printf 'unreachable 10.253.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/10.253.0.1"
 printf 'unreachable 10.254.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/10.254.0.1"
 printf 'unreachable 172.30.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/172.30.0.1"
 printf 'unreachable 172.31.0.1 dev lo\n' > "$MOCK_IP_OVERRIDE_DIR/172.31.0.1"
-assert_subnet "default route + unreachable on all candidates -> reject all" "" 0
+assert_subnet "pending PPPoE default + unreachable -> first candidate" "10.250.0.0/24" 1
+
+printf '10.250.0.0/24\n' > "$SUBNET_FILE"
+assert_subnet "pending PPPoE default + persisted subnet -> reuse" "10.250.0.0/24" 1
+
+# Negative policy routes must remain conflicts, with or without a WAN route.
+for policy in unreachable blackhole prohibit throw; do
+    setup_case "05-policy-$policy"
+    export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+    export MOCK_IP_ROUTES="$policy 10.250.0.0/24"
+    assert_subnet "$policy exact prefix -> next candidate" "10.251.0.0/24" 1
+done
+
+setup_case "05-policy-supernet"
+export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+export MOCK_IP_ROUTES="blackhole 10.0.0.0/8 table 100
+prohibit 172.16.0.0/12 table 200"
+assert_subnet "covering policies in other tables -> reject all" "" 0
+
+setup_case "05-policy-child"
+export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+export MOCK_IP_ROUTES="throw 10.250.0.128/25 table 100"
+assert_subnet "policy covering only upper half -> next candidate" "10.251.0.0/24" 1
+
+setup_case "05-policy-host"
+export MOCK_IP_ROUTE_GET="10.250.0.1 via 192.168.1.1 dev eth0"
+export MOCK_IP_ROUTES="prohibit 10.250.0.128 table 100"
+assert_subnet "policy host route away from gateway -> next candidate" "10.251.0.0/24" 1
+
+setup_case "05-policy-default"
+export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+export MOCK_IP_ROUTES="unreachable default table 100"
+assert_subnet "explicit negative default policy -> reject all" "" 0
+
+setup_case "05-policy-unrelated"
+export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+export MOCK_IP_ROUTES="blackhole 10.249.0.0/24 table 100"
+assert_subnet "unrelated policy does not block boot" "10.250.0.0/24" 1
+
+setup_case "05-table-query-failed"
+export MOCK_IP_ROUTE_GET="10.250.0.1 via 192.168.1.1 dev eth0"
+export MOCK_IP_TABLE_FAIL=1
+assert_subnet "route inventory unavailable -> fail closed" "" 0
+
+setup_case "05-network-unreachable-stderr"
+export MOCK_IP_ROUTE_ERROR="RTNETLINK answers: Network is unreachable"
+assert_subnet "no WAN route with iproute2 stderr only -> allow" "10.250.0.0/24" 1
+
+setup_case "05-busybox-network-unreachable-stderr"
+export MOCK_IP_ROUTE_ERROR="ip: RTNETLINK answers: Network is unreachable"
+assert_subnet "no WAN route with BusyBox ip stderr only -> allow" "10.250.0.0/24" 1
+
+setup_case "05-unknown-error"
+export MOCK_IP_ROUTE_ERROR="RTNETLINK answers: Operation not permitted"
+assert_subnet "unrecognised route lookup failure -> fail closed" "" 0
+
+setup_case "05-empty-result"
+assert_subnet "empty route lookup -> fail closed" "" 0
+
+setup_case "05-pppoe-online"
+export MOCK_IP_ROUTE_GET="10.250.0.1 dev pppoe-wan src 100.64.1.2"
+export MOCK_IP_ROUTES="default dev pppoe-wan scope link"
+assert_subnet "established point-to-point PPPoE default -> allow" "10.250.0.0/24" 1
+
+setup_case "05-pppoe-not-default"
+export MOCK_IP_ROUTE_GET="10.250.0.1 dev pppoe-other"
+assert_subnet "PPP device without matching default -> reject" "" 0
+
+setup_case "05-connected-child"
+export MOCK_IP_ROUTE_GET="unreachable 10.250.0.1 dev lo"
+export MOCK_IP_ROUTES="10.250.0.128/25 dev br-lan table 100 proto kernel scope link"
+assert_subnet "connected LAN child prefix -> next candidate" "10.251.0.0/24" 1
+
+setup_case "05-routed-lan-child"
+export MOCK_IP_ROUTE_GET="10.250.0.1 via 192.168.1.1 dev eth0"
+export MOCK_IP_ROUTES="10.250.0.128/25 via 192.168.1.254 dev br-lan table 100"
+assert_subnet "routed LAN child prefix -> next candidate" "10.251.0.0/24" 1
+
+setup_case "05-local-other-host"
+export MOCK_IP_ROUTE_GET="10.250.0.1 via 192.168.1.1 dev eth0"
+export MOCK_IP_ROUTES="local 10.250.0.128 dev lo table local proto kernel scope host"
+assert_subnet "local address away from gateway -> next candidate" "10.251.0.0/24" 1
+
+setup_case "05-local-own-inventory"
+export MOCK_IP_ROUTE_GET="local 10.250.0.1 dev lo table local src 10.250.0.1"
+export MOCK_IP_ROUTES="local 10.250.0.1 dev ctrbr-nft0 table local proto kernel scope host
+10.250.0.0/24 dev ctrbr-nft0 proto kernel scope link"
+export MOCK_IP_ADDR_DEV="10.250.0.1/24 brd 10.250.0.255 scope global ctrbr-nft0"
+assert_subnet "own bridge local/connected inventory -> reuse" "10.250.0.0/24" 1
+
+setup_case "05-protected-last-token"
+export MOCK_IP_ROUTE_GET="10.250.0.1 via 192.168.1.1 dev br-lan"
+assert_subnet "protected device at end of via route -> reject" "" 0
+
+setup_case "05-synthetic-blackhole"
+export MOCK_IP_ROUTE_GET="blackhole 10.250.0.1"
+assert_subnet "explicit blackhole lookup is never a WAN boot allowance" "" 0
 
 # ===========================================================================
 # 6. tailscale0 / nikki / tun* conflict = reject (even without default route)
