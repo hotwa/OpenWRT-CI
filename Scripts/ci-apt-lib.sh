@@ -173,7 +173,12 @@ for path in files:
         block = re.sub(r'(?m)^(URIs:)([ \t]+)(https?://\S+|mirror\+file:[^\s]+)$', repl_uri, block)
         out.append(block)
     try:
-        open(path, 'w', encoding='utf-8').write(''.join(out))
+        # Re-join stanzas with a blank line: deb822 sources REQUIRE a blank
+        # line between stanzas, and ''.join would collapse them, making apt
+        # silently drop the first (archive) stanza while still parsing the
+        # security one (observed on ubuntu-24.04 runners: update fetched only
+        # noble-security -> 'Unable to locate package dos2unix', rc=100).
+        open(path, 'w', encoding='utf-8').write('\n\n'.join(out))
     except OSError as e:
         print('WARN: cannot write %s: %s' % (path, e), file=sys.stderr)
         failed += 1

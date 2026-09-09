@@ -94,6 +94,12 @@ grep -q '^URIs: https://security\.ubuntu\.com/ubuntu$' "$APT_ROOT/sources.list.d
   || fail "deb822: mirror+file security stanza not normalized to security.ubuntu.com"
 grep -q 'mirror+file:' "$APT_ROOT/sources.list.d/runner.sources" \
   && fail "deb822: mirror+file must be fully replaced"
+# deb822 stanzas must stay separated by a blank line: apt silently drops the
+# first (archive) stanza when the separator is collapsed.
+grep -q '^$' "$APT_ROOT/sources.list.d/ubuntu.sources" \
+  || fail "deb822: stanza separator blank line lost (apt drops archive stanza)"
+grep -q '^$' "$APT_ROOT/sources.list.d/runner.sources" \
+  || fail "deb822: runner.sources stanza separator blank line lost"
 
 # ---------------------------------------------------------------------------
 # 3) aptx uses apt-get (never `apt`), non-interactive, bounded retries
