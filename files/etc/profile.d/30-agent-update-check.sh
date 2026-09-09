@@ -8,9 +8,21 @@ NOW=$(date +%s 2>/dev/null || echo 0)
 CACHE_TTL=86400
 
 print_agent_status() {
-	local node_v python_v cmdc_v pi_v
+	local node_v python_v cmdc_v pi_v uv_py uv_ver
 	node_v="$(node -v 2>/dev/null || echo "not installed")"
-	python_v="$(python3 --version 2>/dev/null || echo "not ready")"
+	if python_v="$(python3 --version 2>/dev/null)"; then
+		: # system or symlinked python3 found
+	else
+		python_v=""
+		uv_py="$(uv python find 3.13 2>/dev/null)"
+		if [ -n "$uv_py" ] && [ -x "$uv_py" ]; then
+			uv_ver="$("$uv_py" --version 2>/dev/null)"
+			if [ -n "$uv_ver" ]; then
+				python_v="$(printf '%s\n' "$uv_ver" | cut -d' ' -f2) (uv managed)"
+			fi
+		fi
+		[ -z "$python_v" ] && python_v="not ready"
+	fi
 	cmdc_v="$(cmdc --version 2>/dev/null || echo "not installed")"
 	pi_v="$(pi --version 2>/dev/null || echo "not installed")"
 

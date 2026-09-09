@@ -66,4 +66,34 @@ if [ -z "${COMMANDCODE_API_KEY:-}" ]; then
 	unset _CC_AUTH
 fi
 
+# Clean up stale opencode lock files left behind by killed processes
+# (SSH disconnect, timeout, OOM kill).  Each .lock is a JSON file with a
+# "pid" field; when that pid is no longer alive the lock is orphaned and
+# every new `opencode run` blocks until its internal lock timeout, which
+# exceeds multica's 6s per-task budget and causes exit 1.
+cleanup_stale_locks() {
+	[ -n "${XDG_STATE_HOME:-}" ] || return 0
+	local lock_dir="$XDG_STATE_HOME/opencode/locks"
+	local lockfile pid cleaned=0
+	[ -d "$lock_dir" ] || return 0
+	for lockfile in "$lock_dir"/*.lock; do
+		[ -f "$lockfile" ] || continue
+		pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$lockfile" 2>/dev/null | head -1)"
+		[ -n "$pid" ] || continue
+		[ "$pid" -gt 0 ] 2>/dev/null || continue
+		if ! kill -0 "$pid" 2>/dev/null; then
+			rm -f "$lockfile"
+			cleaned=1
+		fi
+	done
+	# If any stale lock was removed, the owning process is gone and its
+	# SQLite WAL/SHM sidecars are also orphaned.  Remove them so the next
+	# instance starts clean; SQLite recreates them on first write.
+	if [ "$cleaned" -eq 1 ] && [ -n "${XDG_DATA_HOME:-}" ]; then
+		rm -f "$XDG_DATA_HOME/opencode/opencode.db-wal" \
+		      "$XDG_DATA_HOME/opencode/opencode.db-shm" 2>/dev/null || true
+	fi
+}
+cleanup_stale_locks
+
 exec "$REAL_BIN" "$@"

@@ -1,0 +1,119 @@
+#!/bin/sh
+# multica-runtime-guard — monitor opencode runtime health and auto-fallback
+#
+# Periodically tests whether the opencode runtime is usable.  After THRESHOLD
+# consecutive failures it drops a marker that forces /etc/init.d/multica to
+# use the pi provider, then restarts multica.  After THRESHOLD consecutive
+# successes it removes the marker and restarts multica again so tasks return
+# to opencode.
+#
+# Recommended invocation: every 5 minutes via cron, e.g.
+#   */5 * * * * /usr/sbin/multica-runtime-guard
+# (cron registration is left to the firmware build / uci-defaults because
+# not all images ship a cron daemon.)
+#
+# POSIX sh / BusyBox ash compatible.
+
+MULTICA_DATA_DIR="/data/multica"
+FAIL_COUNT_FILE="$MULTICA_DATA_DIR/.opencode_fail_count"
+SUCCESS_COUNT_FILE="$MULTICA_DATA_DIR/.opencode_ok_count"
+FALLBACK_MARKER="$MULTICA_DATA_DIR/.runtime_fallback_to_pi"
+THRESHOLD=3
+TEST_TIMEOUT=15
+
+log() {
+	logger -t multica-guard "$*"
+}
+
+# Low-memory builds (re-ss-01) ship without opencode release metadata;
+# there is nothing to guard and the wrapper would exit 1 anyway.
+if [ ! -f /etc/opencode/release-url ]; then
+	exit 0
+fi
+
+# Only act when multica is enabled.
+_enabled="$(uci -q get multica.main.enabled 2>/dev/null || true)"
+case "$_enabled" in
+	1|true|yes|on) ;;
+	*) exit 0 ;;
+esac
+
+# Resolve the configured (or default) runtime provider.  An explicit UCI
+# value wins; otherwise the build capability decides, matching the logic in
+# /etc/init.d/multica.
+_provider="$(uci -q get multica.main.runtime_provider 2>/dev/null || true)"
+if [ -z "$_provider" ]; then
+	if [ -f /etc/opencode/release-url ]; then
+		_provider="opencode"
+	else
+		_provider="pi"
+	fi
+fi
+
+# If multica is explicitly configured for pi (not opencode, not default),
+# there is no opencode runtime to guard.  Clean up any stale state and exit.
+if [ "$_provider" != "opencode" ]; then
+	rm -f "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" "$FALLBACK_MARKER" 2>/dev/null
+	exit 0
+fi
+
+mkdir -p "$MULTICA_DATA_DIR" 2>/dev/null || true
+
+# Read a numeric counter file; returns 0 on missing/empty/non-numeric.
+read_count() {
+	local _v
+	_v="$(cat "$1" 2>/dev/null || true)"
+	case "$_v" in
+		''|*[!0-9]*) printf '0' ;;
+		*) printf '%s' "$_v" ;;
+	esac
+}
+
+write_count() {
+	printf '%s\n' "$2" > "$1" 2>/dev/null || true
+}
+
+# Lightweight opencode health probe.  The wrapper itself runs stale-lock
+# cleanup before exec, so a successful --version means the binary is
+# installed, executable, and able to start without hanging on a stale lock.
+test_opencode() {
+	if [ ! -x /usr/bin/opencode ]; then
+		return 1
+	fi
+	if timeout "$TEST_TIMEOUT" /usr/bin/opencode --version >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+if test_opencode; then
+	# Success: reset the failure streak, extend the success streak.
+	write_count "$FAIL_COUNT_FILE" 0
+	_ok="$(read_count "$SUCCESS_COUNT_FILE")"
+	_ok=$((_ok + 1))
+	write_count "$SUCCESS_COUNT_FILE" "$_ok"
+
+	# Recovered: opencode is healthy again and we are currently in fallback.
+	# Remove the marker and all counters, then restart multica to switch back.
+	if [ "$_ok" -ge "$THRESHOLD" ] && [ -f "$FALLBACK_MARKER" ]; then
+		log "opencode recovered after $_ok consecutive checks; restoring opencode provider"
+		rm -f "$FALLBACK_MARKER" "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" 2>/dev/null
+		/etc/init.d/multica restart >/dev/null 2>&1 || true
+	fi
+else
+	# Failure: reset the success streak, extend the failure streak.
+	write_count "$SUCCESS_COUNT_FILE" 0
+	_fail="$(read_count "$FAIL_COUNT_FILE")"
+	_fail=$((_fail + 1))
+	write_count "$FAIL_COUNT_FILE" "$_fail"
+
+	# Degraded: opencode has failed enough times.  Drop the fallback marker
+	# and restart multica so it comes up on the pi provider.
+	if [ "$_fail" -ge "$THRESHOLD" ] && [ ! -f "$FALLBACK_MARKER" ]; then
+		log "opencode failed $_fail consecutive checks; falling back to pi provider"
+		touch "$FALLBACK_MARKER" 2>/dev/null || true
+		/etc/init.d/multica restart >/dev/null 2>&1 || true
+	fi
+fi
+
+exit 0

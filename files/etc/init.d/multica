@@ -150,6 +150,14 @@ start_service() {
 			runtime_provider="pi"
 		fi
 	fi
+	# Automatic runtime fallback: multica-runtime-guard drops this marker
+	# after opencode fails 3 consecutive health checks.  Force pi until the
+	# guard confirms opencode has recovered (it removes the marker and
+	# restarts this service).
+	if [ "$runtime_provider" = "opencode" ] && [ -f /data/multica/.runtime_fallback_to_pi ]; then
+		log_error "opencode runtime marked unhealthy by guard; falling back to pi provider"
+		runtime_provider="pi"
+	fi
 	workspaces_root="$(cfg workspaces_root '/data/multica/workspaces')"
 	max_tasks="$(cfg max_concurrent_tasks '1')"
 	poll_interval="$(cfg poll_interval '30s')"
@@ -247,6 +255,34 @@ start_service() {
 EOF
 	chmod 600 "$config_tmp"
 	mv -f "$config_tmp" "$config_json"
+
+	# Clean stale opencode locks before spawning the daemon.  A killed
+	# opencode process (SSH drop, timeout, OOM) leaves its .lock file; the
+	# daemon's 6s per-task budget then kills every new `opencode run` that
+	# blocks waiting for the orphaned lock.  Only needed when opencode is
+	# the active provider.
+	if [ "$runtime_provider" = "opencode" ]; then
+		_oc_lock_dir="/data/opencode/state/opencode/locks"
+		_oc_cleaned=0
+		if [ -d "$_oc_lock_dir" ]; then
+			for _oc_lf in "$_oc_lock_dir"/*.lock; do
+				[ -f "$_oc_lf" ] || continue
+				_oc_pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$_oc_lf" 2>/dev/null | head -1)"
+				[ -n "$_oc_pid" ] || continue
+				[ "$_oc_pid" -gt 0 ] 2>/dev/null || continue
+				if ! kill -0 "$_oc_pid" 2>/dev/null; then
+					rm -f "$_oc_lf"
+					_oc_cleaned=1
+				fi
+			done
+		fi
+		if [ "$_oc_cleaned" -eq 1 ]; then
+			rm -f /data/opencode/data/opencode/opencode.db-wal \
+			      /data/opencode/data/opencode/opencode.db-shm 2>/dev/null || true
+			log_error "cleaned stale opencode locks before daemon start"
+		fi
+		unset _oc_lock_dir _oc_cleaned _oc_lf _oc_pid
+	fi
 
 	procd_open_instance daemon
 	procd_set_param command "$prog" daemon start --foreground \
