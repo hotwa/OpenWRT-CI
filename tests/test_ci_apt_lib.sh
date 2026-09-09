@@ -218,11 +218,15 @@ if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
   printf 'deb http://mirrors.cloud.tencent.com/ubuntu jammy main\n' > "$APT_ROOT/sources.list"
   chmod -R a-w "$APT_ROOT"
   chmod 0555 "$APT_ROOT"
+  # Copy the lib to a world-readable location: on GitHub runners /home/runner
+  # is 0700, so `nobody` cannot `cd` into the checkout and a `cd $ROOT_DIR`
+  # gate would silently exit 9 with no WARN, failing the loudness assertion.
+  cp "$LIB" "$RO_ROOT/ci-apt-lib.sh"
+  chmod 0644 "$RO_ROOT/ci-apt-lib.sh"
 
   set +e
   sudo -n -u nobody -- bash -c "
-    cd '$ROOT_DIR' || exit 9
-    . Scripts/ci-apt-lib.sh
+    . '$RO_ROOT/ci-apt-lib.sh'
     reset_ubuntu_mirrors '$APT_ROOT'
     exit \$?
   " >"$TMP/r8.log" 2>&1
