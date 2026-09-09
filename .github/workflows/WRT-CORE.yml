@@ -322,22 +322,29 @@ jobs:
           # after ~1h15m stuck inside this step). One in-band retry covers
           # transient archive failures; the step always makes progress or fails
           # loudly instead of hanging.
+          # NOTE: timeout is an external command and cannot exec a shell
+          # function, so sudo is inlined here instead of calling run_with_sudo.
           run_apt() {
-            timeout 600 run_with_sudo apt -yqq \
-              -o Acquire::Retries=5 \
-              -o Acquire::http::Timeout=60 \
-              -o Acquire::https::Timeout=60 \
-              -o Acquire::ftp::Timeout=60 \
-              "$@" || {
-                echo "WARN: apt $* failed or timed out; retrying once in 20s" >&2
-                sleep 20
-                timeout 600 run_with_sudo apt -yqq \
-                  -o Acquire::Retries=5 \
-                  -o Acquire::http::Timeout=60 \
-                  -o Acquire::https::Timeout=60 \
-                  -o Acquire::ftp::Timeout=60 \
-                  "$@"
-              }
+            if [ -n "$SUDO" ]; then
+              _apt_impl() { timeout 600 sudo -E apt -yqq \
+                -o Acquire::Retries=5 \
+                -o Acquire::http::Timeout=60 \
+                -o Acquire::https::Timeout=60 \
+                -o Acquire::ftp::Timeout=60 \
+                "$@"; }
+            else
+              _apt_impl() { timeout 600 apt -yqq \
+                -o Acquire::Retries=5 \
+                -o Acquire::http::Timeout=60 \
+                -o Acquire::https::Timeout=60 \
+                -o Acquire::ftp::Timeout=60 \
+                "$@"; }
+            fi
+            if ! _apt_impl "$@"; then
+              echo "WARN: apt $* failed or timed out; retrying once in 20s" >&2
+              sleep 20
+              _apt_impl "$@"
+            fi
           }
 
           reset_ubuntu_mirrors() {
@@ -377,12 +384,21 @@ jobs:
           # firefox on ubuntu-24.04 runners is a snap; `apt purge firefox` can
           # block on snapd in headless runners. Bound it tightly and treat
           # timeout/failure as non-fatal (the free-disk-space step already
-          # removes most large preinstalled packages).
-          timeout 300 run_with_sudo apt -yqq purge firefox \
-            -o Acquire::Retries=5 \
-            -o Acquire::http::Timeout=60 \
-            -o Acquire::https::Timeout=60 \
-            || echo "WARN: firefox purge skipped (timeout or already absent)"
+          # removes most large preinstalled packages). sudo is inlined because
+          # timeout cannot exec the run_with_sudo shell function.
+          if [ -n "$SUDO" ]; then
+            timeout 300 sudo -E apt -yqq purge firefox \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=60 \
+              -o Acquire::https::Timeout=60 \
+              || echo "WARN: firefox purge skipped (timeout or already absent)"
+          else
+            timeout 300 apt -yqq purge firefox \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=60 \
+              -o Acquire::https::Timeout=60 \
+              || echo "WARN: firefox purge skipped (timeout or already absent)"
+          fi
           apt_retry_update
           run_apt autoremove --purge
           run_apt autoclean
@@ -1102,6 +1118,7 @@ jobs:
             echo "NOTE: a green save step is necessary but not proof of a usable remote cache entry."
           else
             echo "::warning::no new cache generation was reliably published (outcome=${SAVE_OUTCOME:-<not-run>}); the previously restored cache was left untouched (nothing deleted)."
+          fi
 
       - name: Machine Information
         run: |
