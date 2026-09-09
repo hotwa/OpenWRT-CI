@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RETRY_HELPER="$ROOT_DIR/Scripts/retry.sh"
 PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
+INIT_ENV="$ROOT_DIR/Scripts/ci_init_environment.sh"
 
 [ -f "$RETRY_HELPER" ] || { echo "missing retry helper"; exit 1; }
 [ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
 [ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
+[ -f "$INIT_ENV" ] || { echo "missing Scripts/ci_init_environment.sh"; exit 1; }
 
 grep -q '^retry_cmd()' "$RETRY_HELPER" || {
   echo "retry helper does not define retry_cmd"
@@ -25,13 +27,13 @@ grep -q 'retry_cmd 5 15 git -C "\$REPO_NAME" fetch --depth=1 origin "\$PKG_COMMI
   exit 1
 }
 
-grep -q 'dos2unix "\$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"' "$WORKFLOW" || {
-  echo "workflow does not normalize the bundled init script before running it"
+grep -Fq "sed -i 's/\r$//'" "$INIT_ENV" || {
+  echo "ci_init_environment.sh does not normalize the bundled init script line endings"
   exit 1
 }
 
-grep -q '\${SUDO} bash "\$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"' "$WORKFLOW" || {
-  echo "workflow does not run the bundled init script"
+grep -Fq 'timeout --kill-after=30 3600 bash "$GITHUB_WORKSPACE/Scripts/ci_init_environment.sh"' "$WORKFLOW" || {
+  echo "workflow does not run the unified init environment bootstrap under the 60min hard bound"
   exit 1
 }
 

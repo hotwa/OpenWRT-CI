@@ -10,33 +10,19 @@ RED_COLOR="\033[31m"
 YELLOW_COLOR="\033[33m"
 
 # ---------------------------------------------------------------------------
-# CI hardening: bound every apt invocation with a hard timeout and apt-level
-# retries.  A stalled archive/network previously wedged GitHub Actions
-# "Initialization Environment" for >1h (hosted runner lost communication with
-# the server).  One in-band retry covers transient archive failures; a hard
-# timeout guarantees the step makes progress or fails loudly instead of
-# hanging.  Function shadows `apt` for every call in this script only.
+# CI hardening: all apt calls in this script go through the shared
+# ci-apt-lib.sh library (aptx / aptx_retry / aptx_update).  The library bounds
+# every command with a hard timeout (APT_CMD_TIMEOUT, default 300s), bounds
+# retries (APT_MAX_RETRIES, default 2) and normalizes Ubuntu mirrors to the
+# official HTTPS archives before update, with exactly one fallback attempt.
+# A stalled archive/network previously wedged GitHub Actions "Initialization
+# Environment" for >1h (hosted runner lost communication with the server);
+# the library guarantees the step makes progress or fails loudly instead of
+# hanging.  This script is run as root, so SUDO stays empty here.
 # ---------------------------------------------------------------------------
-apt() {
-	local rc=0
-	timeout 900 /usr/bin/apt -yqq \
-		-o Acquire::Retries=5 \
-		-o Acquire::http::Timeout=60 \
-		-o Acquire::https::Timeout=60 \
-		-o Acquire::ftp::Timeout=60 \
-		"$@" || rc=$?
-	if [ "$rc" -ne 0 ]; then
-		echo "WARN: apt $* failed (rc=$rc); retrying once in 20s" >&2
-		sleep 20
-		timeout 900 /usr/bin/apt -yqq \
-			-o Acquire::Retries=5 \
-			-o Acquire::http::Timeout=60 \
-			-o Acquire::https::Timeout=60 \
-			-o Acquire::ftp::Timeout=60 \
-			"$@" || rc=$?
-	fi
-	return "$rc"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUDO=""
+. "$SCRIPT_DIR/ci-apt-lib.sh"
 
 function __error_msg() {
 	echo -e "${RED_COLOR}[ERROR]${DEFAULT_COLOR} $*"
@@ -136,7 +122,7 @@ function check_network() {
 }
 
 function update_apt_source() {
-	__info_msg "Updating apt source lists..."
+	__info_msg "Checking apt transport/keyring packages (mirror + update already done by caller)..."
 	set -x
 
 	# Root-cause fix: the previous version registered six third-party apt
@@ -151,9 +137,13 @@ function update_apt_source() {
 	#   - llvm    -> explicitly removed by WRT-CORE "Free Disk Space"
 	#   - yarn    -> not used by the build
 	# The default Ubuntu archive on the runner is reachable and fast.
-	apt update -y
-	apt install -y apt-transport-https gnupg2
-	apt update -y
+	#
+	# Responsibility boundary: Scripts/ci_init_environment.sh (the single
+	# Initialization Environment entrypoint) is the ONLY place that runs
+	# mirror normalization + aptx_update. This script deliberately does NOT
+	# call aptx_update again — running `apt-get update` twice in one
+	# initialization burns the total budget for zero benefit.
+	aptx_retry install -y apt-transport-https gnupg2
 
 	set +x
 }
@@ -162,8 +152,8 @@ function install_dependencies() {
 	__info_msg "Installing dependencies..."
 	set -x
 
-	apt full-upgrade -y $BPO_FLAG
-	apt install -y $BPO_FLAG ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+	aptx_retry full-upgrade -y $BPO_FLAG
+	aptx_retry install -y $BPO_FLAG ack antlr3 asciidoc autoconf automake autopoint binutils bison \
 		build-essential bzip2 ccache cmake cpio curl device-tree-compiler ecj fakeroot \
 		fastjar flex gawk gettext genisoimage gnutls-dev gperf haveged help2man intltool \
 		irqbalance jq lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
@@ -179,16 +169,16 @@ function install_dependencies() {
 		pip3 config set install.trusted-host "https://mirrors.aliyun.com"
 	fi
 
-	apt install -y git
+	aptx_retry install -y git
 
-	apt install -y $BPO_FLAG "gcc-$GCC_VERSION" "g++-$GCC_VERSION" "gcc-$GCC_VERSION-multilib" "g++-$GCC_VERSION-multilib"
+	aptx_retry install -y $BPO_FLAG "gcc-$GCC_VERSION" "g++-$GCC_VERSION" "gcc-$GCC_VERSION-multilib" "g++-$GCC_VERSION-multilib"
 	for i in "gcc-$GCC_VERSION" "g++-$GCC_VERSION" "gcc-ar-$GCC_VERSION" "gcc-nm-$GCC_VERSION" "gcc-ranlib-$GCC_VERSION"; do
 		ln -svf "$i" "/usr/bin/${i%-$GCC_VERSION}"
 	done
 	ln -svf "/usr/bin/g++" "/usr/bin/c++"
 	[ -e "/usr/include/asm" ] || ln -svf "/usr/include/$(gcc -dumpmachine)/asm" "/usr/include/asm"
 
-	apt clean -y
+	aptx_retry clean -y
 
 	# Configure the Go module proxy at the user level so downstream builds
 	# resolve modules reliably. tests/test_go_module_stability.sh asserts

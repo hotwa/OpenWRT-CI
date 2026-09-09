@@ -271,7 +271,15 @@ jobs:
           else
             SUDO=""
           fi
-          ${SUDO} apt -yqq install bc
+          # bc is preinstalled on GitHub-hosted runners; bound this anyway so
+          # a stalled apt mirror cannot wedge the step before the IE 60-min
+          # hard bound even starts.
+          timeout 300 ${SUDO} apt-get -yqq \
+            -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install bc \
+            || echo "::warning::bc install failed or timed out (preinstalled on hosted runners)"
 
       - name: Free Disk Space
         if: ${{ !contains(inputs.RUNNER_LABELS, 'self-hosted') }}
@@ -297,120 +305,29 @@ jobs:
           echo "WRT_IP=$LAN_IP" >> "$GITHUB_ENV"
 
       - name: Initialization Environment
-        timeout-minutes: 120
+        timeout-minutes: 75
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          . $GITHUB_WORKSPACE/Scripts/retry.sh
           if command -v sudo >/dev/null 2>&1; then
             SUDO="sudo -E"
           else
             SUDO=""
           fi
 
-          run_with_sudo() {
-            if [ -n "$SUDO" ]; then
-              sudo -E "$@"
-            else
-              "$@"
-            fi
-          }
-
-          # CI hardening: bound every apt invocation with a hard timeout and
-          # apt-level retries so a stalled mirror/network cannot wedge the whole
-          # step (observed as "hosted runner lost communication with the server"
-          # after ~1h15m stuck inside this step). One in-band retry covers
-          # transient archive failures; the step always makes progress or fails
-          # loudly instead of hanging.
-          # NOTE: timeout is an external command and cannot exec a shell
-          # function, so sudo is inlined here instead of calling run_with_sudo.
-          run_apt() {
-            if [ -n "$SUDO" ]; then
-              _apt_impl() { timeout 600 sudo -E apt -yqq \
-                -o Acquire::Retries=5 \
-                -o Acquire::http::Timeout=60 \
-                -o Acquire::https::Timeout=60 \
-                -o Acquire::ftp::Timeout=60 \
-                "$@"; }
-            else
-              _apt_impl() { timeout 600 apt -yqq \
-                -o Acquire::Retries=5 \
-                -o Acquire::http::Timeout=60 \
-                -o Acquire::https::Timeout=60 \
-                -o Acquire::ftp::Timeout=60 \
-                "$@"; }
-            fi
-            if ! _apt_impl "$@"; then
-              echo "WARN: apt $* failed or timed out; retrying once in 20s" >&2
-              sleep 20
-              _apt_impl "$@"
-            fi
-          }
-
-          reset_ubuntu_mirrors() {
-            echo "WARN: resetting Ubuntu mirrors to official archives before retrying apt update" >&2
-
-            if [ -f /etc/apt/sources.list ]; then
-              run_with_sudo sed -i \
-                -e 's,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
-                -e 's,https\?://mirrors\.ustc\.edu\.cn/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
-                -e 's,https\?://[^ ]*/ubuntu \([^ ]*-security\) ,http://security.ubuntu.com/ubuntu \1 ,g' \
-                /etc/apt/sources.list
-            fi
-
-            while IFS= read -r sources_file; do
-              run_with_sudo sed -i \
-                -e 's,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
-                -e 's,https\?://mirrors\.ustc\.edu\.cn/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
-                -e '/^URIs: /s,https\?://mirrors\.cloud\.tencent\.com/ubuntu/,http://archive.ubuntu.com/ubuntu/,g' \
-                "$sources_file"
-            done < <(find /etc/apt -maxdepth 2 -type f \( -name '*.sources' -o -name '*.list' \) 2>/dev/null)
-
-            run_with_sudo rm -rf /var/lib/apt/lists/*
-          }
-
-          apt_retry_update() {
-            if retry_cmd 3 15 run_apt update; then
-              return 0
-            fi
-
-            if grep -RqsE 'mirrors\.cloud\.tencent\.com/ubuntu|mirrors\.ustc\.edu\.cn/ubuntu' /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/*.sources 2>/dev/null; then
-              reset_ubuntu_mirrors
-            fi
-
-            retry_cmd 3 15 run_apt update
-          }
-
-          # firefox on ubuntu-24.04 runners is a snap; `apt purge firefox` can
-          # block on snapd in headless runners. Bound it tightly and treat
-          # timeout/failure as non-fatal (the free-disk-space step already
-          # removes most large preinstalled packages). sudo is inlined because
-          # timeout cannot exec the run_with_sudo shell function.
-          if [ -n "$SUDO" ]; then
-            timeout 300 sudo -E apt -yqq purge firefox \
-              -o Acquire::Retries=5 \
-              -o Acquire::http::Timeout=60 \
-              -o Acquire::https::Timeout=60 \
-              || echo "WARN: firefox purge skipped (timeout or already absent)"
-          else
-            timeout 300 apt -yqq purge firefox \
-              -o Acquire::Retries=5 \
-              -o Acquire::http::Timeout=60 \
-              -o Acquire::https::Timeout=60 \
-              || echo "WARN: firefox purge skipped (timeout or already absent)"
-          fi
-          apt_retry_update
-          run_apt autoremove --purge
-          run_apt autoclean
-          run_apt clean
-          retry_cmd 3 15 run_apt install dos2unix libfuse-dev libncurses-dev libncursesw5-dev libssl-dev libelf-dev musl musl-tools qemu-user qemu-user-static
-          dos2unix "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh"
-          # Outer hard bound (30 min) on the whole environment script so that
-          # even an unexpected unbounded command inside cannot wedge the step
-          # for the ~1h15m it previously took for GitHub to declare the runner
-          # lost; we fail loudly instead.
-          timeout --kill-after=30 1800 ${SUDO} bash "$GITHUB_WORKSPACE/Scripts/init_build_environment.sh" \
-            || { echo "::error::init_build_environment.sh failed or exceeded the 30min hard timeout"; exit 1; }
+          # Single 60-minute hard bound over the WHOLE environment bootstrap
+          # (firefox purge, Ubuntu mirror normalization, apt update,
+          # dependency install and init_build_environment.sh). Every apt call
+          # inside goes through Scripts/ci-apt-lib.sh (apt-get only, bounded
+          # per-command timeout, bounded retries, single official-archive
+          # fallback). A stalled apt mirror now fails this step loudly within
+          # 60 minutes instead of wedging the runner for the ~1h15m GitHub
+          # previously took to declare it lost. Sized against the longest
+          # successful baseline run (RE-SS-01 Initialization Environment, 23
+          # min) with headroom; step timeout-minutes (75) exceeds the inner
+          # bound so the outer kill can surface first.
+          timeout --kill-after=30 3600 bash "$GITHUB_WORKSPACE/Scripts/ci_init_environment.sh" \
+            || { echo "::error::Initialization Environment failed or exceeded the 60min hard timeout"; exit 1; }
           if command -v go >/dev/null 2>&1 && go version 2>/dev/null | grep -Eq 'go1\.(2[6-9]|[3-9][0-9])(\.|$)'; then
             echo "GO_INSTALLED=true" >> "$GITHUB_ENV"
           else
