@@ -2,10 +2,17 @@
 # multica-runtime-guard — monitor opencode runtime health and auto-fallback
 #
 # Periodically tests whether the opencode runtime is usable.  After THRESHOLD
-# consecutive failures it drops a marker that forces /etc/init.d/multica to
-# use the pi provider, then restarts multica.  After THRESHOLD consecutive
-# successes it removes the marker and restarts multica again so tasks return
-# to opencode.
+# consecutive failures it truly disables the opencode runtime (removes exec
+# bits from both the /usr/bin wrapper and the /data real binary, clears stale
+# locks) and drops a marker, then restarts multica so tasks move to the pi
+# provider.  After THRESHOLD consecutive successes it restores exec bits,
+# removes the marker and restarts multica again so tasks return to opencode.
+#
+# Why not just flip UCI runtime_provider?  That value is consumed by
+# /etc/init.d/multica for bootstrap/migration decisions but is NOT written to
+# the daemon config.json or env, so the daemon would keep registering and
+# dispatching opencode tasks.  Removing exec bits on the wrapper and real
+# binary is what actually forces the runtime to become unavailable.
 #
 # Recommended invocation: every 5 minutes via cron, e.g.
 #   */5 * * * * /usr/sbin/multica-runtime-guard
@@ -20,6 +27,10 @@ SUCCESS_COUNT_FILE="$MULTICA_DATA_DIR/.opencode_ok_count"
 FALLBACK_MARKER="$MULTICA_DATA_DIR/.runtime_fallback_to_pi"
 THRESHOLD=3
 TEST_TIMEOUT=15
+OC_WRAPPER="/usr/bin/opencode"
+OC_REAL_BIN="/data/opt/opencode/current/bin/opencode"
+OC_LOCK_DIR="/data/opencode/state/opencode/locks"
+OC_DB_DIR="/data/opencode/data/opencode"
 
 log() {
 	logger -t multica-guard "$*"
@@ -38,22 +49,14 @@ case "$_enabled" in
 	*) exit 0 ;;
 esac
 
-# Resolve the configured (or default) runtime provider.  An explicit UCI
-# value wins; otherwise the build capability decides, matching the logic in
-# /etc/init.d/multica.
-_provider="$(uci -q get multica.main.runtime_provider 2>/dev/null || true)"
-if [ -z "$_provider" ]; then
-	if [ -f /etc/opencode/release-url ]; then
-		_provider="opencode"
-	else
-		_provider="pi"
-	fi
-fi
-
 # If multica is explicitly configured for pi (not opencode, not default),
-# there is no opencode runtime to guard.  Clean up any stale state and exit.
-if [ "$_provider" != "opencode" ]; then
-	rm -f "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" "$FALLBACK_MARKER" 2>/dev/null
+# there is no opencode runtime to guard.  Restore any prior disable state and
+# clean up stale counters, then exit.
+_provider="$(uci -q get multica.main.runtime_provider 2>/dev/null || true)"
+if [ -n "$_provider" ] && [ "$_provider" != "opencode" ]; then
+	rm -f "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" "$FALLBACK_MARKER" 2>/dev/null || true
+	[ -x "$OC_WRAPPER" ] || chmod 755 "$OC_WRAPPER" 2>/dev/null || true
+	[ -f "$OC_REAL_BIN" ] && [ -x "$OC_REAL_BIN" ] || chmod 755 "$OC_REAL_BIN" 2>/dev/null || true
 	exit 0
 fi
 
@@ -73,17 +76,43 @@ write_count() {
 	printf '%s\n' "$2" > "$1" 2>/dev/null || true
 }
 
-# Lightweight opencode health probe.  The wrapper itself runs stale-lock
-# cleanup before exec, so a successful --version means the binary is
-# installed, executable, and able to start without hanging on a stale lock.
+# Make the opencode runtime truly uninvocable for the multica daemon.
+disable_opencode() {
+	chmod 000 "$OC_WRAPPER" 2>/dev/null || true
+	[ -f "$OC_REAL_BIN" ] && chmod 000 "$OC_REAL_BIN" 2>/dev/null || true
+	rm -f "$OC_LOCK_DIR"/*.lock 2>/dev/null || true
+	rm -f "$OC_DB_DIR"/opencode.db-wal "$OC_DB_DIR"/opencode.db-shm 2>/dev/null || true
+}
+
+# Restore exec bits so opencode can be used again.
+enable_opencode() {
+	chmod 755 "$OC_WRAPPER" 2>/dev/null || true
+	[ -f "$OC_REAL_BIN" ] && chmod 755 "$OC_REAL_BIN" 2>/dev/null || true
+}
+
+# Lightweight opencode health probe.
+# 1. The wrapper must exist and be executable (guard may have disabled it).
+# 2. `--version` must complete within TEST_TIMEOUT; the wrapper itself runs
+#    stale-lock cleanup before exec, so success means it can start.
+# 3. Even when --version passes, repeated `status=failed` entries for opencode
+#    in the daemon log mean per-task invocations are still failing (init hangs
+#    that --version does not exercise); treat that as unhealthy too.
 test_opencode() {
-	if [ ! -x /usr/bin/opencode ]; then
+	if [ ! -x "$OC_WRAPPER" ]; then
 		return 1
 	fi
-	if timeout "$TEST_TIMEOUT" /usr/bin/opencode --version >/dev/null 2>&1; then
-		return 0
+	if ! timeout "$TEST_TIMEOUT" "$OC_WRAPPER" --version >/dev/null 2>&1; then
+		return 1
 	fi
-	return 1
+	if [ -f "$MULTICA_DATA_DIR/daemon.log" ]; then
+		_recent_fail="$(tail -n 200 "$MULTICA_DATA_DIR/daemon.log" 2>/dev/null \
+			| grep -E 'opencode.*status=failed|status=failed.*opencode' | wc -l)"
+		if [ "${_recent_fail:-0}" -ge 3 ]; then
+			log "opencode --version ok but daemon log shows $_recent_fail recent opencode failures"
+			return 1
+		fi
+	fi
+	return 0
 }
 
 if test_opencode; then
@@ -94,10 +123,12 @@ if test_opencode; then
 	write_count "$SUCCESS_COUNT_FILE" "$_ok"
 
 	# Recovered: opencode is healthy again and we are currently in fallback.
-	# Remove the marker and all counters, then restart multica to switch back.
+	# Restore exec bits, remove the marker and all counters, then restart
+	# multica to switch back.
 	if [ "$_ok" -ge "$THRESHOLD" ] && [ -f "$FALLBACK_MARKER" ]; then
 		log "opencode recovered after $_ok consecutive checks; restoring opencode provider"
-		rm -f "$FALLBACK_MARKER" "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" 2>/dev/null
+		enable_opencode
+		rm -f "$FALLBACK_MARKER" "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" 2>/dev/null || true
 		/etc/init.d/multica restart >/dev/null 2>&1 || true
 	fi
 else
@@ -107,10 +138,11 @@ else
 	_fail=$((_fail + 1))
 	write_count "$FAIL_COUNT_FILE" "$_fail"
 
-	# Degraded: opencode has failed enough times.  Drop the fallback marker
-	# and restart multica so it comes up on the pi provider.
+	# Degraded: opencode has failed enough times.  Disable the runtime, drop
+	# the fallback marker and restart multica so it comes up on pi.
 	if [ "$_fail" -ge "$THRESHOLD" ] && [ ! -f "$FALLBACK_MARKER" ]; then
 		log "opencode failed $_fail consecutive checks; falling back to pi provider"
+		disable_opencode
 		touch "$FALLBACK_MARKER" 2>/dev/null || true
 		/etc/init.d/multica restart >/dev/null 2>&1 || true
 	fi

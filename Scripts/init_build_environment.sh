@@ -9,6 +9,35 @@ GREEN_COLOR="\033[32m"
 RED_COLOR="\033[31m"
 YELLOW_COLOR="\033[33m"
 
+# ---------------------------------------------------------------------------
+# CI hardening: bound every apt invocation with a hard timeout and apt-level
+# retries.  A stalled archive/network previously wedged GitHub Actions
+# "Initialization Environment" for >1h (hosted runner lost communication with
+# the server).  One in-band retry covers transient archive failures; a hard
+# timeout guarantees the step makes progress or fails loudly instead of
+# hanging.  Function shadows `apt` for every call in this script only.
+# ---------------------------------------------------------------------------
+apt() {
+	local rc=0
+	timeout 900 /usr/bin/apt -yqq \
+		-o Acquire::Retries=5 \
+		-o Acquire::http::Timeout=60 \
+		-o Acquire::https::Timeout=60 \
+		-o Acquire::ftp::Timeout=60 \
+		"$@" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		echo "WARN: apt $* failed (rc=$rc); retrying once in 20s" >&2
+		sleep 20
+		timeout 900 /usr/bin/apt -yqq \
+			-o Acquire::Retries=5 \
+			-o Acquire::http::Timeout=60 \
+			-o Acquire::https::Timeout=60 \
+			-o Acquire::ftp::Timeout=60 \
+			"$@" || rc=$?
+	fi
+	return "$rc"
+}
+
 function __error_msg() {
 	echo -e "${RED_COLOR}[ERROR]${DEFAULT_COLOR} $*"
 }
