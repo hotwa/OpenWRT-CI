@@ -235,7 +235,12 @@ if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
   [ "$RC" -ne 0 ] || fail "read-only non-root mirror normalization must return non-zero"
   grep -q 'WARN: mirror normalization failed' "$TMP/r8.log" \
     || fail "read-only non-root failure must be loud (WARN expected)"
-  rm -rf "$RO_ROOT"
+  # Restore write permission before cleanup: chmod -R a-w also removed the
+  # owner's write bit, and a bare `rm -rf` under a non-root Actions runner
+  # then fails with EACCES (root hides this because CAP_DAC_OVERRIDE), which
+  # set -e turns into a silent exit 1 right before the final PASS line.
+  chmod -R u+w "$RO_ROOT" 2>/dev/null || true
+  rm -rf "$RO_ROOT" 2>/dev/null || true
 fi
 
 echo "ci apt lib test passed"
