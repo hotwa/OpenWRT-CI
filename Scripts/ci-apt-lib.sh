@@ -121,9 +121,16 @@ SECURITY = 'https://security.ubuntu.com/ubuntu'
 failed = 0
 
 def is_ubuntu_archive(uri):
-    """True only for a real Ubuntu archive/security mirror path (a single
-    path segment /ubuntu or /ubuntu-security).  Third-party paths such as
-    ppa.launchpad.net/<owner>/<repo>/ubuntu (multi-segment) are left alone."""
+    """True for a real Ubuntu archive/security mirror path or the GitHub
+    Actions runner's mirror+file: mechanism (which serves the Ubuntu
+    archive).  Third-party paths such as ppa.launchpad.net/<owner>/<repo>/
+    ubuntu (multi-segment) are left alone."""
+    if uri.startswith('mirror+file:'):
+        # GitHub-hosted runner mirrorlist mechanism. It only serves the
+        # Ubuntu archive, but a partial mirror (e.g. azure.archive.ubuntu.com
+        # serving only noble-security) silently leaves the main-suite index
+        # missing, so normalize it to the official archives as well.
+        return True
     try:
         from urllib.parse import urlparse
         path = urlparse(uri).path.rstrip('/')
@@ -161,9 +168,9 @@ for path in files:
             return 'URIs:' + m.group(2) + base
 
         block = re.sub(
-            r'(?m)^(deb(?:\s*-src)?(?:\s+\[[^\]]*\])?)[ \t]+(https?://\S+?)[ \t]+(\S+)(.*)$',
+            r'(?m)^(deb(?:\s*-src)?(?:\s+\[[^\]]*\])?)[ \t]+(https?://\S+?|mirror\+file:[^\s]+)[ \t]+(\S+)(.*)$',
             repl_deb, block)
-        block = re.sub(r'(?m)^(URIs:)([ \t]+)(https?://\S+)$', repl_uri, block)
+        block = re.sub(r'(?m)^(URIs:)([ \t]+)(https?://\S+|mirror\+file:[^\s]+)$', repl_uri, block)
         out.append(block)
     try:
         open(path, 'w', encoding='utf-8').write(''.join(out))

@@ -66,6 +66,19 @@ Suites: jammy-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
+cat > "$APT_ROOT/sources.list.d/runner.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble noble-updates noble-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
 
 reset_ubuntu_mirrors "$APT_ROOT" >/dev/null 2>&1
 
@@ -73,6 +86,14 @@ grep -q '^URIs: https://archive\.ubuntu\.com/ubuntu$' "$APT_ROOT/sources.list.d/
   || fail "deb822: archive stanza not normalized"
 grep -q '^URIs: https://security\.ubuntu\.com/ubuntu$' "$APT_ROOT/sources.list.d/ubuntu.sources" \
   || fail "deb822: security stanza not normalized to security.ubuntu.com"
+# GitHub runner mirror+file mechanism must be replaced with official archives
+# (a partial mirror silently leaves the main-suite index missing).
+grep -q '^URIs: https://archive\.ubuntu\.com/ubuntu$' "$APT_ROOT/sources.list.d/runner.sources" \
+  || fail "deb822: mirror+file archive stanza not normalized to official archive"
+grep -q '^URIs: https://security\.ubuntu\.com/ubuntu$' "$APT_ROOT/sources.list.d/runner.sources" \
+  || fail "deb822: mirror+file security stanza not normalized to security.ubuntu.com"
+grep -q 'mirror+file:' "$APT_ROOT/sources.list.d/runner.sources" \
+  && fail "deb822: mirror+file must be fully replaced"
 
 # ---------------------------------------------------------------------------
 # 3) aptx uses apt-get (never `apt`), non-interactive, bounded retries
