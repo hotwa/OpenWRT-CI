@@ -301,9 +301,10 @@ EOF
 	fi
 
 	procd_open_instance daemon
-	# Set a real initial CWD, not only a prompt or PWD environment hint. Use
-	# positional arguments so paths are never interpolated as shell commands.
-	procd_set_param command /bin/sh -c 'cd "$MULTICA_WORKSPACES_ROOT" || exit 1; exec "$@"' multica-launch \
+	# Keep the daemon outside the task tree: Multica places a security marker
+	# in workspaces_root and refuses daemon start from that managed context.
+	# Task directories still use MULTICA_WORKSPACES_ROOT; never remove its marker.
+	procd_set_param command /bin/sh -c 'cd "/data/multica" || exit 1; exec "$@"' multica-launch \
 		"$prog" daemon start --foreground \
 		--max-concurrent-tasks "$max_tasks" \
 		--poll-interval "$poll_interval" \

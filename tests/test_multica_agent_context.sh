@@ -44,15 +44,26 @@ for entry in ("$uv_root", "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/us
 assert init.count('PATH="$agent_path"') == 3, "renderer, daemon and bootstrap must share PATH"
 assert 'MULTICA_WORKSPACES_ROOT="$workspaces_root" /usr/sbin/multica-device-profile write' in init
 command = re.search(r"procd_set_param command /bin/sh -c '([^']+)' multica-launch", init).group(1)
-cwd = temp / "workspaces with spaces"
+cwd = temp / "daemon data with spaces"
 cwd.mkdir()
-env = dict(os.environ, MULTICA_WORKSPACES_ROOT=str(cwd))
+workspace = cwd / "workspaces"
+marker = workspace / ".multica" / "daemon_task_context.json"
+marker.parent.mkdir(parents=True)
+marker.write_text('{"managed_by":"multica-daemon-task"}')
+# Exercise the real launch expression with only the fixed device path mapped
+# into this fixture. Existing task markers must not become daemon ancestry.
+command = command.replace('/data/multica', str(cwd))
+env = dict(os.environ, MULTICA_WORKSPACES_ROOT=str(workspace))
 result = subprocess.run(["sh", "-c", command, "multica-launch", "sh", "-c",
                          'printf "%s\\n%s\\n" "$PWD" "$1"', "probe", "argument with spaces"],
                         env=env, text=True, capture_output=True)
 assert result.returncode == 0, result.stderr
 assert result.stdout.splitlines() == [str(cwd), "argument with spaces"]
-env["MULTICA_WORKSPACES_ROOT"] = str(temp / "not-created")
+assert marker.exists(), "never delete task-context security markers"
+assert all(not (p / '.multica/daemon_task_context.json').exists()
+           for p in [cwd, *cwd.parents])
+assert 'MULTICA_WORKSPACES_ROOT="$workspaces_root"' in init
+cwd.rename(temp / 'moved-daemon-directory')
 result = subprocess.run(["sh", "-c", command, "multica-launch", "echo", "must-not-start"],
                         env=env, text=True, capture_output=True)
 assert result.returncode != 0 and "must-not-start" not in result.stdout

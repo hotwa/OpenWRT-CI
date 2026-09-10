@@ -74,7 +74,7 @@
 - **数据盘与远程备份告警**：若 `/var/run/data-runtime.status` 或 `/var/run/agent-data-backup.status` 存在，读取其中安全的状态字段并主动报告失败、未挂载、过期或未完成状态；若文件不存在，只报告“状态尚未初始化/未知”，不得猜测服务健康度、伪造成功，或自行修复。
 
 ### (1.1) 角色工作区与脚本执行
-- 开始任何角色任务时，先确认 `/data` 是真实数据分区，再在实际工作根目录（默认 `/data/multica/workspaces`）下使用 `<任务名>` 子目录；所有报告、脚本、仓库和 Python 虚拟环境都保存在这个任务目录。Multica daemon 的初始 CWD 也在配置的工作根目录，但这不是文件系统沙箱，仍需核实任务的 `pwd -P`。手动启动 Pi/OpenCode 前由调用者先进入任务目录。
+- 开始任何角色任务时，先确认 `/data` 是真实数据分区，再在实际工作根目录（默认 `/data/multica/workspaces`）下使用 `<任务名>` 子目录；所有报告、脚本、仓库和 Python 虚拟环境都保存在这个任务目录。Multica daemon 从任务树之外的 `/data/multica` 启动，不能进入带有受管任务安全标记的工作根目录启动，也不能删除标记绕过保护。这不是文件系统沙箱，仍需核实任务的 `pwd -P`。手动启动 Pi/OpenCode 前由调用者先进入任务目录。
 - 处理标准库脚本时直接使用 `python3 script.py`。需要第三方 Python 依赖时，在已核实的 `/data` 任务目录中使用 `uv venv .venv`，再在该虚拟环境中安装；严禁向 `/opt`、全局解释器或 Node runtime 写入包。
 - 若 `python3` 不存在，先检查 PATH、`/usr/local/bin/python3`、`df -h /data` 与 `logread -e uv-runtime`；确需恢复且获得用户授权后才运行 `/usr/sbin/uv-runtime-provision`。该过程只读取固件内置镜像，解释器/缓存只写 `/data/uv`，不得联网下载解释器或写 `/opt`。
 

@@ -28,7 +28,7 @@ node, pi, opencode and multica under `/usr/bin`.
 
 - Multica now shares a generation-first complete PATH across role discovery,
   daemon and bootstrap. Native sbin tools are not mistaken for missing packages.
-- The daemon starts in its configured `/data` workspace root; task-level CWD
+- The daemon starts in `/data/multica`, outside the managed task tree; task-level CWD
   and writes still need verification. This is not a filesystem sandbox.
 - The dynamic role card reports actual discovered tool paths, missing-command
   status and configured workspace root. Discovery does not execute OpenCode's
