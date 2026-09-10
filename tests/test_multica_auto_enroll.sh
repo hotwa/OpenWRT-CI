@@ -59,7 +59,10 @@ grep -Fq 'agent_path="/data/agent-runtime/current/node/bin:/data/agent-runtime/c
 }
 grep -Fq 'PATH="$agent_path"' "$INIT_SCRIPT"
 grep -Fq 'MULTICA_WORKSPACES_ROOT="$workspaces_root" /usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
-grep -Fq 'cd "$MULTICA_WORKSPACES_ROOT" || exit 1; exec "$@"' "$INIT_SCRIPT"
+grep -Fq 'cd "/data/multica" || exit 1; exec "$@"' "$INIT_SCRIPT" || {
+	echo "Multica daemon must start outside the managed task workspace"
+	exit 1
+}
 grep -Fq '/data/opencode/config/opencode' "$INIT_SCRIPT"
 grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
