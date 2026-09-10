@@ -296,6 +296,7 @@ state_value() {
 
 write_agent_state() {
 	local state_file="$1" agent_id="$2" runtime_id="$3" instructions_hash="$4" agent_name="$5"
+	local custom_args="${6:-}"
 	local temporary="${state_file}.new.$$"
 
 	umask 077
@@ -304,6 +305,7 @@ write_agent_state() {
 		printf 'runtime_id=%s\n' "$runtime_id"
 		printf 'instructions_sha256=%s\n' "$instructions_hash"
 		printf 'agent_name=%s\n' "$agent_name"
+		printf 'custom_args=%s\n' "$custom_args"
 	} > "$temporary"
 	mv -f "$temporary" "$state_file"
 }
@@ -330,6 +332,33 @@ write_success_flag() {
 	mv -f "$temporary" "$flag"
 }
 
+runtime_custom_args() {
+	# OpenCode documents --auto for unattended run; Multica's legacy
+	# --dangerously-skip-permissions alone is not our compatibility guarantee.
+	# Do not use OPENCODE_PERMISSION=allow: preserve explicit deny rules and
+	# avoid changing manual sessions. Pi's extension flags are provider-only.
+	case "$1" in
+		pi) printf '%s' '["--modes","yolo"]' ;;
+		opencode) printf '%s' '["--auto"]' ;;
+		*) return 1 ;;
+	esac
+}
+
+agent_custom_args_match() {
+	"$PYTHON_BIN" - "$1" "$2" "$3" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    desired = json.loads(sys.argv[3])
+    matches = [r for r in records if isinstance(r, dict) and r.get("id") == sys.argv[2]] if isinstance(records, list) else []
+    ok = len(matches) == 1 and matches[0].get("custom_args") == desired
+except (OSError, ValueError, TypeError):
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+}
+
 try_bootstrap() {
 	local server_url="$1"
 	local expected_runtime_name="$2"
@@ -341,6 +370,8 @@ try_bootstrap() {
 	local instructions_file="${5:-}"
 	local runtime_json agent_json runtime_id runtime_device instructions instructions_hash
 	local state_file state_agent_id state_runtime_id state_hash state_name agent_id
+	local custom_args state_args
+	custom_args="$(runtime_custom_args "$expected_provider")" || return 1
 
 	server_reachable "$server_url" || return 1
 	[ -x "$MULTICA_BIN" ] || return 1
@@ -374,6 +405,7 @@ try_bootstrap() {
 	state_runtime_id="$(state_value "$state_file" runtime_id || true)"
 	state_hash="$(state_value "$state_file" instructions_sha256 || true)"
 	state_name="$(state_value "$state_file" agent_name || true)"
+	state_args="$(state_value "$state_file" custom_args || true)"
 	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
 	if [ -z "$agent_id" ]; then
 		agent_id="$(select_agent_id "$agent_json" "$agent_name" "$runtime_id" || true)"
@@ -386,20 +418,22 @@ try_bootstrap() {
 	if [ -n "$agent_id" ]; then
 		if [ "$state_runtime_id" != "$runtime_id" ] || \
 			[ "$state_hash" != "$instructions_hash" ] || \
-			[ "$state_name" != "$agent_name" ]; then
+			[ "$state_name" != "$agent_name" ] || \
+			[ "$state_args" != "$custom_args" ] || \
+			! agent_custom_args_match "$agent_json" "$agent_id" "$custom_args"; then
 			if ! "$MULTICA_BIN" agent update "$agent_id" \
 				--name "$agent_name" \
 				--runtime-id "$runtime_id" \
 				--description "本机 OpenWrt 网络与系统管理智能体" \
 				--instructions "$(cat "$instructions_file")" \
-				--custom-args '["--modes","yolo"]' \
+				--custom-args "$custom_args" \
 				--max-concurrent-tasks 1 >/dev/null 2>&1; then
 				rm -f "$agent_json"
 				return 1
 			fi
 		fi
 		rm -f "$agent_json"
-		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
 		return 0
 	fi
 
@@ -410,7 +444,7 @@ try_bootstrap() {
 		--runtime-id "$runtime_id" \
 		--description "OpenWrt 系统与网络管理智能体" \
 		--instructions "$instructions" \
-		--custom-args '["--modes","yolo"]' \
+		--custom-args "$custom_args" \
 		--max-concurrent-tasks 1 --output json > "$agent_json" 2>/dev/null; then
 		rm -f "$agent_json"
 		return 1
@@ -419,7 +453,7 @@ try_bootstrap() {
 	agent_id="$(select_created_agent_id "$agent_json" || true)"
 	rm -f "$agent_json"
 	[ -n "$agent_id" ] || return 1
-	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
 	return 0
 }
 

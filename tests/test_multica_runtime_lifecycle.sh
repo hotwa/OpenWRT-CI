@@ -93,16 +93,36 @@ grep -Fq 'try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provid
 	exit 1
 }
 
-# Both agent create and agent update must request the unattended yolo mode
-# through --custom-args so the Multica agent never prompts for confirmation.
+# Both create/update must use provider-specific unattended arguments.
+# Pi extension flags must never be passed to OpenCode.
 custom_args_count="$(grep -c -F -- '--custom-args' "$BOOTSTRAP_SCRIPT")"
 [ "$custom_args_count" = '2' ] || {
 	echo "multica-agent-bootstrap must pass --custom-args in both agent create and update (found $custom_args_count)"
 	exit 1
 }
-grep -Fq -- "--custom-args '[\"--modes\",\"yolo\"]'" "$BOOTSTRAP_SCRIPT" || {
-	echo "multica-agent-bootstrap --custom-args must request yolo mode"
-	exit 1
-}
+[ "$(runtime_custom_args pi)" = '["--modes","yolo"]' ]
+[ "$(runtime_custom_args opencode)" = '["--auto"]' ]
+if runtime_custom_args unknown >/dev/null; then
+	echo "unknown provider must not inherit unattended permissions"; exit 1
+fi
+write_agent_state "$TEST_ROOT/policy-state" agent runtime hash name '["--auto"]'
+[ "$(state_value "$TEST_ROOT/policy-state" custom_args)" = '["--auto"]' ]
+grep -Fq '[ "$state_args" != "$custom_args" ]' "$BOOTSTRAP_SCRIPT"
+[ "$(grep -Fc -- '--custom-args "$custom_args"' "$BOOTSTRAP_SCRIPT")" = 2 ]
+
+# A valid local cache must not hide stale arguments changed on the server.
+printf '%s\n' '[{"id":"a","custom_args":["--auto"]}]' > "$TEST_ROOT/args.json"
+agent_custom_args_match "$TEST_ROOT/args.json" a '["--auto"]'
+if agent_custom_args_match "$TEST_ROOT/args.json" a '["--modes","yolo"]'; then
+	echo "server argument drift was ignored"; exit 1
+fi
+printf '%s\n' '[{"id":"a"}]' > "$TEST_ROOT/args.json"
+if agent_custom_args_match "$TEST_ROOT/args.json" a '["--auto"]'; then
+	echo "missing server arguments must trigger migration"; exit 1
+fi
+printf '%s\n' 'invalid-json' > "$TEST_ROOT/args.json"
+if agent_custom_args_match "$TEST_ROOT/args.json" a '["--auto"]'; then
+	echo "malformed server metadata must not pass"; exit 1
+fi
 
 echo "multica runtime lifecycle behavior tests passed"
