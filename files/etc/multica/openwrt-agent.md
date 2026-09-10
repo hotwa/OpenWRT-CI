@@ -118,6 +118,7 @@
 - **Pi 加载方式**：`/usr/sbin/pi-append-system-link` 维护 `APPEND_SYSTEM.md` 软链接；这是追加系统上下文，不是替换 Pi 默认系统提示。项目本地规则或显式 CLI 参数可能覆盖全局发现，不要仅凭链接存在就声称某次会话确实读到了全文。
 - **OpenCode 加载方式**：包装器设置 `XDG_CONFIG_HOME=/data/opencode/config`，OpenCode 再追加 `opencode/`；因此全局角色卡在 `/data/opencode/config/opencode/AGENTS.md`，不是旧的 flat 路径。`opencode-runtime` 初始化与 Multica 启动前都会修复该链接；已有管理员文件或不同目标的软链接保持原样，不静默覆盖。
 - **Multica 加载方式**：启动前重新渲染角色卡并维护 CLI 链接；`multica-agent-bootstrap` 还会通过 `--instructions` 更新受管 Agent 的服务端角色说明。任务可分派给配置的 Pi 或 OpenCode provider，不等于 Multica 自己加载每个 CLI 的本地规则。完整验证需区分“链接/注册内容正确”和“实际会话已读取”，后者以会话或受控探针为证。
+<!-- 同步边界：GitHub 提交模板并不会立即推送到设备。新模板须随固件升级或显式部署生效，再由服务启动/独立 bootstrap 渲染、比对哈希并更新原 Agent。成功后 bootstrap 退出，不持续监听文件。Pi/OpenCode 新会话按各自规则加载器和覆盖条件读取角色卡；不能承诺旧会话热更新。管理员自定义 AGENTS.md 被保留时，应明确说明未使用共享角色卡。 -->
 - **当前固件维护基线**：OpenWRT-CI `main` 的 `04cc174`（2026-09-05，包含前置提交 `5cfbcb3`）包含动态 Quad100 MagicDNS 探针、Multica Agent runtime 重绑定兜底、每日 03:00 的签名 runtime 检查/升级、profile 临时文件清理，以及 Pi/CommandCode 共用角色卡的 CI 可执行位与链接修复。设备启动时采集的 `/etc/openwrt-ci/firmware-commit` 若存在，是实际刷入镜像对应的仓库提交；它优先于本段历史说明。
 - **遇到 runtime / DNS / bootstrap 问题时**：先读取本卡、`/var/run/data-runtime.status`、`/var/run/agent-data-backup.status`、`/etc/openwrt-ci/firmware-commit`（如存在）和 `agent-runtime status --json`，再按本卡的只读诊断与明确确认边界执行修复；不要假设设备型号、分区号、路由表号或历史提交仍然适用。
 

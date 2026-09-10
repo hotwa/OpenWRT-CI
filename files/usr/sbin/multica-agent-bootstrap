@@ -1,5 +1,12 @@
 #!/bin/sh
-# Multica bootstrap: wait for the exact local runtime, then create one agent.
+# Multica bootstrap: wait for the exact local runtime, then reconcile one agent.
+# Every service start renders the firmware role template plus local facts.
+# A changed instructions hash, name or runtime binding updates the existing
+# server Agent; only an unmatched Agent is created. .agent_initialized does
+# not skip reconciliation on the next boot. Successful reconciliation exits:
+# this is not a GitHub/file watcher and does not refresh existing CLI sessions.
+# GitHub template edits take effect after deploying/rebuilding the template
+# and rerunning bootstrap; retained overlay templates may mask new firmware.
 
 set -eu
 
