@@ -1,5 +1,5 @@
 #!/bin/sh
-# JDCloud RE-CS-02 / AX6600 tri-band WiFi defaults.
+# JDCloud RE-CS-02 / AX6600 tri-band WiFi defaults, migration v2.
 
 set -eu
 

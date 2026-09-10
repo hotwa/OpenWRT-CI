@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-jdcloud-re-cs-02-wifi-defaults"
+DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-jdcloud-re-cs-02-wifi-defaults-v2"
 CONFIG="$ROOT_DIR/Config/IPQ60XX-RE-CS-02.txt"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
