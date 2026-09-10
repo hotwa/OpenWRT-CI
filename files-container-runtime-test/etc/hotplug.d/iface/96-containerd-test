@@ -1,0 +1,15 @@
+#!/bin/sh
+# Retry only an inactive TEST runtime after netifd reports connectivity changes.
+# The normal init path repeats every mount/cgroup/subnet/firewall check. Never
+# restart a live daemon, bypass bridge readiness, or run compose here.
+case "${ACTION:-}" in
+	ifup|ifupdate) ;;
+	*) exit 0 ;;
+esac
+[ "${INTERFACE:-}" != loopback ] || exit 0
+service="${CONTAINERD_TEST_SERVICE:-/etc/init.d/containerd-test}"
+[ -x "$service" ] || exit 0
+"$service" enabled >/dev/null 2>&1 || exit 0
+"$service" running >/dev/null 2>&1 && exit 0
+logger -t containerd-test "network event ${ACTION}: retrying inactive runtime readiness" 2>/dev/null || true
+"$service" start

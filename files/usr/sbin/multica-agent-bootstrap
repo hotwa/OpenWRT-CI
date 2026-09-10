@@ -4,6 +4,7 @@
 # A changed instructions hash, name or runtime binding updates the existing
 # server Agent; only an unmatched Agent is created. .agent_initialized does
 # not skip reconciliation on the next boot. Successful reconciliation exits:
+# Pi fallback gets a bounded preferred-runtime promotion window before exit;
 # this is not a GitHub/file watcher and does not refresh existing CLI sessions.
 # GitHub template edits take effect after deploying/rebuilding the template
 # and rerunning bootstrap; retained overlay templates may mask new firmware.
@@ -359,6 +360,21 @@ sys.exit(0 if ok else 1)
 PY
 }
 
+agent_ready_for_promotion() {
+	# Never move a busy Agent or guess a replacement when the saved ID is absent.
+	"$PYTHON_BIN" - "$1" "$2" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    matches = [r for r in records if isinstance(r, dict) and r.get("id") == sys.argv[2]] if isinstance(records, list) else []
+    ready = len(matches) == 1 and matches[0].get("status") == "idle"
+except (OSError, ValueError, TypeError):
+    ready = False
+sys.exit(0 if ready else 1)
+PY
+}
+
 try_bootstrap() {
 	local server_url="$1"
 	local expected_runtime_name="$2"
@@ -368,6 +384,7 @@ try_bootstrap() {
 	# kill the first-boot worker under `set -u`.  The caller below always supplies
 	# the reviewed instructions path, and an absent/unreadable file simply retries.
 	local instructions_file="${5:-}"
+	local required_agent_id="${6:-}"
 	local runtime_json agent_json runtime_id runtime_device instructions instructions_hash
 	local state_file state_agent_id state_runtime_id state_hash state_name agent_id
 	local custom_args state_args
@@ -393,6 +410,10 @@ try_bootstrap() {
 		rm -f "$agent_json"
 		return 1
 	fi
+	if [ -n "$required_agent_id" ] && ! agent_ready_for_promotion "$agent_json" "$required_agent_id"; then
+		rm -f "$agent_json"
+		return 1
+	fi
 
 	[ -r "$instructions_file" ] || return 1
 	instructions_hash="$(instructions_sha256 "$instructions_file" || true)"
@@ -407,6 +428,10 @@ try_bootstrap() {
 	state_name="$(state_value "$state_file" agent_name || true)"
 	state_args="$(state_value "$state_file" custom_args || true)"
 	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	if [ -n "$required_agent_id" ]; then
+		# Promotion is update-only, including when local state changes meanwhile.
+		agent_id="$required_agent_id"
+	fi
 	if [ -z "$agent_id" ]; then
 		agent_id="$(select_agent_id "$agent_json" "$agent_name" "$runtime_id" || true)"
 	fi
@@ -457,6 +482,23 @@ try_bootstrap() {
 	return 0
 }
 
+reconcile_preferred_runtime() {
+	local server_url="$1" runtime_name="$2" agent_name="$3" instructions_file="$4"
+	local agent_id attempt=0
+	agent_id="$(state_value "$DATA_DIR/.agent_state" agent_id || true)"
+	[ -n "$agent_id" ] || { log "Pi fallback has no saved Agent ID; skipping promotion"; return 0; }
+	while [ "$attempt" -lt 20 ]; do
+		sleep 30
+		attempt=$((attempt + 1))
+		if try_bootstrap "$server_url" "$runtime_name" opencode "$agent_name" "$instructions_file" "$agent_id"; then
+			log "existing default agent promoted from Pi to preferred OpenCode runtime"
+			return 0
+		fi
+	done
+	log "preferred runtime promotion window exhausted; retaining usable Pi Agent until next service start"
+	return 0
+}
+
 main() {
 	local enabled server_url expected_runtime_name expected_provider configured_agent_name agent_name
 	local instructions_file success_flag delay
@@ -502,8 +544,10 @@ main() {
 				if try_bootstrap "$server_url" "$expected_runtime_name" "opencode" "$agent_name" "$instructions_file"; then
 					bootstrap_ok=1
 				elif try_bootstrap "$server_url" "Pi (OpenWrt-Router)" "pi" "$agent_name" "$instructions_file"; then
-					bootstrap_ok=1
-					log "opencode runtime not online; fell back to pi runtime"
+					write_success_flag "$success_flag"
+					log "preferred OpenCode bootstrap unavailable; Pi fallback ready, checking for bounded promotion"
+					reconcile_preferred_runtime "$server_url" "$expected_runtime_name" "$agent_name" "$instructions_file"
+					return 0
 				fi
 			else
 				if try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
