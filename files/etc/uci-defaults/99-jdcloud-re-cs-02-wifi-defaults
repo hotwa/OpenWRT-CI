@@ -19,7 +19,7 @@ for section in radio0 radio1 radio2 default_radio0 default_radio1 default_radio2
 	fi
 done
 
-# 5.8 GHz: embedded 5 GHz radio, HE80 on the high band.
+# 5.8 GHz: QCN9074 radio, HE80 on the high band (HE160 unsupported).
 uci set wireless.radio0.band='5g'
 uci set wireless.radio0.channel='149'
 uci set wireless.radio0.htmode='HE80'
@@ -36,7 +36,7 @@ uci set wireless.default_radio0.ieee80211w='0'
 
 # 2.4 GHz: IoT compatibility SSID, fixed to the cleanest observed channel.
 uci set wireless.radio1.band='2g'
-uci set wireless.radio1.channel='1'
+uci set wireless.radio1.channel='6'
 uci set wireless.radio1.htmode='HT20'
 uci set wireless.radio1.country='CN'
 uci set wireless.radio1.disabled='0'
@@ -50,10 +50,10 @@ uci set wireless.default_radio1.encryption='psk2+ccmp'
 uci set wireless.default_radio1.key='asdzxc147369'
 uci set wireless.default_radio1.ieee80211w='0'
 
-# 5.2 GHz: PCIe QCN9074 radio, HE160 for the main high-throughput SSID.
+# 5.2 GHz: IPQ6018 radio, HE80 stays below the CN DFS range.
 uci set wireless.radio2.band='5g'
 uci set wireless.radio2.channel='36'
-uci set wireless.radio2.htmode='HE160'
+uci set wireless.radio2.htmode='HE80'
 uci set wireless.radio2.country='CN'
 uci set wireless.radio2.disabled='0'
 uci set wireless.radio2.cell_density='0'
