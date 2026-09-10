@@ -74,6 +74,115 @@ selected_agent="$(select_agent_id_by_name "$TEST_ROOT/agents.json" 'OpenWrt 管�
 	exit 1
 }
 
+# Factory reset may regenerate hostname/hash while preserving /data state. A
+# unique managed Agent on the same LAN CIDR is safe to adopt and rebind.
+cat > "$TEST_ROOT/factory-agents.json" <<'EOF'
+[
+  {"id":"agent-legacy","name":"OpenWrt 管家 · RE-SS-01-CONTAINER · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old","status":"idle"},
+  {"id":"agent-other-site","name":"OpenWrt 管家 · RE-CS-02 · 192.168.11.1/24 · d4e5f6","runtime_id":"rt-other","status":"idle"}
+]
+EOF
+selected_agent="$(select_agent_id_by_lan_cidr "$TEST_ROOT/factory-agents.json" 'OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a')"
+[ "$selected_agent" = 'agent-legacy' ] || {
+	echo "factory Agent CIDR selector returned: $selected_agent"
+	exit 1
+}
+cat > "$TEST_ROOT/ambiguous-agents.json" <<'EOF'
+[
+  {"id":"agent-old-a","name":"OpenWrt 管家 · OLD-A · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old-a","status":"idle"},
+  {"id":"agent-old-b","name":"OpenWrt 管家 · OLD-B · 192.168.12.1/24 · d4e5f6","runtime_id":"rt-old-b","status":"active"}
+]
+EOF
+if select_agent_id_by_lan_cidr "$TEST_ROOT/ambiguous-agents.json" 'OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a' >/dev/null; then
+	echo "ambiguous same-CIDR Agents were guessed"
+	exit 1
+fi
+
+# Exercise the full reconcile path: a dangling cached ID after factory reset
+# must update/rebind the one legacy same-site Agent, never create a duplicate.
+mkdir -p "$TEST_ROOT/reconcile-data"
+printf '%s\n' 'current role instructions' > "$TEST_ROOT/reconcile-data/openwrt-agent.md"
+write_agent_state "$TEST_ROOT/reconcile-data/.agent_state" missing-id rt-missing old-hash \
+	'OpenWrt 管家 · OLD-HOST · 192.168.12.1/24 · 000000' '[]'
+cat > "$TEST_ROOT/mock-multica" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+	'runtime list')
+		printf '%s\n' '[{"id":"rt-current","name":"Pi (OpenWrt-Router)","provider":"pi","status":"online","device_info":"RE-SS-01-12 · 0.85.1","last_seen_at":"2026-09-10T12:00:00Z"}]'
+		;;
+	'agent list')
+		printf '%s\n' '[{"id":"agent-legacy","name":"OpenWrt 管家 · RE-SS-01-CONTAINER · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old","status":"idle","custom_args":[]}]'
+		;;
+	'agent update')
+		printf '%s\n' "$*" >> "$MOCK_MULTICA_LOG"
+		;;
+	'agent create')
+		printf '%s\n' "unexpected create: $*" >> "$MOCK_MULTICA_LOG"
+		exit 1
+		;;
+	*) exit 1 ;;
+esac
+EOF
+chmod +x "$TEST_ROOT/mock-multica"
+: > "$TEST_ROOT/mock-multica.log"
+export MOCK_MULTICA_LOG="$TEST_ROOT/mock-multica.log"
+MULTICA_BIN="$TEST_ROOT/mock-multica"
+DATA_DIR="$TEST_ROOT/reconcile-data"
+server_reachable() { return 0; }
+runtime_device_name() { printf '%s' 'RE-SS-01-12'; }
+try_bootstrap 'https://multica.example' 'Pi (OpenWrt-Router)' pi \
+	'OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a' \
+	"$TEST_ROOT/reconcile-data/openwrt-agent.md"
+grep -Fq 'agent update agent-legacy' "$TEST_ROOT/mock-multica.log" || {
+	echo "stale factory state did not rebind the legacy same-CIDR Agent"
+	exit 1
+}
+if grep -Fq 'unexpected create' "$TEST_ROOT/mock-multica.log"; then
+	echo "stale factory state created a duplicate Agent"
+	exit 1
+fi
+[ "$(state_value "$TEST_ROOT/reconcile-data/.agent_state" agent_id)" = 'agent-legacy' ]
+[ "$(state_value "$TEST_ROOT/reconcile-data/.agent_state" runtime_id)" = 'rt-current' ]
+
+# The backend keeps archived Agents out of the default listing. With the full
+# listing, an exact archived saved ID must be restored and updated before any
+# same-CIDR migration candidate is considered.
+write_agent_state "$TEST_ROOT/reconcile-data/.agent_state" agent-archived rt-old old-hash \
+	'OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a' '[]'
+cat > "$TEST_ROOT/mock-multica-archived" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+	'runtime list')
+		printf '%s\n' '[{"id":"rt-current","name":"Pi (OpenWrt-Router)","provider":"pi","status":"online","device_info":"RE-SS-01-12 · 0.85.1","last_seen_at":"2026-09-10T12:00:00Z"}]'
+		;;
+	'agent list')
+		case " $* " in *' --include-archived '*) ;; *) exit 2 ;; esac
+		printf '%s\n' '[{"id":"agent-archived","name":"OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a","runtime_id":"rt-old","status":"idle","archived_at":"2026-09-09T00:00:00Z","custom_args":[]},{"id":"agent-legacy","name":"OpenWrt 管家 · OLD-HOST · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old","status":"idle","archived_at":null,"custom_args":[]}]'
+		;;
+	'agent restore'|'agent update')
+		printf '%s\n' "$*" >> "$MOCK_MULTICA_LOG"
+		;;
+	'agent create')
+		printf '%s\n' "unexpected create: $*" >> "$MOCK_MULTICA_LOG"
+		exit 1
+		;;
+	*) exit 1 ;;
+esac
+EOF
+chmod +x "$TEST_ROOT/mock-multica-archived"
+: > "$TEST_ROOT/mock-multica.log"
+MULTICA_BIN="$TEST_ROOT/mock-multica-archived"
+try_bootstrap 'https://multica.example' 'Pi (OpenWrt-Router)' pi \
+	'OpenWrt 管家 · RE-SS-01 · 192.168.12.1/24 · 27016a' \
+	"$TEST_ROOT/reconcile-data/openwrt-agent.md"
+grep -Fq 'agent restore agent-archived' "$TEST_ROOT/mock-multica.log"
+grep -Fq 'agent update agent-archived' "$TEST_ROOT/mock-multica.log"
+if grep -Eq 'agent update agent-legacy|unexpected create' "$TEST_ROOT/mock-multica.log"; then
+	echo "archived saved Agent was not preferred over migration/create"
+	exit 1
+fi
+[ "$(state_value "$TEST_ROOT/reconcile-data/.agent_state" agent_id)" = 'agent-archived' ]
+
 # The first-boot worker runs with `set -u`.  A missing optional instructions
 # argument must make one bootstrap attempt retryable, never abort its worker.
 if ! MULTICA_BOOTSTRAP_LIBRARY_ONLY=1 MULTICA_PYTHON_BIN="$(command -v python3)" \

@@ -111,7 +111,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     records = json.load(stream)
 for item in records if isinstance(records, list) else []:
-    fields = ("id", "name", "runtime_id", "status")
+    fields = ("id", "name", "runtime_id", "status", "archived_at")
     print("\t".join(str(item.get(field) or "").replace("\t", " ").replace("\n", " ") for field in fields))
 PY
 }
@@ -214,17 +214,17 @@ select_agent_id() {
 	local json_file="$1"
 	local expected_name="$2"
 	local expected_runtime_id="$3"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 	local matched_id="" matches=0
 
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
 		if [ "$candidate_name" = "$expected_name" ] && \
 			[ "$candidate_runtime_id" = "$expected_runtime_id" ] && \
-			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			[ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
 			matches=$((matches + 1))
 			matched_id="$candidate_id"
 		fi
@@ -238,16 +238,16 @@ EOF
 select_agent_id_by_name() {
 	local json_file="$1"
 	local expected_name="$2"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 	local matched_id="" matches=0
 
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
 		if [ "$candidate_name" = "$expected_name" ] && \
-			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			[ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
 			matches=$((matches + 1))
 			matched_id="$candidate_id"
 		fi
@@ -260,18 +260,106 @@ EOF
 	printf '%s' "$matched_id"
 }
 
+select_agent_id_by_lan_cidr() {
+	local json_file="$1"
+	local expected_name="$2"
+
+	"$PYTHON_BIN" - "$json_file" "$expected_name" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+def managed_parts(name):
+    parts = str(name or "").rsplit(" · ", 3)
+    if len(parts) != 4:
+        return None
+    base, hostname, cidr, identity_hash = parts
+    if not base or not hostname or not re.fullmatch(r"[0-9a-fA-F]{6,64}", identity_hash):
+        return None
+    try:
+        ipaddress.ip_interface(cidr)
+    except ValueError:
+        return None
+    return base, cidr
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    expected = managed_parts(sys.argv[2])
+    matches = []
+    if expected and isinstance(records, list):
+        for item in records:
+            if (not isinstance(item, dict) or item.get("archived_at") or
+                    item.get("status") not in {"active", "idle", "busy"}):
+                continue
+            candidate = managed_parts(item.get("name"))
+            if candidate == expected and item.get("id"):
+                matches.append(str(item["id"]))
+    if len(matches) == 1:
+        print(matches[0])
+        raise SystemExit(0)
+except (OSError, ValueError, TypeError):
+    pass
+raise SystemExit(1)
+PY
+}
+
+log_cli_failure() {
+	local stage="$1" stderr_file="$2" category
+	category="$("$PYTHON_BIN" - "$stderr_file" <<'PY'
+import sys
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read(8192).lower()
+except OSError:
+    text = ""
+if any(word in text for word in ("unauthorized", "authentication", "invalid token")):
+    print("authentication rejected")
+elif any(word in text for word in ("forbidden", "permission denied")):
+    print("authorization rejected")
+elif any(word in text for word in ("timeout", "timed out", "connection", "network", "tls", "dns")):
+    print("backend unavailable")
+elif any(word in text for word in ("already exists", "duplicate", "conflict")):
+    print("backend conflict")
+elif any(word in text for word in ("json", "invalid response", "parse")):
+    print("invalid backend response")
+else:
+    print("stderr suppressed")
+PY
+)"
+	log "$stage failed: $category"
+}
+
 select_agent_id_by_id() {
 	local json_file="$1"
 	local expected_id="$2"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 
 	[ -n "$expected_id" ] || return 1
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
-		if [ "$candidate_id" = "$expected_id" ] && agent_is_usable "$candidate_status"; then
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
+		if [ "$candidate_id" = "$expected_id" ] && [ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status"; then
+			printf '%s' "$candidate_id"
+			return 0
+		fi
+	done <<EOF
+$records
+EOF
+	return 1
+}
+
+select_archived_agent_id_by_id() {
+	local json_file="$1" expected_id="$2"
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
+
+	[ -n "$expected_id" ] || return 1
+	records="$(json_agent_records "$json_file")" || return 1
+	tab="$(printf '\t')"
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
+		if [ "$candidate_id" = "$expected_id" ] && [ -n "$candidate_archived_at" ]; then
 			printf '%s' "$candidate_id"
 			return 0
 		fi
@@ -387,7 +475,7 @@ try_bootstrap() {
 	local required_agent_id="${6:-}"
 	local runtime_json agent_json runtime_id runtime_device instructions instructions_hash
 	local state_file state_agent_id state_runtime_id state_hash state_name agent_id
-	local custom_args state_args
+	local custom_args state_args stderr_file archived_agent_id restored_agent
 	custom_args="$(runtime_custom_args "$expected_provider")" || return 1
 
 	server_reachable "$server_url" || return 1
@@ -396,26 +484,35 @@ try_bootstrap() {
 
 	runtime_json="/tmp/multica-runtimes.$$"
 	agent_json="/tmp/multica-agents.$$"
-	rm -f "$runtime_json" "$agent_json"
-	if ! "$MULTICA_BIN" runtime list --output json > "$runtime_json" 2>/dev/null; then
-		rm -f "$runtime_json" "$agent_json"
+	stderr_file="/tmp/multica-bootstrap-stderr.$$"
+	umask 077
+	rm -f "$runtime_json" "$agent_json" "$stderr_file"
+	if ! "$MULTICA_BIN" runtime list --output json > "$runtime_json" 2>"$stderr_file"; then
+		log_cli_failure "runtime list" "$stderr_file"
+		rm -f "$runtime_json" "$agent_json" "$stderr_file"
 		return 1
 	fi
+	rm -f "$stderr_file"
 	runtime_device="$(runtime_device_name || true)"
 	runtime_id="$(select_runtime_id "$runtime_json" "$expected_runtime_name" "$expected_provider" "$runtime_device" || true)"
 	rm -f "$runtime_json"
 	[ -n "$runtime_id" ] || return 1
 
-	if ! "$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null; then
-		rm -f "$agent_json"
+	if ! "$MULTICA_BIN" agent list --include-archived --output json > "$agent_json" 2>"$stderr_file"; then
+		log_cli_failure "agent list" "$stderr_file"
+		rm -f "$agent_json" "$stderr_file"
 		return 1
 	fi
+	rm -f "$stderr_file"
 	if [ -n "$required_agent_id" ] && ! agent_ready_for_promotion "$agent_json" "$required_agent_id"; then
 		rm -f "$agent_json"
 		return 1
 	fi
 
-	[ -r "$instructions_file" ] || return 1
+	[ -r "$instructions_file" ] || {
+		rm -f "$agent_json" "$stderr_file"
+		return 1
+	}
 	instructions_hash="$(instructions_sha256 "$instructions_file" || true)"
 	[ -n "$instructions_hash" ] || {
 		rm -f "$agent_json"
@@ -427,7 +524,20 @@ try_bootstrap() {
 	state_hash="$(state_value "$state_file" instructions_sha256 || true)"
 	state_name="$(state_value "$state_file" agent_name || true)"
 	state_args="$(state_value "$state_file" custom_args || true)"
-	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	restored_agent=0
+	archived_agent_id="$(select_archived_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	if [ -n "$archived_agent_id" ]; then
+		if ! "$MULTICA_BIN" agent restore "$archived_agent_id" >/dev/null 2>"$stderr_file"; then
+			log_cli_failure "agent restore" "$stderr_file"
+			rm -f "$agent_json" "$stderr_file"
+			return 1
+		fi
+		rm -f "$stderr_file"
+		agent_id="$archived_agent_id"
+		restored_agent=1
+	else
+		agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	fi
 	if [ -n "$required_agent_id" ]; then
 		# Promotion is update-only, including when local state changes meanwhile.
 		agent_id="$required_agent_id"
@@ -440,8 +550,15 @@ try_bootstrap() {
 		# Rebind the unique same-name Agent instead of issuing a duplicate create.
 		agent_id="$(select_agent_id_by_name "$agent_json" "$agent_name" || true)"
 	fi
+	if [ -z "$agent_id" ]; then
+		# A factory reset can change hostname-derived identity while /data retains
+		# the old state. Adopt only one structurally managed Agent for this exact
+		# LAN CIDR; ambiguity is intentionally left for an operator to resolve.
+		agent_id="$(select_agent_id_by_lan_cidr "$agent_json" "$agent_name" || true)"
+	fi
 	if [ -n "$agent_id" ]; then
-		if [ "$state_runtime_id" != "$runtime_id" ] || \
+		if [ "$restored_agent" -eq 1 ] || \
+			[ "$state_runtime_id" != "$runtime_id" ] || \
 			[ "$state_hash" != "$instructions_hash" ] || \
 			[ "$state_name" != "$agent_name" ] || \
 			[ "$state_args" != "$custom_args" ] || \
@@ -452,12 +569,13 @@ try_bootstrap() {
 				--description "本机 OpenWrt 网络与系统管理智能体" \
 				--instructions "$(cat "$instructions_file")" \
 				--custom-args "$custom_args" \
-				--max-concurrent-tasks 1 >/dev/null 2>&1; then
-				rm -f "$agent_json"
+				--max-concurrent-tasks 1 >/dev/null 2>"$stderr_file"; then
+				log_cli_failure "agent update" "$stderr_file"
+				rm -f "$agent_json" "$stderr_file"
 				return 1
 			fi
 		fi
-		rm -f "$agent_json"
+		rm -f "$agent_json" "$stderr_file"
 		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
 		return 0
 	fi
@@ -470,13 +588,14 @@ try_bootstrap() {
 		--description "OpenWrt 系统与网络管理智能体" \
 		--instructions "$instructions" \
 		--custom-args "$custom_args" \
-		--max-concurrent-tasks 1 --output json > "$agent_json" 2>/dev/null; then
-		rm -f "$agent_json"
+		--max-concurrent-tasks 1 --output json > "$agent_json" 2>"$stderr_file"; then
+		log_cli_failure "agent create" "$stderr_file"
+		rm -f "$agent_json" "$stderr_file"
 		return 1
 	fi
 
 	agent_id="$(select_created_agent_id "$agent_json" || true)"
-	rm -f "$agent_json"
+	rm -f "$agent_json" "$stderr_file"
 	[ -n "$agent_id" ] || return 1
 	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
 	return 0
