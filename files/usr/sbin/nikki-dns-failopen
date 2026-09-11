@@ -1,0 +1,290 @@
+#!/bin/sh
+# Keep LAN DNS available when a dead mihomo leaves table inet nikki installed.
+# A missing table is healthy direct mode. A present table must answer DNS on
+# mihomo's port; repeated failures restart Nikki, then delete only that table.
+
+set -u
+export PATH="${NDF_PATH:-/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+TAG="nikki-dns-failopen"
+CFG="nikki-dns-failopen"
+TABLE="${NDF_TABLE:-nikki}"
+NIKKI_INIT="${NDF_NIKKI_INIT:-/etc/init.d/nikki}"
+STATE_FILE="${NDF_STATE_FILE:-/var/run/nikki-dns-failopen.state}"
+MARKER="${NDF_MARKER:-/var/run/nikki-dns-failopen.active}"
+LOCK_FILE="${NDF_LOCK_FILE:-/var/run/nikki-dns-failopen.lock}"
+PROBE_PORT="${NDF_PROBE_PORT:-1053}"
+PROBE_SUFFIX_OVERRIDE="${NDF_PROBE_SUFFIX:-}"
+PROBE_SUFFIX="example.com"
+
+CHECK_INTERVAL=60
+FAIL_THRESHOLD=2
+RESTART_COOLDOWN=600
+SETTLE_WAIT=10
+MAX_RESTARTS=3
+PREBASE_MAX=2
+MODE=loop
+VERBOSE=0
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--once|--check) MODE=once ;;
+		--status) MODE=status ;;
+		--verbose) VERBOSE=1 ;;
+		*) echo "usage: $0 [--once|--check|--status] [--verbose]" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+valid_integer() {
+	case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac
+}
+
+uci_value() {
+	local value=""
+	command -v uci >/dev/null 2>&1 &&
+		value="$(uci -q get "$CFG.main.$1" 2>/dev/null || true)"
+	[ -n "$value" ] || value="$2"
+	printf '%s' "$value"
+}
+
+load_config() {
+	local name value
+	CHECK_INTERVAL="$(uci_value check_interval 60)"
+	FAIL_THRESHOLD="$(uci_value failure_threshold 2)"
+	RESTART_COOLDOWN="$(uci_value restart_cooldown 600)"
+	SETTLE_WAIT="$(uci_value settle_wait 10)"
+	MAX_RESTARTS="$(uci_value max_restarts 3)"
+	PREBASE_MAX="$(uci_value prebase_max 2)"
+	PROBE_SUFFIX="$(uci_value probe_suffix example.com)"
+	[ -z "$PROBE_SUFFIX_OVERRIDE" ] || PROBE_SUFFIX="$PROBE_SUFFIX_OVERRIDE"
+
+	for name in CHECK_INTERVAL FAIL_THRESHOLD RESTART_COOLDOWN SETTLE_WAIT MAX_RESTARTS PREBASE_MAX; do
+		eval "value=\${$name}"
+		valid_integer "$value" || eval "$name=1"
+	done
+	[ "$CHECK_INTERVAL" -gt 0 ] || CHECK_INTERVAL=60
+	[ "$FAIL_THRESHOLD" -gt 0 ] || FAIL_THRESHOLD=2
+
+	ENABLED=0
+	case "$(uci_value enabled 1)" in 1|true|yes|on) ENABLED=1 ;; esac
+}
+
+log_msg() {
+	logger -t "$TAG" "$*"
+	[ "$VERBOSE" -eq 1 ] && printf '%s\n' "$*"
+	return 0
+}
+
+load_state() {
+	local key value name
+	FAIL=0
+	LAST_RESTART=0
+	RESTARTS=0
+	BASELINE=0
+	PREBASE=0
+	FAILOPEN=0
+	[ -f "$STATE_FILE" ] || return 0
+
+	while IFS='=' read -r key value; do
+		case "$key" in
+			FAIL) FAIL="$value" ;;
+			LAST_RESTART) LAST_RESTART="$value" ;;
+			RESTARTS) RESTARTS="$value" ;;
+			BASELINE) BASELINE="$value" ;;
+			PREBASE) PREBASE="$value" ;;
+			FAILOPEN) FAILOPEN="$value" ;;
+		esac
+	done <"$STATE_FILE" 2>/dev/null
+
+	for name in FAIL LAST_RESTART RESTARTS BASELINE PREBASE FAILOPEN; do
+		eval "value=\${$name}"
+		valid_integer "$value" || eval "$name=0"
+	done
+}
+
+save_state() {
+	{
+		printf 'FAIL=%s\n' "$FAIL"
+		printf 'LAST_RESTART=%s\n' "$LAST_RESTART"
+		printf 'RESTARTS=%s\n' "$RESTARTS"
+		printf 'BASELINE=%s\n' "$BASELINE"
+		printf 'PREBASE=%s\n' "$PREBASE"
+		printf 'FAILOPEN=%s\n' "$FAILOPEN"
+	} >"$STATE_FILE" 2>/dev/null || true
+}
+
+table_present() {
+	nft list table inet "$TABLE" >/dev/null 2>&1
+}
+
+wan_up() {
+	ip route show default 2>/dev/null | grep -q '^default'
+}
+
+dnsmasq_up() {
+	pgrep -x dnsmasq >/dev/null 2>&1
+}
+
+probe_dns() {
+	local name output
+	name="probe-$(date +%s)-$$.$PROBE_SUFFIX"
+	output="$(nslookup -timeout=3 -port="$PROBE_PORT" "$name" 127.0.0.1 2>&1)"
+	case "$output" in
+		*Usage:*) output="$(nslookup -timeout=3 "$name" 127.0.0.1 2>&1)" ;;
+	esac
+	printf '%s\n' "$output" |
+		grep -qE '^Address:[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]]*$'
+}
+
+is_healthy() {
+	table_present || return 0
+	probe_dns
+}
+
+clear_failopen() {
+	[ "$FAILOPEN" -eq 1 ] || return 0
+	FAILOPEN=0
+	rm -f "$MARKER" 2>/dev/null
+	log_msg "INFO: DNS healthy; fail-open cleared"
+}
+
+do_restart() {
+	local now
+	[ "$RESTARTS" -lt "$MAX_RESTARTS" ] || return 1
+	now="$(date +%s 2>/dev/null || printf '0')"
+	valid_integer "$now" || now=0
+	if [ "$LAST_RESTART" -gt 0 ] &&
+		[ $((now - LAST_RESTART)) -lt "$RESTART_COOLDOWN" ]; then
+		log_msg "WARN: restart cooldown $((RESTART_COOLDOWN - (now - LAST_RESTART)))s remaining"
+		return 2
+	fi
+
+	log_msg "INFO: restarting nikki (attempt $((RESTARTS + 1))/$MAX_RESTARTS)"
+	[ -x "$NIKKI_INIT" ] && "$NIKKI_INIT" restart >/dev/null 2>&1
+	LAST_RESTART="$now"
+	RESTARTS=$((RESTARTS + 1))
+	save_state
+	[ "$SETTLE_WAIT" -gt 0 ] && sleep "$SETTLE_WAIT"
+	return 0
+}
+
+do_failopen() {
+	log_msg "ERROR: fail-open -> nft delete table inet $TABLE (LAN DNS falls back to direct)"
+	if table_present && ! nft delete table inet "$TABLE" >/dev/null 2>&1; then
+		log_msg "ERROR: could not delete stale table inet $TABLE"
+		return 1
+	fi
+	FAILOPEN=1
+	: >"$MARKER" 2>/dev/null || true
+	save_state
+	return 0
+}
+
+run_cycle() {
+	local restart_result
+	load_config
+	[ "$ENABLED" -eq 1 ] || { rm -f "$MARKER" 2>/dev/null; return 0; }
+	load_state
+
+	if ! table_present; then
+		clear_failopen
+		FAIL=0
+		PREBASE=0
+		save_state
+		return 0
+	fi
+
+	if ! wan_up || ! dnsmasq_up; then
+		log_msg "WARN: wan/dnsmasq not ready; skipping cycle"
+		return 0
+	fi
+
+	if probe_dns; then
+		clear_failopen
+		FAIL=0
+		PREBASE=0
+		BASELINE=1
+		save_state
+		return 0
+	fi
+
+	FAIL=$((FAIL + 1))
+	if [ "$BASELINE" -eq 0 ]; then
+		PREBASE=$((PREBASE + 1))
+		log_msg "WARN: pre-baseline observation $PREBASE/$PREBASE_MAX (no repair)"
+		if [ "$PREBASE" -ge "$PREBASE_MAX" ]; then
+			BASELINE=1
+			log_msg "INFO: baseline armed"
+		fi
+		save_state
+		return 0
+	fi
+
+	log_msg "WARN: mihomo DNS unhealthy ($FAIL/$FAIL_THRESHOLD; table=present restarts=$RESTARTS)"
+	[ "$FAIL" -lt "$FAIL_THRESHOLD" ] && { save_state; return 0; }
+
+	do_restart
+	restart_result=$?
+	case "$restart_result" in
+		2) save_state; return 0 ;;
+		0)
+			if is_healthy; then
+				log_msg "INFO: post-restart verification PASSED"
+				FAIL=0
+				RESTARTS=0
+				save_state
+				return 0
+			fi
+			log_msg "WARN: post-restart verification FAILED"
+			;;
+	esac
+
+	[ "$FAILOPEN" -eq 0 ] && do_failopen
+	if is_healthy; then
+		log_msg "INFO: fail-open applied; LAN DNS usable (direct)"
+	else
+		log_msg "ERROR: fail-open could not be verified; check dnsmasq/WAN"
+	fi
+	FAIL=0
+	save_state
+}
+
+status_report() {
+	load_config
+	load_state
+	printf 'enabled=%s\ncheck_interval=%s\nfailure_threshold=%s\nrestart_cooldown=%s\nmax_restarts=%s\n' \
+		"$ENABLED" "$CHECK_INTERVAL" "$FAIL_THRESHOLD" "$RESTART_COOLDOWN" "$MAX_RESTARTS"
+	printf 'failopen=%s\nrestarts=%s\n' "$FAILOPEN" "$RESTARTS"
+	if ! table_present; then
+		printf 'hijack_table=absent\nhealth=healthy(via direct)\n'
+		return 0
+	fi
+	printf 'hijack_table=present\n'
+	if probe_dns; then
+		printf 'health=healthy(via mihomo)\n'
+	else
+		printf 'health=degraded(mihomo DNS unresponsive)\n'
+	fi
+}
+
+exec 9>>"$LOCK_FILE"
+if [ "$MODE" = status ]; then
+	status_report
+	exit 0
+fi
+if [ "$MODE" = once ]; then
+	flock 9
+	run_cycle
+	exit 0
+fi
+
+load_config
+log_msg "INFO: started (interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} cooldown=${RESTART_COOLDOWN}s max_restarts=${MAX_RESTARTS})"
+while :; do
+	flock 9
+	run_cycle
+	flock -u 9
+	load_config
+	sleep "$CHECK_INTERVAL"
+done

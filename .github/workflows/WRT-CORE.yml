@@ -699,6 +699,11 @@ jobs:
             ./wrt/files/etc/crontabs \
             ./wrt/files/etc/uci-defaults \
             ./wrt/files/usr/sbin
+          nikki_package_init="$(find ./wrt/package -type f -path '*/luci-app-nikki/root/etc/init.d/nikki' -print -quit)"
+          test -n "$nikki_package_init" && grep -q '^START=99$' "$nikki_package_init" || {
+            echo "ERROR: Nikki init START must remain 99 for fail-open startup ordering" >&2
+            exit 1
+          }
           # A reviewed RE workflow may already have enabled this UCI gate
           # after the full overlay was copied. Preserve that explicit
           # per-device decision; minimal images receive the safe default.
@@ -706,6 +711,7 @@ jobs:
             cp -f ./files/etc/config/agent-storage ./wrt/files/etc/config/agent-storage
           fi
           cp -f ./files/etc/config/rclone-data-backup ./wrt/files/etc/config/rclone-data-backup
+          cp -f ./files/etc/config/nikki-dns-failopen ./wrt/files/etc/config/nikki-dns-failopen
           cp -f ./files/etc/crontabs/root ./wrt/files/etc/crontabs/root
           if [ -n "${WRTBAK_DEVICE_ALIAS:-}" ]; then
             case "$WRTBAK_DEVICE_ALIAS" in
@@ -720,9 +726,11 @@ jobs:
           cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
+          cp -f ./files/etc/init.d/nikki-dns-failopen ./wrt/files/etc/init.d/nikki-dns-failopen
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
           cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
+          cp -f ./files/etc/uci-defaults/99-enable-nikki-dns-failopen ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen
           mkdir -p ./wrt/files/etc/agent-tools
           cp -f ./files/etc/agent-tools/README.md ./wrt/files/etc/agent-tools/README.md
           mkdir -p ./wrt/files/etc/openwrt-ci
@@ -752,16 +760,19 @@ jobs:
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
           cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
+          cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
           chmod 0755 \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
+            ./wrt/files/etc/init.d/nikki-dns-failopen \
             ./wrt/files/etc/uci-defaults/93-logd-ring-size \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
             ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron \
             ./wrt/files/etc/uci-defaults/98-provision-emmc-data \
             ./wrt/files/etc/uci-defaults/99-auto-mount-data \
             ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
+            ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen \
             ./wrt/files/usr/sbin/multica-device-profile \
             ./wrt/files/usr/sbin/emmc-data-provision \
             ./wrt/files/usr/sbin/auto-mount-data \
@@ -773,7 +784,12 @@ jobs:
             ./wrt/files/usr/sbin/rclone-data-backup \
             ./wrt/files/usr/sbin/agent-runtime-auto-upgrade \
             ./wrt/files/usr/sbin/multica-log-hygiene \
-            ./wrt/files/usr/sbin/multica-runtime-guard
+            ./wrt/files/usr/sbin/multica-runtime-guard \
+            ./wrt/files/usr/sbin/nikki-dns-failopen
+          grep -q '^START=99$' ./wrt/files/etc/init.d/nikki-dns-failopen || {
+            echo "ERROR: nikki-dns-failopen must use START=99" >&2
+            exit 1
+          }
           test -x ./wrt/files/usr/sbin/openwrt-data-storage-diagnose || {
             echo "ERROR: read-only data storage diagnosis helper is missing" >&2
             exit 1
