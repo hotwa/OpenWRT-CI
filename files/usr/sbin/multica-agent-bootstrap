@@ -205,7 +205,7 @@ EOF
 
 agent_is_usable() {
 	case "$1" in
-		active|idle|busy) return 0 ;;
+		active|idle|busy|working) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -291,7 +291,7 @@ try:
     if expected and isinstance(records, list):
         for item in records:
             if (not isinstance(item, dict) or item.get("archived_at") or
-                    item.get("status") not in {"active", "idle", "busy"}):
+                    item.get("status") not in {"active", "idle", "busy", "working"}):
                 continue
             candidate = managed_parts(item.get("name"))
             if candidate == expected and item.get("id"):

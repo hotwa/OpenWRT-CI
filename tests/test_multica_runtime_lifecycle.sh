@@ -60,6 +60,7 @@ selected="$(select_runtime_id "$TEST_ROOT/runtimes.json" 'Pi (New Firmware Name)
 # The controller reports normal Agents as idle until they receive a task; idle
 # must not be mistaken for an absent Agent and trigger duplicate registration.
 agent_is_usable idle
+agent_is_usable working
 if agent_is_usable archived; then
 	echo "archived Agent was treated as usable"
 	exit 1
