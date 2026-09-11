@@ -79,7 +79,7 @@ selected_agent="$(select_agent_id_by_name "$TEST_ROOT/agents.json" 'OpenWrt 管�
 # unique managed Agent on the same LAN CIDR is safe to adopt and rebind.
 cat > "$TEST_ROOT/factory-agents.json" <<'EOF'
 [
-  {"id":"agent-legacy","name":"OpenWrt 管家 · RE-SS-01-CONTAINER · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old","status":"idle"},
+  {"id":"agent-legacy","name":"OpenWrt 管家 · RE-SS-01-CONTAINER · 192.168.12.1/24 · a1b2c3","runtime_id":"rt-old","status":"working"},
   {"id":"agent-other-site","name":"OpenWrt 管家 · RE-CS-02 · 192.168.11.1/24 · d4e5f6","runtime_id":"rt-other","status":"idle"}
 ]
 EOF
