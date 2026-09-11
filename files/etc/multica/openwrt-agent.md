@@ -52,6 +52,9 @@
   没有活跃 Agent 任务且确有兼容新版时升级。日志写入 `/data/multica/logs/agent-runtime.log`。
   `agent-runtime` 自己负责锁、验签、哈希、原子切换、Multica 重启和失败回滚；设置为
   `0` 可暂停自动升级。
+- **Tailscale 详细日志**：固件默认将 `tailscale.settings.log_stdout` 与
+  `tailscale.settings.log_stderr` 同时设为 `0`，避免守护进程刷屏挤出网络关键日志。
+  排障时可临时把两项都设为 `1` 并重启 Tailscale；采集完成后应恢复为 `0`。
 
 ### (3) 容器运行环境与 Compose 约定（RE-SS-01 / RE-CS-02 / RE-CS-07）
 - **运行时**：本机若存在 `nerdctl`、`containerd` 与 `container-bridge-nft`，说明已安装 rootful `containerd + nerdctl + nerdctl compose`；镜像、快照和容器元数据必须落在 `/data`，不得因 `/data` 未挂载而回写根分区。

@@ -52,6 +52,8 @@ mkdir -p "$WORK_DIR/files/etc/config"
 cp "$ROOT_DIR/files/etc/config/tailscale" "$WORK_DIR/files/etc/config/tailscale"
 
 "$CONFIGURER" "$WORK_DIR/files" false
+grep -q "option log_stdout '0'" "$WORK_DIR/files/etc/config/tailscale"
+grep -q "option log_stderr '0'" "$WORK_DIR/files/etc/config/tailscale"
 grep -q "option enabled '0'" "$WORK_DIR/files/etc/config/tailscale" || {
 	echo "configurer should leave LAN-to-tailnet disabled when input is false"
 	exit 1

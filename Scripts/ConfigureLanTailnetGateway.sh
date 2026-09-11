@@ -27,8 +27,9 @@ mkdir -p "$(dirname "$TAILSCALE_CONFIG")"
 if [ ! -f "$TAILSCALE_CONFIG" ]; then
 	cat >"$TAILSCALE_CONFIG" <<'EOF'
 config settings 'settings'
-	option log_stderr '1'
-	option log_stdout '1'
+	option log_stderr '0'
+	option log_stdout '0'
+	option log_quiet_defaults_version '1'
 	option port '41641'
 	option state_file '/etc/tailscale/tailscaled.state'
 	option fw_mode 'nftables'

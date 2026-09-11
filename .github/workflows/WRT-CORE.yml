@@ -721,6 +721,8 @@ jobs:
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
+          cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
+          cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
           mkdir -p ./wrt/files/etc/agent-tools
           cp -f ./files/etc/agent-tools/README.md ./wrt/files/etc/agent-tools/README.md
           mkdir -p ./wrt/files/etc/openwrt-ci
@@ -748,11 +750,15 @@ jobs:
           cp -f ./files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
+          cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
+          cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           chmod 0755 \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
+            ./wrt/files/etc/uci-defaults/93-logd-ring-size \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
+            ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron \
             ./wrt/files/etc/uci-defaults/98-provision-emmc-data \
             ./wrt/files/etc/uci-defaults/99-auto-mount-data \
             ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
@@ -765,7 +771,9 @@ jobs:
             ./wrt/files/usr/sbin/opencode-role-link \
             ./wrt/files/usr/sbin/agent-tools-link \
             ./wrt/files/usr/sbin/rclone-data-backup \
-            ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
+            ./wrt/files/usr/sbin/agent-runtime-auto-upgrade \
+            ./wrt/files/usr/sbin/multica-log-hygiene \
+            ./wrt/files/usr/sbin/multica-runtime-guard
           test -x ./wrt/files/usr/sbin/openwrt-data-storage-diagnose || {
             echo "ERROR: read-only data storage diagnosis helper is missing" >&2
             exit 1

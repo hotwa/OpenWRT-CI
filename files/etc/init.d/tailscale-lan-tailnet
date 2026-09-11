@@ -18,6 +18,7 @@ changed=0
 firewall_changed=0
 dhcp_changed=0
 dropbear_changed=0
+tailscale_changed=0
 
 ensure_option() {
 	local option="$1"
@@ -82,6 +83,7 @@ ensure_tailscale_config() {
 
 	if [ "$changed" -eq 1 ]; then
 		uci commit tailscale
+		tailscale_changed=1
 		changed=0
 	fi
 }
@@ -261,6 +263,10 @@ start() {
 	apply_dnsmasq "$dns_domain" "$magicdns"
 	reapply_dns_guard
 	reapply_nikki_guard
+	if [ "$tailscale_changed" -eq 1 ] || [ "$dropbear_changed" -eq 1 ] ||
+		[ "$firewall_changed" -eq 1 ] || [ "$dhcp_changed" -eq 1 ]; then
+		logger -t tailscale-lan-tailnet "reconciled managed LAN/Tailnet settings"
+	fi
 	reload_services
 }
 

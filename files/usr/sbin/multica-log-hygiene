@@ -1,0 +1,93 @@
+#!/bin/sh
+# Bound Multica's data-backed logs without ever replacing the active log inode.
+
+set -u
+
+DATA_DIR="/data/multica"
+RUNTIME_LOG_DIR="$DATA_DIR/logs"
+DAEMON_LOG="$DATA_DIR/daemon.log"
+RUNTIME_LOG="$RUNTIME_LOG_DIR/agent-runtime.log"
+LOCK_DIR="/var/run/multica-maintenance.lock"
+MAX_BYTES=8388608
+KEEP_ARCHIVES=7
+RETENTION_DAYS=14
+
+log() {
+	logger -t multica-log-hygiene -- "$*" 2>/dev/null || true
+}
+
+file_size() {
+	[ -f "$1" ] || { printf '0'; return 0; }
+	wc -c <"$1" 2>/dev/null | tr -d '[:space:]'
+}
+
+archive_and_truncate() {
+	log_file="$1"
+	archive_file="$2"
+	size="$(file_size "$log_file")"
+	case "$size" in ''|*[!0-9]*) size=0 ;; esac
+	[ "$size" -gt "$MAX_BYTES" ] || return 1
+
+	if command -v gzip >/dev/null 2>&1; then
+		archive_tmp="$archive_file.tmp.$$"
+		if gzip -c "$log_file" >"$archive_tmp" 2>/dev/null; then
+			chmod 600 "$archive_tmp" 2>/dev/null || true
+			mv -f "$archive_tmp" "$archive_file"
+		else
+			rm -f "$archive_tmp"
+			log "could not archive oversized daemon log; truncating to protect /data"
+		fi
+	fi
+
+	# Do not mv or recreate the active file: the daemon opens it without
+	# O_APPEND. The caller restarts Multica immediately so its descriptor is
+	# reopened at offset zero and cannot create a sparse hole after truncation.
+	: > "$log_file"
+	chmod 600 "$log_file" 2>/dev/null || true
+	return 0
+}
+
+truncate_if_oversize() {
+	log_file="$1"
+	size="$(file_size "$log_file")"
+	case "$size" in ''|*[!0-9]*) size=0 ;; esac
+	[ "$size" -gt "$MAX_BYTES" ] || return 0
+	: > "$log_file"
+	chmod 600 "$log_file" 2>/dev/null || true
+}
+
+prune_archives() {
+	[ -d "$DATA_DIR" ] || return 0
+	find "$DATA_DIR" -type f -name 'daemon-*.log.gz' -mtime "+$RETENTION_DAYS" -exec rm -f {} \; 2>/dev/null || true
+	ls -1t "$DATA_DIR"/daemon-*.log.gz 2>/dev/null |
+		sed -n "$((KEEP_ARCHIVES + 1)),\$p" |
+		while IFS= read -r old_archive; do
+			[ -n "$old_archive" ] && rm -f "$old_archive"
+		done
+}
+
+main() {
+	[ -d "$DATA_DIR" ] || return 0
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		log "another Multica maintenance task is already running; skipping"
+		return 0
+	fi
+	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+
+	timestamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
+	archive="$DATA_DIR/daemon-$timestamp.log.gz"
+	if archive_and_truncate "$DAEMON_LOG" "$archive"; then
+		log "archived and truncated oversized daemon log"
+		if [ -x /etc/init.d/multica ]; then
+			/etc/init.d/multica restart >/dev/null 2>&1 ||
+				log "Multica restart failed after daemon log truncation"
+		fi
+	fi
+
+	truncate_if_oversize "$RUNTIME_LOG"
+	prune_archives
+}
+
+if [ "${MULTICA_LOG_HYGIENE_LIBRARY_ONLY:-0}" != '1' ]; then
+	main "$@"
+fi

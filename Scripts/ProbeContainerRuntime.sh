@@ -10,6 +10,35 @@ failures=0
 run_smoke=0
 run_compose=0
 use_host=0
+compose_dir=""
+compose_file=""
+
+cleanup_compose_probe() {
+	[ "$compose_dir" = "/data/compose/.runtime-probe" ] || return 0
+	if [ -n "$compose_file" ] && [ -f "$compose_file" ] && command -v nerdctl >/dev/null 2>&1; then
+		nerdctl compose -f "$compose_file" down --remove-orphans >/dev/null 2>&1 || true
+	fi
+	rm -rf "$compose_dir"
+	compose_dir=""
+	compose_file=""
+}
+
+compose_probe_exit() {
+	status=$?
+	trap - EXIT
+	cleanup_compose_probe
+	exit "$status"
+}
+
+compose_probe_signal() {
+	trap - EXIT HUP INT TERM
+	cleanup_compose_probe
+	exit 1
+}
+
+trap compose_probe_exit EXIT
+trap compose_probe_signal HUP INT TERM
+
 for argument in "$@"; do
 	case "$argument" in
 		--run) run_smoke=1 ;;
@@ -115,8 +144,7 @@ EOF
 	report "== nerdctl compose smoke run =="
 	nerdctl compose -f "$compose_file" up 2>&1
 	[ "$?" -eq 0 ] || failures=$((failures + 1))
-	nerdctl compose -f "$compose_file" down --remove-orphans 2>&1
-	rm -rf "$compose_dir"
+	cleanup_compose_probe
 fi
 
 if [ "$failures" -eq 0 ]; then

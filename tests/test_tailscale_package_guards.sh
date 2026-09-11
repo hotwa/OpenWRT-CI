@@ -133,6 +133,32 @@ tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option fw_mode 'nftables'$" || {
   exit 1
 }
 
+for option in log_stdout log_stderr; do
+	tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option $option '0'$" || {
+		echo "default tailscale UCI config must disable $option"
+		exit 1
+	}
+	grep -q "option $option '0'" "$TAILSCALE_UCI_DEFAULTS" || {
+		echo "tailscale UCI fallback must disable $option"
+		exit 1
+	}
+	grep -q "option $option '0'" "$TAILSCALE_DNS_GUARD" || {
+		echo "tailscale DNS guard fallback must disable $option"
+		exit 1
+	}
+done
+
+for helper in \
+	"$TAILSCALE_ROUTE_RECONCILE" \
+	"$TAILSCALE_QUAD100_HEALTH" \
+	"$ROOT_DIR/files/etc/init.d/tailscale-lan-tailnet" \
+	"$TAILSCALE_NIKKI_BOOT_GUARD"; do
+	grep -q 'logger ' "$helper" || {
+		echo "$helper must retain explicit logger-based observability"
+		exit 1
+	}
+done
+
 tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option disable_magic_dns '1'$" || {
   echo "default tailscale UCI config overlay is missing disable_magic_dns"
   exit 1
@@ -153,8 +179,13 @@ if tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	list ip '192.168.11.2'$"; then
   exit 1
 fi
 
-grep -q '\[ -f "/etc/config/tailscale" \] && exit 0' "$TAILSCALE_UCI_DEFAULTS" || {
-  echo "tailscale UCI fallback defaults script does not preserve existing config"
+grep -q 'log_quiet_defaults_version' "$TAILSCALE_UCI_DEFAULTS" || {
+  echo "tailscale UCI fallback lacks its one-time migration marker"
+  exit 1
+}
+
+grep -q '\[ "$stdout" = '\''1'\'' \] && \[ "$stderr" = '\''1'\'' \]' "$TAILSCALE_UCI_DEFAULTS" || {
+  echo "tailscale UCI fallback does not narrowly recognize the legacy 1/1 defaults"
   exit 1
 }
 

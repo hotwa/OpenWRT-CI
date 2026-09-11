@@ -1,11 +1,11 @@
 #!/bin/sh
 
-[ -f "/etc/config/tailscale" ] && exit 0
-
-cat >/etc/config/tailscale <<'EOF'
+if [ ! -f "/etc/config/tailscale" ]; then
+	cat >/etc/config/tailscale <<'EOF'
 config settings 'settings'
-	option log_stderr '1'
-	option log_stdout '1'
+	option log_stderr '0'
+	option log_stdout '0'
+	option log_quiet_defaults_version '1'
 	option port '41641'
 	option state_file '/etc/tailscale/tailscaled.state'
 	option fw_mode 'nftables'
@@ -32,5 +32,40 @@ config route_reconcile 'route_reconcile'
 	option restart_cooldown '1800'
 	option netmap_wait '8'
 EOF
+	exit 0
+fi
+
+# A preserved pre-policy config can be identified only when both values still
+# match the old package defaults. Migrate that exact pair once, then stamp a
+# version marker so a later explicit operator choice (including 1/1) survives
+# future sysupgrades. Missing values are safe to fill without changing a value
+# the operator already selected.
+version="$(uci -q get tailscale.settings.log_quiet_defaults_version 2>/dev/null || true)"
+if [ "$version" != '1' ]; then
+	if ! uci -q get tailscale.settings >/dev/null 2>&1; then
+		uci set tailscale.settings='settings'
+	fi
+	stdout="$(uci -q get tailscale.settings.log_stdout 2>/dev/null || true)"
+	stderr="$(uci -q get tailscale.settings.log_stderr 2>/dev/null || true)"
+	changed=0
+
+	if [ "$stdout" = '1' ] && [ "$stderr" = '1' ]; then
+		uci set tailscale.settings.log_stdout='0'
+		uci set tailscale.settings.log_stderr='0'
+		changed=1
+	else
+		if [ -z "$stdout" ]; then
+			uci set tailscale.settings.log_stdout='0'
+			changed=1
+		fi
+		if [ -z "$stderr" ]; then
+			uci set tailscale.settings.log_stderr='0'
+			changed=1
+		fi
+	fi
+	uci set tailscale.settings.log_quiet_defaults_version='1'
+	changed=1
+	[ "$changed" -eq 0 ] || uci commit tailscale
+fi
 
 exit 0

@@ -10,7 +10,7 @@ SECTION="main"
 DATA_DIR="/data/multica"
 LOG_DIR="$DATA_DIR/logs"
 LOG_FILE="$LOG_DIR/agent-runtime.log"
-LOCK_DIR="/var/run/agent-runtime-auto-upgrade.lock"
+LOCK_DIR="/var/run/multica-maintenance.lock"
 RUNTIME_BIN="/usr/sbin/agent-runtime"
 
 log() {
@@ -56,7 +56,7 @@ main() {
 	[ -x "$RUNTIME_BIN" ] || { log "agent-runtime manager unavailable"; return 0; }
 	[ -d /data ] && [ -w /data ] || { log "skipping runtime check because /data is unavailable"; return 0; }
 	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-		log "another automatic runtime upgrade check is already running"
+		log "another Multica maintenance task is already running"
 		return 0
 	fi
 	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM

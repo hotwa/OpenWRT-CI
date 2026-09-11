@@ -1,0 +1,14 @@
+#!/bin/sh
+
+CRONTAB_FILE="/etc/crontabs/root"
+
+mkdir -p /etc/crontabs
+touch "$CRONTAB_FILE"
+
+grep -Fq '#multica runtime guard' "$CRONTAB_FILE" 2>/dev/null ||
+	printf '%s\n' '*/5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard' >>"$CRONTAB_FILE"
+grep -Fq '#multica log hygiene' "$CRONTAB_FILE" 2>/dev/null ||
+	printf '%s\n' '*/30 * * * * /usr/sbin/multica-log-hygiene #multica log hygiene' >>"$CRONTAB_FILE"
+
+[ -x /etc/init.d/cron ] && /etc/init.d/cron restart >/dev/null 2>&1 || true
+exit 0

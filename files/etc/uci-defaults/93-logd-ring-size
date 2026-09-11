@@ -1,0 +1,11 @@
+#!/bin/sh
+
+current="$(uci -q get 'system.@system[0].log_size' 2>/dev/null || true)"
+case "$current" in
+	''|128)
+		uci set 'system.@system[0].log_size=256'
+		uci commit system
+		;;
+esac
+
+exit 0

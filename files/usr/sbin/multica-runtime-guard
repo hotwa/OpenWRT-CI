@@ -31,6 +31,7 @@ OC_WRAPPER="/usr/bin/opencode"
 OC_REAL_BIN="/data/opt/opencode/current/bin/opencode"
 OC_LOCK_DIR="/data/opencode/state/opencode/locks"
 OC_DB_DIR="/data/opencode/data/opencode"
+LOCK_DIR="/var/run/multica-maintenance.lock"
 
 log() {
 	logger -t multica-guard "$*"
@@ -48,6 +49,11 @@ case "$_enabled" in
 	1|true|yes|on) ;;
 	*) exit 0 ;;
 esac
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+	exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
 
 # If multica is explicitly configured for pi (not opencode, not default),
 # there is no opencode runtime to guard.  Restore any prior disable state and
