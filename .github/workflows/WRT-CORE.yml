@@ -700,10 +700,14 @@ jobs:
             ./wrt/files/etc/uci-defaults \
             ./wrt/files/usr/sbin
           nikki_package_init="$(find ./wrt/package -type f -path '*/luci-app-nikki/root/etc/init.d/nikki' -print -quit)"
-          test -n "$nikki_package_init" && grep -q '^START=99$' "$nikki_package_init" || {
-            echo "ERROR: Nikki init START must remain 99 for fail-open startup ordering" >&2
-            exit 1
-          }
+          if [ -n "$nikki_package_init" ]; then
+            grep -q '^START=99$' "$nikki_package_init" || {
+              echo "ERROR: Nikki init START must remain 99 for fail-open startup ordering" >&2
+              exit 1
+            }
+          else
+            echo "Nikki package init is absent for this target; skipping its startup-order assertion"
+          fi
           # A reviewed RE workflow may already have enabled this UCI gate
           # after the full overlay was copied. Preserve that explicit
           # per-device decision; minimal images receive the safe default.

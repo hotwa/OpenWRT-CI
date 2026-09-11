@@ -39,6 +39,7 @@ for path in \
 done
 grep -Fq "path '*/luci-app-nikki/root/etc/init.d/nikki'" "$CORE"
 grep -Fq 'Nikki init START must remain 99 for fail-open startup ordering' "$CORE"
+grep -Fq 'Nikki package init is absent for this target; skipping its startup-order assertion' "$CORE"
 
 for setting in \
 	"option enabled '1'" \
