@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenWrt Firmware Upgrade Loop"
+  short_description: "Build, flash, verify, and repair OpenWrt fleets safely"
+  default_prompt: "Use $openwrt-firmware-upgrade-loop to run a guarded OpenWrt build, upgrade, validation, and repair loop."
