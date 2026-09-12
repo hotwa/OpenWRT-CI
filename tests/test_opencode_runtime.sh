@@ -212,9 +212,12 @@ if sh -c "
 	logger() { :; }
 	sleep() { :; }
 	BOOT_INSTALL_LOCK_DIR='$TMP_ROOT/boot-install-lock'
+	INSTALL_LOCK_DIR='$TMP_ROOT/boot-install-installer-lock'
 	OPENCODE_BOOT_MAX_ATTEMPTS=3
 	OPENCODE_BOOT_RETRY_DELAY=0
 	do_install() {
+		mkdir \"\$INSTALL_LOCK_DIR\" 2>/dev/null || return 1
+		trap 'rmdir \"\$INSTALL_LOCK_DIR\" 2>/dev/null || true' EXIT HUP INT TERM
 		count=0
 		[ ! -f '$BOOT_RETRY_COUNT' ] || count=\$(cat '$BOOT_RETRY_COUNT')
 		count=\$((count + 1))
@@ -223,10 +226,11 @@ if sh -c "
 	}
 	do_boot_install || exit 1
 	[ \"\$(cat '$BOOT_RETRY_COUNT')\" = 3 ] || exit 1
+	[ ! -e '$TMP_ROOT/boot-install-installer-lock' ] || exit 1
 " 2>/dev/null; then
-	pass "boot installer retries transient failures up to success"
+	pass "boot installer retries transient failures and releases installer lock"
 else
-	fail "boot installer retries transient failures up to success"
+	fail "boot installer retries transient failures and releases installer lock"
 fi
 
 BOOT_RETRY_EXHAUST_COUNT="$TMP_ROOT/boot-install-exhaust-attempts"

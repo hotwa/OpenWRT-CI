@@ -287,7 +287,10 @@ do_boot_install() {
 
 	attempt=1
 	while [ "$attempt" -le "$max_attempts" ]; do
-		if do_install; then
+		# do_install uses an EXIT trap to release its install lock. Run each
+		# attempt in its own subshell so a failed attempt releases that lock
+		# before the next retry tries to acquire it.
+		if ( do_install ); then
 			log "boot install reached the configured release on attempt ${attempt}/${max_attempts}"
 			return 0
 		else
