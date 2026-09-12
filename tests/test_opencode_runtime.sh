@@ -256,6 +256,56 @@ else
 	fail "boot installer stops after the configured retry limit"
 fi
 
+# A sysupgrade preserves /data. Older firmware stored its installer mutex at
+# /data/opt/opencode/.install.lock, so a terminated process could leave an
+# empty directory that blocks every installer after the next boot. The
+# current installer must use volatile /var/run state and ignore that legacy
+# directory rather than trying to guess whether it is stale.
+echo "== opencode-runtime legacy persistent install lock =="
+
+LEGACY_LOCK_ROOT="$TMP_ROOT/legacy-lock-test"
+mkdir -p "$LEGACY_LOCK_ROOT/data/opt/opencode/.install.lock" "$LEGACY_LOCK_ROOT/run"
+cat > "$LEGACY_LOCK_ROOT/test.sh" <<'EOF'
+set -eu
+. "$RUNTIME_FUNCS"
+logger() { :; }
+RELEASE_FILE="$LEGACY_LOCK_ROOT/release-url"
+DATA_ROOT="$LEGACY_LOCK_ROOT/data"
+INSTALL_ROOT="$DATA_ROOT/opt/opencode"
+CURRENT_LINK="$INSTALL_ROOT/current"
+BIN_PATH="$CURRENT_LINK/bin/opencode"
+VERSION_FILE="$CURRENT_LINK/version"
+STAGING_DIR="$INSTALL_ROOT/.staging"
+INSTALL_LOCK_DIR="$LEGACY_LOCK_ROOT/run/opencode-runtime-install.lock"
+
+release_value() {
+	case "$1" in
+		OPENCODE_VERSION) printf '1.18.30\n' ;;
+		OPENCODE_TARBALL_URL) printf 'https://example.invalid/opencode.tgz\n' ;;
+		OPENCODE_SHA512) printf 'test-sha512\n' ;;
+		*) return 1 ;;
+	esac
+}
+download_file() { printf 'fixture' > "$2"; }
+verify_sha512() { return 0; }
+elf_machine_id() { printf '183\n'; }
+tar() {
+	mkdir -p "$STAGING_DIR/package/bin"
+	printf '#!/bin/sh\n[ "${1:-}" = "--version" ] && printf "1.18.30\\n"\n' > "$STAGING_DIR/package/bin/opencode"
+}
+
+(do_install)
+[ "$(cat "$VERSION_FILE")" = '1.18.30' ]
+[ ! -e "$INSTALL_LOCK_DIR" ]
+[ -d "$INSTALL_ROOT/.install.lock" ]
+EOF
+if output=$(RUNTIME_FUNCS="$RUNTIME_FUNCS" LEGACY_LOCK_ROOT="$LEGACY_LOCK_ROOT" sh "$LEGACY_LOCK_ROOT/test.sh" 2>&1); then
+	pass "legacy /data install lock does not block upgrade; volatile lock is released"
+else
+	printf '%s\n' "$output"
+	fail "legacy /data install lock does not block upgrade; volatile lock is released"
+fi
+
 # ---------------------------------------------------------------------------
 # 5. multica-agent-bootstrap: opencode-first logic present
 # ---------------------------------------------------------------------------

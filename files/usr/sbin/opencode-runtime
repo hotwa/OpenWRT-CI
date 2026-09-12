@@ -30,6 +30,7 @@ CURRENT_LINK="${INSTALL_ROOT}/current"
 STAGING_DIR="${INSTALL_ROOT}/.staging"
 BIN_PATH="${CURRENT_LINK}/bin/opencode"
 VERSION_FILE="${CURRENT_LINK}/version"
+INSTALL_LOCK_DIR="/var/run/opencode-runtime-install.lock"
 
 log()  { logger -t "$LOG_TAG" "$*"; printf '[%s] %s\n' "$LOG_TAG" "$*"; }
 warn() { logger -t "$LOG_TAG" "WARN: $*"; printf '[%s] WARN: %s\n' "$LOG_TAG" "$*" >&2; }
@@ -141,20 +142,15 @@ do_install() {
 
 	data_available || { err "/data is not writable"; return 3; }
 
-	# The lock lives inside INSTALL_ROOT, so the parent must exist before we
-	# try to take it: otherwise `mkdir "$LOCK_DIR"` fails with "No such file
-	# or directory" and every installer mistakes that for a concurrently held
-	# lock, spinning 300s and never installing anything (observed on fresh
-	# /data after reflash).
+	# The persistent install root must exist before creating the release.
 	mkdir -p "$INSTALL_ROOT" || { err "cannot create $INSTALL_ROOT"; return 1; }
 
-	# Serialize installs.  The init.d service kicks off a background install at
-	# boot (START=92) while the /usr/bin/opencode wrapper may run a foreground
-	# install at the same moment; both used to rm -f the same staging tarball
-	# and package dir, which produced "machine id=unknown" / "tarball does not
-	# contain package/bin/opencode" failures.  A mkdir lock keeps exactly one
-	# installer running; the other waits and then re-checks the result.
-	LOCK_DIR="${INSTALL_ROOT}/.install.lock"
+	# Serialize concurrent installs with a volatile lock. Do not put this lock
+	# under /data: sysupgrade preserves /data, so a lock left by an older
+	# firmware (whose process was terminated during upgrade) would look live
+	# forever and block every retry. /var/run is tmpfs and is cleared at boot.
+	LOCK_DIR="$INSTALL_LOCK_DIR"
+	mkdir -p "${LOCK_DIR%/*}" || { err "cannot create lock parent ${LOCK_DIR%/*}"; return 1; }
 	waited=0
 	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
 		waited=$((waited + 5))
