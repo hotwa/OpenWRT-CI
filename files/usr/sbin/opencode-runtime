@@ -61,6 +61,17 @@ binary_healthy() {
 	"$BIN_PATH" --version >/dev/null 2>&1
 }
 
+activate_version() {
+	local version="$1" active_version
+	[ -n "$version" ] || return 1
+
+	# -n is essential here: without it, ln follows current when it points to
+	# a directory and creates a nested version link inside the old release.
+	ln -sfn "$version" "$CURRENT_LINK" || return 1
+	active_version="$(readlink "$CURRENT_LINK" 2>/dev/null)" || return 1
+	[ "$active_version" = "$version" ]
+}
+
 # ELF machine id via od (no `file` dependency on minimal OpenWrt).
 elf_machine_id() {
 	local binary="$1" magic class data lo hi
@@ -230,15 +241,22 @@ do_install() {
 		chmod +x "${dest_dir}/bin/opencode"
 		printf '%s\n' "$version" > "${dest_dir}/version"
 
-		# Atomic symlink flip.
-		ln -sf "$version" "$CURRENT_LINK"
+		# Replace the current symlink itself and verify which release is active.
+		if ! activate_version "$version"; then
+			err "cannot activate opencode ${version} (attempt ${attempt}/3)"
+			rm -rf "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
 
 		# Cleanup staging.
 		rm -rf "$tarball" "${STAGING_DIR}/package"
 
-		# Final health check.
-		if ! binary_healthy; then
-			err "installed binary failed --version health check (attempt ${attempt}/3)"
+		# Final health check must validate the requested release, not merely
+		# accept an older active binary that happens to answer --version.
+		current_version="$(installed_version 2>/dev/null || true)"
+		if [ "$current_version" != "$version" ] || ! binary_healthy; then
+			err "installed binary activation/health check failed (expected ${version}, active ${current_version:-unknown}; attempt ${attempt}/3)"
 			[ "$attempt" -lt 3 ] && continue
 			return 1
 		fi

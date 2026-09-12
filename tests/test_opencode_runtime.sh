@@ -179,6 +179,29 @@ else
 	fail "opencode-runtime status reports not installed"
 fi
 
+# A version upgrade must replace a current symlink that points to a directory,
+# not follow it and create a nested link inside the old version.
+echo "== opencode-runtime version symlink activation =="
+
+LINK_DIR="$TMP_ROOT/link-flip-test"
+LINK_INSTALL_ROOT="$LINK_DIR/data/opt/opencode"
+mkdir -p "$LINK_INSTALL_ROOT/1.18.29" "$LINK_INSTALL_ROOT/1.18.30"
+printf '1.18.29\n' > "$LINK_INSTALL_ROOT/1.18.29/version"
+printf '1.18.30\n' > "$LINK_INSTALL_ROOT/1.18.30/version"
+ln -s 1.18.29 "$LINK_INSTALL_ROOT/current"
+if sh -c "
+	. '$RUNTIME_FUNCS'
+	CURRENT_LINK='$LINK_INSTALL_ROOT/current'
+	activate_version '1.18.30' || exit 1
+	[ \"\$(readlink '$LINK_INSTALL_ROOT/current')\" = '1.18.30' ] || exit 1
+	[ \"\$(cat '$LINK_INSTALL_ROOT/current/version')\" = '1.18.30' ] || exit 1
+	[ ! -e '$LINK_INSTALL_ROOT/1.18.29/1.18.30' ] || exit 1
+" 2>/dev/null; then
+	pass "version activation replaces current symlink without nesting"
+else
+	fail "version activation replaces current symlink without nesting"
+fi
+
 # ---------------------------------------------------------------------------
 # 5. multica-agent-bootstrap: opencode-first logic present
 # ---------------------------------------------------------------------------
