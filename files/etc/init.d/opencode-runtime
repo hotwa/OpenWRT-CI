@@ -16,11 +16,11 @@ start() {
 		return 0
 	}
 
-	# Kick off the first-boot install in the background.  The 185 MB download
-	# can take several minutes; we must not block the boot sequence.
+	# Kick off a bounded boot-install retry worker in the background. WAN/DNS
+	# may not be ready yet at START=92; retry without blocking later services.
 	if [ -x /usr/sbin/opencode-runtime ]; then
-		( /usr/sbin/opencode-runtime install >/tmp/opencode-runtime-install.log 2>&1 ) &
-		logger -t opencode-runtime "first-boot install started in background"
+		( /usr/sbin/opencode-runtime boot-install >/tmp/opencode-runtime-install.log 2>&1 ) &
+		logger -t opencode-runtime "bounded boot install retry worker started in background"
 	fi
 
 	# Maintain data-backed config directories and symlinks (idempotent).

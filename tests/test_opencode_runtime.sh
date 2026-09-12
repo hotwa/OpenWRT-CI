@@ -202,6 +202,56 @@ else
 	fail "version activation replaces current symlink without nesting"
 fi
 
+# A first-boot download may fail before WAN is ready; the installer must keep
+# retrying rather than leave the persistent previous version active forever.
+echo "== opencode-runtime boot install retry =="
+
+BOOT_RETRY_COUNT="$TMP_ROOT/boot-install-attempts"
+if sh -c "
+	. '$RUNTIME_FUNCS'
+	logger() { :; }
+	sleep() { :; }
+	BOOT_INSTALL_LOCK_DIR='$TMP_ROOT/boot-install-lock'
+	OPENCODE_BOOT_MAX_ATTEMPTS=3
+	OPENCODE_BOOT_RETRY_DELAY=0
+	do_install() {
+		count=0
+		[ ! -f '$BOOT_RETRY_COUNT' ] || count=\$(cat '$BOOT_RETRY_COUNT')
+		count=\$((count + 1))
+		printf '%s\\n' \"\$count\" > '$BOOT_RETRY_COUNT'
+		[ \"\$count\" -ge 3 ]
+	}
+	do_boot_install || exit 1
+	[ \"\$(cat '$BOOT_RETRY_COUNT')\" = 3 ] || exit 1
+" 2>/dev/null; then
+	pass "boot installer retries transient failures up to success"
+else
+	fail "boot installer retries transient failures up to success"
+fi
+
+BOOT_RETRY_EXHAUST_COUNT="$TMP_ROOT/boot-install-exhaust-attempts"
+if sh -c "
+	. '$RUNTIME_FUNCS'
+	logger() { :; }
+	sleep() { :; }
+	BOOT_INSTALL_LOCK_DIR='$TMP_ROOT/boot-install-exhaust-lock'
+	OPENCODE_BOOT_MAX_ATTEMPTS=2
+	OPENCODE_BOOT_RETRY_DELAY=0
+	do_install() {
+		count=0
+		[ ! -f '$BOOT_RETRY_EXHAUST_COUNT' ] || count=\$(cat '$BOOT_RETRY_EXHAUST_COUNT')
+		count=\$((count + 1))
+		printf '%s\\n' \"\$count\" > '$BOOT_RETRY_EXHAUST_COUNT'
+		return 4
+	}
+	if do_boot_install; then exit 1; fi
+	[ \"\$(cat '$BOOT_RETRY_EXHAUST_COUNT')\" = 2 ] || exit 1
+" 2>/dev/null; then
+	pass "boot installer stops after the configured retry limit"
+else
+	fail "boot installer stops after the configured retry limit"
+fi
+
 # ---------------------------------------------------------------------------
 # 5. multica-agent-bootstrap: opencode-first logic present
 # ---------------------------------------------------------------------------
@@ -230,7 +280,7 @@ fi
 echo "== init.d structure =="
 
 grep -Fq 'START=92' "$INIT_SCRIPT" && pass "init.d START=92 (after agent-runtime=91, before multica=95)" || fail "init.d START=92"
-grep -Fq 'opencode-runtime install' "$INIT_SCRIPT" && pass "init.d triggers install" || fail "init.d triggers install"
+grep -Fq 'opencode-runtime boot-install' "$INIT_SCRIPT" && pass "init.d triggers retrying boot install" || fail "init.d triggers retrying boot install"
 grep -Fq '/root/.config/opencode' "$INIT_SCRIPT" && pass "init.d maintains config symlink" || fail "init.d maintains config symlink"
 grep -Fq 'restart()' "$INIT_SCRIPT" && pass "init.d has restart()" || fail "init.d has restart()"
 

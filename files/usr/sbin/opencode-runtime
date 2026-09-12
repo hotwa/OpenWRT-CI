@@ -7,6 +7,7 @@
 #
 # Subcommands:
 #   install   download + verify + install (idempotent)
+#   boot-install retry install across early-boot network outages
 #   status    report installed version, health, /data space
 #   upgrade   re-read release-url and install if newer
 #
@@ -267,6 +268,42 @@ do_install() {
 	return 1
 }
 
+# Keep retrying in the background after early boot when WAN/DNS is not ready.
+# Each do_install() already retries individual transfers; this outer bounded
+# loop gives PPPoE/DHCP time to come up without blocking the boot sequence.
+BOOT_INSTALL_LOCK_DIR="/var/run/opencode-runtime-boot-install.lock"
+do_boot_install() {
+	local max_attempts retry_delay attempt rc
+	max_attempts="${OPENCODE_BOOT_MAX_ATTEMPTS:-30}"
+	retry_delay="${OPENCODE_BOOT_RETRY_DELAY:-60}"
+	case "$max_attempts" in ''|*[!0-9]*|0) max_attempts=30 ;; esac
+	case "$retry_delay" in ''|*[!0-9]*) retry_delay=60 ;; esac
+
+	if ! mkdir "$BOOT_INSTALL_LOCK_DIR" 2>/dev/null; then
+		log "boot install retry worker is already running"
+		return 0
+	fi
+	trap 'rmdir "$BOOT_INSTALL_LOCK_DIR" 2>/dev/null || true' 0
+
+	attempt=1
+	while [ "$attempt" -le "$max_attempts" ]; do
+		if do_install; then
+			log "boot install reached the configured release on attempt ${attempt}/${max_attempts}"
+			return 0
+		else
+			rc=$?
+		fi
+		if [ "$attempt" -ge "$max_attempts" ]; then
+			err "boot install exhausted ${max_attempts} attempts (last exit=${rc})"
+			return "$rc"
+		fi
+		warn "boot install attempt ${attempt}/${max_attempts} failed (exit=${rc}); retrying in ${retry_delay}s"
+		sleep "$retry_delay"
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
@@ -322,7 +359,7 @@ do_upgrade() {
 # ---------------------------------------------------------------------------
 
 usage() {
-	printf 'Usage: %s {install|status|upgrade}\n' "$0" >&2
+	printf 'Usage: %s {install|boot-install|status|upgrade}\n' "$0" >&2
 }
 
 main() {
@@ -346,6 +383,9 @@ main() {
 	case "$cmd" in
 		install)
 			do_install
+			;;
+		boot-install)
+			do_boot_install
 			;;
 		status)
 			do_status
