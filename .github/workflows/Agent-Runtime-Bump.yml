@@ -131,8 +131,7 @@ jobs:
               multica --version
               cd /generation/node/lib/node_modules
               test -s /generation/node/lib/node_modules/command-code/dist/index.mjs
-              node /verify_pi_extensions.js --directory /generation/node \
-                --vendor-extension /generation/vendor/pi-plan-mode/plan-mode.ts
+              node /verify_pi_extensions.js --directory /generation/node
               NODE_PATH=/generation/node/lib/node_modules node -e \
                 "require(\"@napi-rs/keyring\"); require(\"zigpty\");"
             '
