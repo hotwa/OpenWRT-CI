@@ -133,16 +133,16 @@ jq -e '.data | type == "array"' "$CASE_ROOT/etc/pi/agent/commandcode-models.json
 }
 
 # Test 6: defaultModel is dynamically selected from the cache, not hardcoded.
-# With the fallback cache (API unreachable in tests), the first open-source
-# model is Qwen/Qwen3.8-Flash.
-[ "$(jq -r .defaultModel "$CASE_ROOT/etc/pi/agent/settings.json")" = "Qwen/Qwen3.8-Flash" ]
+# With the fallback cache (API unreachable in tests), use the approved
+# DeepSeek V4.1 Flash model.
+[ "$(jq -r .defaultModel "$CASE_ROOT/etc/pi/agent/settings.json")" = "deepseek/deepseek-v4.1-flash" ]
 
 # Test 7: custom cache input (COMMANDCODE_MODEL_CACHE_INPUT) overrides the API
-# fetch and drives model selection.  With a deepseek flash model present, it
-# must be selected as the highest-priority preferred model.
+# fetch and drives model selection.  V4.1 must win even when the old DeepSeek
+# flash entry occurs first in the provider response.
 CUSTOM_CACHE="$(mktemp)"
 cat >"$CUSTOM_CACHE" <<'EOF'
-{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model","owned_by":"anthropic"},{"id":"deepseek/deepseek-v4-flash","object":"model","owned_by":"deepseek"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}
+{"object":"list","data":[{"id":"anthropic/claude-3.5-sonnet","object":"model","owned_by":"anthropic"},{"id":"deepseek/deepseek-v4-flash","object":"model","owned_by":"deepseek"},{"id":"deepseek/deepseek-v4.1-flash","object":"model","owned_by":"deepseek"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}
 EOF
 CASE_CUSTOM="$TMP_ROOT/custom-cache"
 mkdir -p "$CASE_CUSTOM/etc/pi/agent" "$CASE_CUSTOM/root/.pi/agent"
@@ -151,8 +151,8 @@ write_settings "$CASE_CUSTOM/root/.pi/agent"
 COMMANDCODE_API_KEY="user_custom_cache" \
   COMMANDCODE_MODEL_CACHE_INPUT="$CUSTOM_CACHE" \
   bash "$CONFIG_SCRIPT" "$CASE_CUSTOM"
-[ "$(jq -r .defaultModel "$CASE_CUSTOM/etc/pi/agent/settings.json")" = "deepseek/deepseek-v4-flash" ] || {
-  echo "FAIL: defaultModel was not selected from custom cache (expected deepseek/deepseek-v4-flash)"
+[ "$(jq -r .defaultModel "$CASE_CUSTOM/etc/pi/agent/settings.json")" = "deepseek/deepseek-v4.1-flash" ] || {
+	echo "FAIL: defaultModel was not selected from custom cache (expected deepseek/deepseek-v4.1-flash)"
   exit 1
 }
 # The cache file must match the custom input (copied, not fetched).

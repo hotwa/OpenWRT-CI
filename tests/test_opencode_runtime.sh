@@ -382,13 +382,17 @@ if [ -f "$CONFIG_FILE" ]; then
 	fi
 
 	# Flash models present
-	grep -Fq 'deepseek/deepseek-v4-flash' "$CONFIG_FILE" && pass "opencode.json has deepseek flash model" || fail "opencode.json has deepseek flash model"
+	grep -Fq 'deepseek/deepseek-v4.1-flash' "$CONFIG_FILE" && pass "opencode.json has DeepSeek V4.1 Flash model" || fail "opencode.json has DeepSeek V4.1 Flash model"
 	grep -Fq 'Qwen/Qwen3.8-Flash' "$CONFIG_FILE" && pass "opencode.json has qwen flash model" || fail "opencode.json has qwen flash model"
 	grep -Fq 'z-ai/glm-5.3-flash' "$CONFIG_FILE" && pass "opencode.json has glm flash model" || fail "opencode.json has glm flash model"
 
 	# Default model set
 	grep -Fq '"model"' "$CONFIG_FILE" && pass "opencode.json has default model" || fail "opencode.json has default model"
-	grep -Fq 'commandcode/deepseek/deepseek-v4-flash' "$CONFIG_FILE" && pass "opencode.json default model is commandcode deepseek flash" || fail "opencode.json default model is commandcode deepseek flash"
+	grep -Fq 'commandcode/deepseek/deepseek-v4.1-flash' "$CONFIG_FILE" && pass "opencode.json default model is CommandCode DeepSeek V4.1 Flash" || fail "opencode.json default model is CommandCode DeepSeek V4.1 Flash"
+	grep -Fq '"local-sglang"' "$CONFIG_FILE" && pass "opencode.json has local SGLang fallback provider" || fail "opencode.json has local SGLang fallback provider"
+	grep -Fq 'http://192.168.11.159:8101/v1' "$CONFIG_FILE" && pass "local SGLang fallback uses port 8101" || fail "local SGLang fallback uses port 8101"
+	grep -Fq '"Qwen3.8-Flash-Next"' "$CONFIG_FILE" && pass "local SGLang fallback uses Qwen3.8 Flash Next" || fail "local SGLang fallback uses Qwen3.8 Flash Next"
+	grep -Fq '"context": 262144' "$CONFIG_FILE" && grep -Fq '"output": 32768' "$CONFIG_FILE" && pass "local SGLang fallback has verified token limits" || fail "local SGLang fallback has verified token limits"
 
 	# small_model set
 	grep -Fq '"small_model"' "$CONFIG_FILE" && pass "opencode.json has small_model" || fail "opencode.json has small_model"

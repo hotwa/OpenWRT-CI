@@ -37,11 +37,11 @@ COMMANDCODE_MODEL_CACHE_INPUT="${COMMANDCODE_MODEL_CACHE_INPUT:-}"
 # always contains a flash model, and a missing match indicates an API problem.
 # Keep this list in sync with the runtime selectors in 99-auto-mount-data and
 # commandcode-model-sync.
-MODEL_PREFERENCE_PATTERNS='deepseek/.*flash.* qwen/.*flash.* glm.*flash.*'
+MODEL_PREFERENCE_PATTERNS='deepseek/deepseek-v4\.1-flash deepseek/.*flash.* qwen/.*flash.* glm.*flash.*'
 
 # Built-in minimal fallback cache used when the build-time API fetch fails.
 # Must contain at least one open-source model so defaultModel can be resolved.
-BUILTIN_FALLBACK_CACHE='{"object":"list","data":[{"id":"Qwen/Qwen3.8-Flash","object":"model","owned_by":"qwen"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}'
+BUILTIN_FALLBACK_CACHE='{"object":"list","data":[{"id":"deepseek/deepseek-v4.1-flash","object":"model","owned_by":"deepseek"},{"id":"Qwen/Qwen3.8-Flash","object":"model","owned_by":"qwen"},{"id":"Qwen/Qwen3.8-27B","object":"model","owned_by":"qwen"}]}'
 
 log_info() {
 	printf 'INFO: [commandcode-provider] %s\n' "$*"

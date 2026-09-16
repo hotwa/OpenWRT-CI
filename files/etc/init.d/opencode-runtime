@@ -57,18 +57,18 @@ start() {
 			logger -t opencode-runtime "copied default opencode.json to nested /data path"
 		fi
 
-		# Upgrade migration: if the existing /data config predates the
-		# CommandCode provider (no "commandcode" key), back it up and replace
-		# with the firmware default so all devices get the provider config.
-		# Idempotent: once the config contains "commandcode" this is skipped.
+		# Upgrade migration: if the existing /data config lacks either the
+		# CommandCode default or local SGLang fallback provider, back it up and
+		# replace with the firmware default. Idempotent once both are present.
 		if [ -f "$CONFIG_FILE" ] && \
 			[ -f /etc/opencode/opencode.json ] && \
-			! grep -q '"commandcode"' "$CONFIG_FILE" 2>/dev/null; then
+			{ ! grep -q '"commandcode"' "$CONFIG_FILE" 2>/dev/null || \
+			  ! grep -q '"local-sglang"' "$CONFIG_FILE" 2>/dev/null; }; then
 			cp -p "$CONFIG_FILE" \
 				"$CONFIG_FILE.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)"
 			cp /etc/opencode/opencode.json "$CONFIG_FILE"
 			chmod 0644 "$CONFIG_FILE"
-			logger -t opencode-runtime "migrated opencode.json to include CommandCode provider (backup kept)"
+			logger -t opencode-runtime "migrated opencode.json to include CommandCode and local SGLang providers (backup kept)"
 		fi
 
 		# Default-XDG compatibility must point at the effective app directory.

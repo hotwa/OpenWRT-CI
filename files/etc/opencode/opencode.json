@@ -9,8 +9,8 @@
         "apiKey": "{env:COMMANDCODE_API_KEY}"
       },
       "models": {
-        "deepseek/deepseek-v4-flash": {
-          "name": "DeepSeek V4 Flash"
+        "deepseek/deepseek-v4.1-flash": {
+          "name": "DeepSeek V4.1 Flash"
         },
         "deepseek/deepseek-v4-flash-fast": {
           "name": "DeepSeek V4 Flash Fast"
@@ -34,8 +34,25 @@
           "name": "DeepSeek V4 Pro"
         }
       }
+    },
+    "local-sglang": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local SGLang (192.168.11.159:8101)",
+      "options": {
+        "baseURL": "http://192.168.11.159:8101/v1",
+        "apiKey": "sk-local"
+      },
+      "models": {
+        "Qwen3.8-Flash-Next": {
+          "name": "Qwen3.8-Flash-Next",
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          }
+        }
+      }
     }
   },
-  "model": "commandcode/deepseek/deepseek-v4-flash",
+  "model": "commandcode/deepseek/deepseek-v4.1-flash",
   "small_model": "commandcode/Qwen/Qwen3.8-Flash"
 }

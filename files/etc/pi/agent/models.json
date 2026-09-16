@@ -1,22 +1,31 @@
 {
   "providers": {
     "office-sglang": {
-      "baseUrl": "http://192.168.11.159:8001/v1",
+      "baseUrl": "http://192.168.11.159:8101/v1",
       "api": "openai-completions",
-      "apiKey": "local-openwrt",
+      "apiKey": "sk-local",
       "compat": {
         "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
+        "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens"
       },
       "models": [
         {
-          "id": "Qwen3.8-27B",
-          "name": "Office SGLang Qwen3.8-27B",
+          "id": "Qwen3.8-Flash-Next",
+          "name": "Qwen3.8-Flash-Next (SGLang)",
           "reasoning": true,
-          "input": ["text"],
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "xhigh",
+            "xhigh": null,
+            "max": null
+          },
+          "input": ["text", "image"],
           "contextWindow": 262144,
-          "maxTokens": 16384,
+          "maxTokens": 32768,
           "cost": {
             "input": 0,
             "output": 0,

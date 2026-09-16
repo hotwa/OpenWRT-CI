@@ -5,8 +5,8 @@
 # the latest model catalog from the CommandCode API, updates the on-disk cache,
 # and — only when settings.json is still firmware-managed (not operator-edited)
 # — refreshes defaultModel to the preferred model in the new catalog.  Preferred
-# models are selected by ordered wildcard patterns: deepseek flash, then qwen
-# flash, then glm flash, then any flash model, then any "pro" model.
+# models are selected by ordered patterns: DeepSeek V4.1 Flash, other
+# DeepSeek flash, Qwen flash, GLM flash, any flash model, then any "pro" model.
 #
 # Failures are non-fatal: the existing cache and settings are preserved and the
 # pi-commandcode-provider extension will fetch the catalog on its own next use.
@@ -33,11 +33,12 @@ log_msg() {
 # Select the preferred default model from a cache file.  Mirrors the logic in
 # 99-auto-mount-data (grep/sed/tr only, no jq).  Matching passes, in priority
 # order (all case-insensitive):
-#   1. deepseek flash   (deepseek/*flash*)
-#   2. qwen flash       (qwen/*flash*)
-#   3. glm flash        (*glm*flash*)
-#   4. any flash model  (any provider)
-#   5. any "pro" model
+#   1. DeepSeek V4.1 Flash
+#   2. other deepseek flash
+#   3. qwen flash
+#   4. glm flash
+#   5. any flash model  (any provider)
+#   6. any "pro" model
 # No built-in fallback: the live catalog always contains a flash model.
 # Returns 0 with the model id on stdout; returns 1 if the cache is missing,
 # unparseable, or no pattern matches.
@@ -49,35 +50,42 @@ select_model_from_cache() {
 		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 	[ -n "$model_ids" ] || return 1
 
-	# Pass 1: deepseek flash.
+	# Pass 1: explicitly prefer DeepSeek V4.1 Flash.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			deepseek/deepseek-v4.1-flash) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 2: other deepseek flash.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			deepseek/*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 2: qwen flash.
+	# Pass 3: qwen flash.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			qwen/*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 3: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
+	# Pass 4: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			*glm*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 4: any model with "flash" in the id (any provider).
+	# Pass 5: any model with "flash" in the id (any provider).
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 5: any model with "pro" in the id.
+	# Pass 6: any model with "pro" in the id.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in

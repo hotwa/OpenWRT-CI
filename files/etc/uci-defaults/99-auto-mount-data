@@ -544,11 +544,12 @@ mark_settings_firmware_managed() {
 # The cache is the raw /provider/v1/models response: {"data":[{"id":"..."},...]}.
 # Uses only grep/sed/tr (no jq) because jq is not guaranteed on OpenWrt.
 # Matching passes, in priority order (all case-insensitive):
-#   1. deepseek flash   (deepseek/*flash*)
-#   2. qwen flash       (qwen/*flash*)
-#   3. glm flash        (*glm*flash*)
-#   4. any flash model  (any provider, e.g. stepfun/Step-3.7-Flash)
-#   5. any "pro" model  (e.g. deepseek/deepseek-v4-pro, xiaomi/mimo-v2.5-pro)
+#   1. DeepSeek V4.1 Flash
+#   2. other deepseek flash
+#   3. qwen flash
+#   4. glm flash
+#   5. any flash model  (any provider, e.g. stepfun/Step-3.7-Flash)
+#   6. any "pro" model  (e.g. deepseek/deepseek-v4-pro, xiaomi/mimo-v2.5-pro)
 # No built-in fallback: the live catalog always contains a flash model.
 # Returns 0 with the model id on stdout; returns 1 if the cache is missing,
 # unparseable, or no pattern matches (caller decides how to handle).
@@ -562,35 +563,42 @@ select_model_from_cache() {
 		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 	[ -n "$model_ids" ] || return 1
 
-	# Pass 1: deepseek flash.
+	# Pass 1: explicitly prefer the approved DeepSeek V4.1 Flash model.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			deepseek/deepseek-v4.1-flash) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 2: other deepseek flash.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			deepseek/*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 2: qwen flash.
+	# Pass 3: qwen flash.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			qwen/*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 3: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
+	# Pass 4: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			*glm*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 4: any model with "flash" in the id (any provider).
+	# Pass 5: any model with "flash" in the id (any provider).
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in
 			*flash*) printf '%s\n' "$model"; return 0 ;;
 		esac
 	done
-	# Pass 5: any model with "pro" in the id.
+	# Pass 6: any model with "pro" in the id.
 	for model in $model_ids; do
 		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
 		case "$lower" in

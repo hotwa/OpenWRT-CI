@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "office-sglang",
-  "defaultModel": "Qwen3.8-27B",
+  "defaultProvider": "commandcode",
+  "defaultModel": "deepseek/deepseek-v4.1-flash",
   "defaultThinkingLevel": "medium",
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask"

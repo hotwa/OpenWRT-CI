@@ -194,10 +194,10 @@ printf '%s\n' '{"apiKey":"user_test_sync_key"}' >"$SYNC_AUTH"
 chmod 600 "$SYNC_AUTH"
 touch -r "$SYNC_SETTINGS" "$SYNC_MARKER"
 
-# New API response with a deepseek flash model (higher priority than qwen flash).
+# New API response contains both DeepSeek flash variants; V4.1 is preferred.
 NEW_RESPONSE="$SYNC_DIR/new-response.json"
 cat >"$NEW_RESPONSE" <<'EOF'
-{"object":"list","data":[{"id":"deepseek/deepseek-v4-flash","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
+{"object":"list","data":[{"id":"deepseek/deepseek-v4-flash","object":"model"},{"id":"deepseek/deepseek-v4.1-flash","object":"model"},{"id":"Qwen/Qwen3.8-Flash","object":"model"}]}
 EOF
 
 # Run do_sync with the mock fetch client on PATH.
@@ -214,8 +214,8 @@ cmp -s "$NEW_RESPONSE" "$SYNC_CACHE" || {
 	echo "FAIL: do_sync did not update the cache file"
 	exit 1
 }
-# defaultModel must be updated to the new preferred model (deepseek flash).
-grep -Fq '"defaultModel": "deepseek/deepseek-v4-flash"' "$SYNC_SETTINGS" || {
+# defaultModel must be updated to the explicitly preferred DeepSeek V4.1 Flash.
+grep -Fq '"defaultModel": "deepseek/deepseek-v4.1-flash"' "$SYNC_SETTINGS" || {
 	echo "FAIL: do_sync did not update defaultModel"
 	exit 1
 }

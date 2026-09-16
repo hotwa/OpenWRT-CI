@@ -219,8 +219,9 @@ start() {
 	fi
 
 	# opencode config migration (same policy as the opencode-runtime init):
-	# seed /data config from firmware default and upgrade pre-commandcode
-	# configs once, with timestamped backups.  Skipped entirely on low-memory
+	# seed /data config from firmware default and upgrade configs lacking the
+	# CommandCode or local SGLang fallback provider, with timestamped backups.
+	# Skipped entirely on low-memory
 	# builds (re-ss-01) that ship no /etc/opencode/opencode.json.
 	if [ -f "$FIRMWARE_ETC/opencode/opencode.json" ]; then
 		mkdir -p "$DATA_ROOT/opencode/config" "$DATA_ROOT/opencode/cache" \
@@ -230,9 +231,10 @@ start() {
 				chmod 0644 "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
 		fi
 		if [ -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
-			! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; then
+			{ ! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || \
+			  ! grep -q '"local-sglang"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; }; then
 			cp -p "$DATA_ROOT/opencode/config/opencode.json" \
-				"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo pre-commandcode)" 2>/dev/null || true
+				"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo provider-migration)" 2>/dev/null || true
 			cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
 		fi
 		mkdir -p "$ROOT_HOME/.config" 2>/dev/null || true

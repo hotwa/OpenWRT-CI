@@ -22,7 +22,7 @@ mkdir -p "$FW/pi/agent" "$FW/commandcode" "$FW/multica" "$FW/opencode"
 mkdir -p "$DATA" "$ROOT"
 
 cat > "$FW/pi/agent/settings.json" <<'JSON'
-{"defaultProvider":"commandcode","defaultModel":"deepseek/deepseek-v4-flash"}
+{"defaultProvider":"commandcode","defaultModel":"deepseek/deepseek-v4.1-flash"}
 JSON
 cat > "$FW/pi/agent/auth.json" <<'JSON'
 {"apiKey":"firmware-key-123"}

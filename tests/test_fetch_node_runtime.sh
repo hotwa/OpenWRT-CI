@@ -89,9 +89,12 @@ const fs = require('node:fs');
 const models = JSON.parse(fs.readFileSync(process.env.MODELS, 'utf8'));
 const settings = JSON.parse(fs.readFileSync(process.env.SETTINGS, 'utf8'));
 const provider = models.providers?.['office-sglang'];
-if (!provider || provider.baseUrl !== 'http://192.168.11.159:8001/v1' || provider.api !== 'openai-completions') process.exit(1);
-if (!provider.models?.some(m => m.id === 'Qwen3.8-27B')) process.exit(2);
-if (settings.defaultProvider !== 'office-sglang' || settings.defaultModel !== 'Qwen3.8-27B') process.exit(3);
+if (!provider || provider.baseUrl !== 'http://192.168.11.159:8101/v1' || provider.api !== 'openai-completions' || provider.apiKey !== 'sk-local') process.exit(1);
+const localModel = provider.models?.find(m => m.id === 'Qwen3.8-Flash-Next');
+if (!localModel || localModel.contextWindow !== 262144 || localModel.maxTokens !== 32768 || !localModel.reasoning) process.exit(2);
+if (provider.compat?.supportsReasoningEffort !== true || localModel.thinkingLevelMap?.high !== 'xhigh') process.exit(12);
+if (settings.defaultProvider !== 'commandcode' || settings.defaultModel !== 'deepseek/deepseek-v4.1-flash') process.exit(3);
+if (settings.defaultThinkingLevel !== 'medium') process.exit(11);
 const declaredModels = Object.values(models.providers ?? {}).flatMap(provider => provider.models ?? []);
 if (!declaredModels.length) process.exit(4);
 for (const m of declaredModels) {

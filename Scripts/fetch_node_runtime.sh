@@ -484,8 +484,8 @@ configure_pi_extensions() {
 	cp -f "$PI_MODEL_CATALOG" "$PI_CONFIG_DIR/models.json"
 	cat >"$PI_CONFIG_DIR/settings.json" <<'EOF'
 {
-  "defaultProvider": "office-sglang",
-  "defaultModel": "Qwen3.8-27B",
+  "defaultProvider": "commandcode",
+  "defaultModel": "deepseek/deepseek-v4.1-flash",
   "defaultThinkingLevel": "medium",
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask",
