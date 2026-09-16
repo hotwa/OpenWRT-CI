@@ -67,6 +67,7 @@
 - **Targeted verification first**: During active development or subagent execution, do not unconditionally run the full 85+ test suite (`tests/test_*.sh`) in loops. Full-suite execution contains heavy sleep mocks, geodata download fixtures, and mount simulations that cause unnecessary delays.
 - **Focused module tests**: Subagents must only run tests directly relevant to their modified files (e.g. `bash tests/test_agent_runtime_manager.sh`), which execute in 1-2 seconds.
 - **Full-suite fixture/mock simulation is optional during iteration**: Full-suite fixture/mock runs are optional during subagent development and should be reserved for final pre-commit verification or delegated to GitHub Actions CI (`WRT-CORE.yml` smoke tests). Subagents should skip full-suite fixture/mock runs to prevent timeouts.
+- **Smoke-test maintenance is mandatory**: When a workflow smoke test fails after an intentional configuration, model-default, or runtime-policy change, inspect the failing assertion alongside the generated/runtime configuration. If the implementation matches the approved new behavior, update the stale smoke-test expectation in the same corrective change, run the directly relevant local regression tests, and re-dispatch the affected workflow. Do not revert the intended configuration merely to satisfy an obsolete test; if behavior is ambiguous, stop and ask the user before changing either implementation or test.
 
 ## CI string / quoting pitfalls (2026-08-29 RE-SS-01 debug-gate runs)
 
