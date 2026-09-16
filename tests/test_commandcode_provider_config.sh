@@ -94,7 +94,7 @@ for dir in "$CASE_ROOT/etc/pi/agent" "$CASE_ROOT/root/.pi/agent"; do
   [ "$(jq -r .apiKey "$dir/auth.json")" = "user_abc123def456" ]
   [ "$(stat -c '%a' "$dir/auth.json")" = "600" ]
   [ "$(jq -r .defaultProvider "$dir/settings.json")" = "commandcode" ]
-  [ "$(jq -r .defaultModel "$dir/settings.json")" = "Qwen/Qwen3.8-Flash" ]
+  [ "$(jq -r .defaultModel "$dir/settings.json")" = "deepseek/deepseek-v4.1-flash" ]
   # packages list must survive the jq edit; npm: prefix ensures Pi loads it.
   [ "$(jq -r '.packages[0]' "$dir/settings.json")" = "npm:pi-commandcode-provider" ]
 done
@@ -127,8 +127,8 @@ jq -e '.data | type == "array"' "$CASE_ROOT/etc/pi/agent/commandcode-models.json
   exit 1
 }
 # The fallback cache must contain at least one open-source model.
-[ "$(jq -r '.data[0].id' "$CASE_ROOT/etc/pi/agent/commandcode-models.json")" = "Qwen/Qwen3.8-Flash" ] || {
-  echo "FAIL: fallback cache does not start with Qwen/Qwen3.8-Flash"
+[ "$(jq -r '.data[0].id' "$CASE_ROOT/etc/pi/agent/commandcode-models.json")" = "deepseek/deepseek-v4.1-flash" ] || {
+  echo "FAIL: fallback cache does not start with deepseek/deepseek-v4.1-flash"
   exit 1
 }
 
