@@ -25,6 +25,7 @@ jobs:
       HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
       HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH || false }}
       WRT_CONFIG: IPQ60XX-RE-CS-07-NOWIFI

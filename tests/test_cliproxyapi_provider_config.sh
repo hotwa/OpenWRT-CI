@@ -4,18 +4,20 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/Scripts/PiCliProxyApiProviderConfig.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
+WLG_WORKFLOW="$ROOT_DIR/.github/workflows/WLG-RE-CS-07-BUILD.yml"
 PROFILE="$ROOT_DIR/files/etc/profile.d/22-pi-cliproxyapi-provider.sh"
 MULTICA="$ROOT_DIR/files/etc/init.d/multica"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 FETCH="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 
-for file in "$SCRIPT" "$WORKFLOW" "$PROFILE" "$MULTICA" "$MANIFEST" "$FETCH"; do
+for file in "$SCRIPT" "$WORKFLOW" "$WLG_WORKFLOW" "$PROFILE" "$MULTICA" "$MANIFEST" "$FETCH"; do
 	[ -f "$file" ] || { echo "missing required file: $file"; exit 1; }
 done
 bash -n "$SCRIPT"
 sh -n "$PROFILE"
 sh -n "$MULTICA"
 grep -Fq 'CLIPROXYAPI_API_KEY' "$WORKFLOW"
+grep -Fq 'CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}' "$WLG_WORKFLOW"
 grep -Fq 'PiCliProxyApiProviderConfig.sh' "$WORKFLOW"
 grep -Fq '@router-for-me/pi-cliproxyapi-provider' "$MANIFEST"
 grep -Fq '"npm:@router-for-me/pi-cliproxyapi-provider"' "$FETCH"
