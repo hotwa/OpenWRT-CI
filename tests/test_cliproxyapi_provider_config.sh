@@ -7,10 +7,11 @@ WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 WLG_WORKFLOW="$ROOT_DIR/.github/workflows/WLG-RE-CS-07-BUILD.yml"
 PROFILE="$ROOT_DIR/files/etc/profile.d/22-pi-cliproxyapi-provider.sh"
 MULTICA="$ROOT_DIR/files/etc/init.d/multica"
+AGENT_DATA_PREP="$ROOT_DIR/files/etc/init.d/agent-data-prep"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 FETCH="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 
-for file in "$SCRIPT" "$WORKFLOW" "$WLG_WORKFLOW" "$PROFILE" "$MULTICA" "$MANIFEST" "$FETCH"; do
+for file in "$SCRIPT" "$WORKFLOW" "$WLG_WORKFLOW" "$PROFILE" "$MULTICA" "$AGENT_DATA_PREP" "$MANIFEST" "$FETCH"; do
 	[ -f "$file" ] || { echo "missing required file: $file"; exit 1; }
 done
 bash -n "$SCRIPT"
@@ -26,6 +27,7 @@ grep -Fq '"npm:@router-for-me/pi-cliproxyapi-provider"' "$FETCH"
 grep -Fq 'CLIPROXYAPI_BASE_URL="http://192.168.11.159:8317/v1"' "$PROFILE"
 grep -Fq 'cliproxyapi-base-url' "$PROFILE"
 grep -Fq 'CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url"' "$MULTICA"
+grep -Fq 'pi-cliproxyapi-catalog-probe >/dev/null 2>&1 || true' "$AGENT_DATA_PREP"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "$TMP"' EXIT

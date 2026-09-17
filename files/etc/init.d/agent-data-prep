@@ -271,9 +271,10 @@ start() {
 			/usr/sbin/pi-append-system-link 2>/dev/null || log_warn "pi-append-system-link failed"
 	fi
 	# Refresh the dynamic CLIProxyAPI catalog once after /data and Pi links are
-	# ready. The cron schedule keeps probing afterwards; failures are nonfatal.
+	# ready. The cron schedule keeps probing afterwards; an unreachable optional
+	# office endpoint is intentionally silent and never blocks agent startup.
 	if [ -x /usr/sbin/pi-cliproxyapi-catalog-probe ]; then
-		/usr/sbin/pi-cliproxyapi-catalog-probe >/dev/null 2>&1 || log_warn "CLIProxyAPI catalog probe deferred"
+		/usr/sbin/pi-cliproxyapi-catalog-probe >/dev/null 2>&1 || true
 	fi
 
 	log_info "agent data state provisioned on $DATA_ROOT"
