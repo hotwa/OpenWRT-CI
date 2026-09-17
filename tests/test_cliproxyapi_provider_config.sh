@@ -17,22 +17,29 @@ bash -n "$SCRIPT"
 sh -n "$PROFILE"
 sh -n "$MULTICA"
 grep -Fq 'CLIPROXYAPI_API_KEY' "$WORKFLOW"
+grep -Fq 'CLIPROXYAPI_BASE_URL' "$WORKFLOW"
 grep -Fq 'CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}' "$WLG_WORKFLOW"
+grep -Fq 'CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}' "$WLG_WORKFLOW"
 grep -Fq 'PiCliProxyApiProviderConfig.sh' "$WORKFLOW"
 grep -Fq '@router-for-me/pi-cliproxyapi-provider' "$MANIFEST"
 grep -Fq '"npm:@router-for-me/pi-cliproxyapi-provider"' "$FETCH"
-grep -Fq 'CLIPROXYAPI_BASE_URL="http://192.168.11.159:8317"' "$PROFILE"
+grep -Fq 'CLIPROXYAPI_BASE_URL="http://192.168.11.159:8317/v1"' "$PROFILE"
+grep -Fq 'cliproxyapi-base-url' "$PROFILE"
 grep -Fq 'CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url"' "$MULTICA"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "$TMP"' EXIT
 CLIPROXYAPI_API_KEY='' bash "$SCRIPT" "$TMP"
 [ ! -e "$TMP/etc/pi/agent/cliproxyapi-api-key" ]
+[ "$(cat "$TMP/etc/pi/agent/cliproxyapi-base-url")" = 'http://192.168.11.159:8317/v1' ]
 
-CLIPROXYAPI_API_KEY='test-token-value' bash "$SCRIPT" "$TMP" >"$TMP/inject.log"
+CLIPROXYAPI_API_KEY='test-token-value' CLIPROXYAPI_BASE_URL='https://proxy.example:8317' \
+  bash "$SCRIPT" "$TMP" >"$TMP/inject.log"
 KEY="$TMP/etc/pi/agent/cliproxyapi-api-key"
 [ "$(cat "$KEY")" = 'test-token-value' ]
 [ "$(stat -c '%a' "$KEY")" = 600 ]
+[ "$(cat "$TMP/etc/pi/agent/cliproxyapi-base-url")" = 'https://proxy.example:8317/v1' ]
+[ -s "$TMP/etc/pi/agent/cliproxyapi-base-url-secret" ]
 if grep -Fq 'test-token-value' "$TMP/inject.log"; then
 	echo "injector leaked CliProxyAPI token"
 	exit 1

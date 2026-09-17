@@ -202,9 +202,13 @@ start_service() {
 	export PATH="$agent_path"
 	# procd does not source profile.d. Keep the Pi CliProxyAPI provider's
 	# endpoint and optional root-only token available to Pi daemon tasks too.
-	cliproxyapi_base_url="http://192.168.11.159:8317"
+	cliproxyapi_base_url="http://192.168.11.159:8317/v1"
 	cliproxyapi_api_key=""
+	cliproxyapi_base_file="/etc/pi/agent/cliproxyapi-base-url"
 	cliproxyapi_key_file="/etc/pi/agent/cliproxyapi-api-key"
+	if [ -f "$cliproxyapi_base_file" ] && [ ! -L "$cliproxyapi_base_file" ]; then
+		IFS= read -r cliproxyapi_base_url <"$cliproxyapi_base_file" || true
+	fi
 	if [ -f "$cliproxyapi_key_file" ] && [ ! -L "$cliproxyapi_key_file" ]; then
 		IFS= read -r cliproxyapi_api_key <"$cliproxyapi_key_file" || true
 	fi

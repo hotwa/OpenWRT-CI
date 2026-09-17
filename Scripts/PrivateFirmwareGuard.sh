@@ -80,8 +80,12 @@ fi
 # The CliProxyAPI provider key is injected as a root-only raw token file so
 # it can be passed safely to both login shells and procd without evaluating it.
 cliproxyapi_key="$TARGET_FILES/etc/pi/agent/cliproxyapi-api-key"
+cliproxyapi_base_secret="$TARGET_FILES/etc/pi/agent/cliproxyapi-base-url-secret"
 if [ -s "$cliproxyapi_key" ]; then
 	add_reason cliproxyapi-api-key
+fi
+if [ -s "$cliproxyapi_base_secret" ]; then
+	add_reason cliproxyapi-base-url
 fi
 
 if [ -n "$reasons" ]; then

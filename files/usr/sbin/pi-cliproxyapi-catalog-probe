@@ -1,0 +1,36 @@
+#!/bin/sh
+# Probe CLIProxyAPI's catalog without starting a Pi agent or consuming tokens.
+# When the catalog changes, invalidate Pi's provider cache so the provider's
+# own startup refresh registers the newest model list on the next Pi use.
+set -eu
+
+DEFAULT_BASE_URL='http://192.168.11.159:8317/v1'
+base_file='/etc/pi/agent/cliproxyapi-base-url'
+key_file='/etc/pi/agent/cliproxyapi-api-key'
+agent_dir='/data/pi/agent'
+[ -d "$agent_dir" ] || agent_dir='/root/.pi/agent'
+[ -d "$agent_dir" ] || exit 0
+base_url="$DEFAULT_BASE_URL"
+[ -f "$base_file" ] && [ ! -L "$base_file" ] && IFS= read -r base_url <"$base_file" || true
+api_key=''
+[ -f "$key_file" ] && [ ! -L "$key_file" ] && IFS= read -r api_key <"$key_file" || true
+
+lock='/var/run/pi-cliproxyapi-catalog-probe.lock'
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM
+tmp="$(mktemp /tmp/pi-cliproxyapi-models.XXXXXX)"
+trap 'rm -f "$tmp"; rmdir "$lock" 2>/dev/null || true' EXIT HUP INT TERM
+if [ -n "$api_key" ]; then
+	curl -fsS --max-time 20 -H "Authorization: Bearer $api_key" "$base_url/models?client_version=pi" -o "$tmp" || exit 0
+else
+	curl -fsS --max-time 20 "$base_url/models?client_version=pi" -o "$tmp" || exit 0
+fi
+jsonfilter -e '@.data' <"$tmp" >/dev/null 2>&1 || exit 0
+digest="$(sha256sum "$tmp" | awk '{print $1}')"
+state="$agent_dir/cliproxyapi-catalog.sha256"
+old="$(cat "$state" 2>/dev/null || true)"
+[ "$digest" = "$old" ] && exit 0
+printf '%s\n' "$digest" >"$state"
+chmod 0600 "$state"
+rm -f -- "$agent_dir/cliproxyapi-models.json"
+logger -t pi-cliproxyapi-catalog 'catalog changed; Pi cache invalidated'

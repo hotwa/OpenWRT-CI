@@ -270,6 +270,11 @@ start() {
 		PI_AGENT_DIR="$DATA_ROOT/pi/agent" PI_ROLE_CARD="$ROOT_HOME/.multica/openwrt-agent.md" \
 			/usr/sbin/pi-append-system-link 2>/dev/null || log_warn "pi-append-system-link failed"
 	fi
+	# Refresh the dynamic CLIProxyAPI catalog once after /data and Pi links are
+	# ready. The cron schedule keeps probing afterwards; failures are nonfatal.
+	if [ -x /usr/sbin/pi-cliproxyapi-catalog-probe ]; then
+		/usr/sbin/pi-cliproxyapi-catalog-probe >/dev/null 2>&1 || log_warn "CLIProxyAPI catalog probe deferred"
+	fi
 
 	log_info "agent data state provisioned on $DATA_ROOT"
 }
