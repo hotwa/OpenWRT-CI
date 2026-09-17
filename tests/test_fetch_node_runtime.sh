@@ -58,7 +58,7 @@ for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
-for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
+for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
 node - "$MANIFEST" <<'NODE' || fail "Pi extension catalog is not latest-at-build"

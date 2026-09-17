@@ -77,6 +77,13 @@ if [ -s "$commandcode_auth" ] || [ -s "$pi_agent_auth" ]; then
 	add_reason commandcode-api-key
 fi
 
+# The CliProxyAPI provider key is injected as a root-only raw token file so
+# it can be passed safely to both login shells and procd without evaluating it.
+cliproxyapi_key="$TARGET_FILES/etc/pi/agent/cliproxyapi-api-key"
+if [ -s "$cliproxyapi_key" ]; then
+	add_reason cliproxyapi-api-key
+fi
+
 if [ -n "$reasons" ]; then
 	printf 'WRT_PRIVATE_BUILD=true\n'
 	printf 'WRT_PRIVATE_BUILD_REASON=%s\n' "$reasons"

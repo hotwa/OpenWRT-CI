@@ -490,6 +490,7 @@ configure_pi_extensions() {
   "enableInstallTelemetry": false,
   "defaultProjectTrust": "ask",
   "packages": [
+    "npm:@router-for-me/pi-cliproxyapi-provider",
     "npm:pi-commandcode-provider",
     "npm:pi-agent-modes",
     "pi-package-manager",

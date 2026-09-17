@@ -11,6 +11,7 @@
     "@zephyrdeng/pi-review": "latest",
     "btw-pi": "latest",
     "command-code": "latest",
+    "@router-for-me/pi-cliproxyapi-provider": "latest",
     "pi-commandcode-provider": "latest",
     "pi-agent-modes": "latest",
     "pi-interactive-shell": "latest",
@@ -24,6 +25,7 @@
   "openwrtPiExtensions": [
     "pi-package-manager",
     "btw-pi",
+    "@router-for-me/pi-cliproxyapi-provider",
     "pi-commandcode-provider",
     "pi-agent-modes",
     "pi-web-search",

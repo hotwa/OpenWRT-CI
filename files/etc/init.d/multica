@@ -200,6 +200,14 @@ start_service() {
 	# the daemon and bootstrap; children must see OpenWrt's sbin utilities too.
 	agent_path="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	export PATH="$agent_path"
+	# procd does not source profile.d. Keep the Pi CliProxyAPI provider's
+	# endpoint and optional root-only token available to Pi daemon tasks too.
+	cliproxyapi_base_url="http://192.168.11.159:8317"
+	cliproxyapi_api_key=""
+	cliproxyapi_key_file="/etc/pi/agent/cliproxyapi-api-key"
+	if [ -f "$cliproxyapi_key_file" ] && [ ! -L "$cliproxyapi_key_file" ]; then
+		IFS= read -r cliproxyapi_api_key <"$cliproxyapi_key_file" || true
+	fi
 	# Render the data-backed role card before Pi can accept a daemon task, then
 	# repair the link that makes Pi append exactly that same card. This also
 	# covers upgraded systems whose first-boot migration predates this convention.
@@ -311,6 +319,8 @@ EOF
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
 		PATH="$agent_path" \
+		CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url" \
+		CLIPROXYAPI_API_KEY="$cliproxyapi_api_key" \
 		COMMANDCODE_SKIP_UPDATES=1 \
 		UV_CACHE_DIR=/data/uv/cache \
 		UV_PYTHON_INSTALL_DIR=/data/uv/python \

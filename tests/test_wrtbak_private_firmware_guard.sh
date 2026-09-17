@@ -35,7 +35,7 @@ if printf '%s\n' "$GLOBAL_ENV" | grep -Fq 'secrets.'; then
 fi
 for secret_name in HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN MULTICA_SERVER_URL \
 	MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS \
-	WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY; do
+	WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY CLIPROXYAPI_API_KEY; do
 	grep -Fq "$secret_name: \${{secrets.$secret_name}}" "$WORKFLOW" || {
 		echo "private overlay injection step is missing $secret_name"
 		exit 1
@@ -136,6 +136,25 @@ grep -q 'commandcode-api-key' "$WORK_DIR/commandcode.env" || {
 }
 if grep -q 'user_test_commandcode_key' "$WORK_DIR/commandcode.env" "$WORK_DIR/commandcode.log"; then
 	echo "guard leaked the CommandCode API key"
+	exit 1
+fi
+
+# CliProxyAPI provider tokens are also firmware credentials and must suppress
+# public artifacts without echoing their value from the guard.
+mkdir -p "$WORK_DIR/cliproxyapi/etc/pi/agent"
+printf '%s\n' 'cliproxyapi-test-token' >"$WORK_DIR/cliproxyapi/etc/pi/agent/cliproxyapi-api-key"
+chmod 600 "$WORK_DIR/cliproxyapi/etc/pi/agent/cliproxyapi-api-key"
+bash "$SCRIPT" "$WORK_DIR/cliproxyapi" >"$WORK_DIR/cliproxyapi.env" 2>"$WORK_DIR/cliproxyapi.log"
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/cliproxyapi.env" || {
+	echo "CliProxyAPI token should mark firmware private"
+	exit 1
+}
+grep -q 'cliproxyapi-api-key' "$WORK_DIR/cliproxyapi.env" || {
+	echo "CliProxyAPI private reason is missing"
+	exit 1
+}
+if grep -q 'cliproxyapi-test-token' "$WORK_DIR/cliproxyapi.env" "$WORK_DIR/cliproxyapi.log"; then
+	echo "guard leaked the CliProxyAPI API key"
 	exit 1
 fi
 
