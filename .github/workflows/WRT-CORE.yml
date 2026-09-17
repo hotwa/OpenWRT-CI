@@ -200,6 +200,8 @@ on:
         required: false
       CLIPROXYAPI_API_KEY:
         required: false
+      CLIPROXYAPI_BASE_URL:
+        required: false
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -825,6 +827,7 @@ jobs:
           WRTBAK_DORM_PROXY_URL: ${{secrets.WRTBAK_DORM_PROXY_URL}}
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
+          CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
         run: |
             guard_env="$(mktemp)"
             trap 'rm -f "$guard_env"' EXIT
@@ -833,7 +836,7 @@ jobs:
               HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
               WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY \
               WRTBAK_HOME_PROXY_URL WRTBAK_OFFICE_PROXY_URL WRTBAK_DORM_PROXY_URL \
-              COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY; do
+              COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
             $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
