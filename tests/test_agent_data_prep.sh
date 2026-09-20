@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/files/etc/init.d/agent-data-prep"
+ENABLE_SCRIPT="$ROOT_DIR/files/etc/uci-defaults/99-enable-data-runtime"
+CORE_WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -35,6 +37,10 @@ printf '%s\n' '# OpenWrt agent role card' > "$FW/multica/openwrt-agent.md"
 mkdir -p "$ROOT/.pi/agent"
 printf '%s\n' '{"defaultProvider":"openai"}' > "$ROOT/.pi/agent/settings.json"
 
+# Simulate an npm cache that an older build left on the root overlay.
+mkdir -p "$ROOT/.npm/_cacache/content-v2"
+printf 'legacy-overlay-cache\n' > "$ROOT/.npm/_cacache/content-v2/blob"
+
 # /data mount appears in the fake mounts file.
 MOUNTS="$TMP_ROOT/mounts"
 printf '/dev/mmcblk0p27 %s ext4 rw,noatime 0 0\n' "$DATA" > "$MOUNTS"
@@ -62,6 +68,18 @@ check() {
     fi
 }
 
+npm_guards_in_all_builds() {
+	grep -q 'cp -f ./files/etc/npmrc ./wrt/files/etc/npmrc' "$CORE_WORKFLOW" && \
+		grep -q 'cp -f ./files/root/.npmrc ./wrt/files/root/.npmrc' "$CORE_WORKFLOW" && \
+		grep -q 'cp -f ./files/.npmrc ./wrt/files/.npmrc' "$CORE_WORKFLOW"
+}
+
+check "first-boot defaults enable agent-data-prep" \
+	grep -q '/etc/init.d/agent-data-prep enable' "$ENABLE_SCRIPT"
+check "all-build data baseline includes agent-data-prep" \
+	grep -q 'cp -f ./files/etc/init.d/agent-data-prep ./wrt/files/etc/init.d/agent-data-prep' "$CORE_WORKFLOW"
+check "all-build data baseline includes npm config guards" npm_guards_in_all_builds
+
 # ---------------------------------------------------------------------------
 # 1. First run provisions everything
 # ---------------------------------------------------------------------------
@@ -75,6 +93,9 @@ check "/root/.pi is symlink to /data/pi" test -L "$ROOT/.pi"
 check "/root/.pi target is /data/pi" test "$(readlink "$ROOT/.pi")" = "$DATA/pi"
 check "/root/.multica is symlink to /data/multica" test -L "$ROOT/.multica"
 check "/root/.commandcode is symlink to /data/commandcode" test -L "$ROOT/.commandcode"
+check "/root/.npm is symlink to /data/cache/npm" test -L "$ROOT/.npm"
+check "/root/.npm target is /data/cache/npm" test "$(readlink "$ROOT/.npm")" = "$DATA/cache/npm"
+check "legacy overlay npm cache migrated into /data" cmp -s "$ROOT/.npm/_cacache/content-v2/blob" "$DATA/cache/npm/_cacache/content-v2/blob"
 check "/root/.config/opencode symlink created" test -L "$ROOT/.config/opencode"
 check "opencode config seeded from firmware" cmp -s "$FW/opencode/opencode.json" "$DATA/opencode/config/opencode.json"
 check "multica role card copied" cmp -s "$FW/multica/openwrt-agent.md" "$DATA/multica/openwrt-agent.md"
@@ -84,9 +105,11 @@ check "old overlay settings migrated into /data/pi/agent" grep -q '"defaultProvi
 # 2. Second run is idempotent (no symlink churn, no extra backups)
 # ---------------------------------------------------------------------------
 pi_link_before="$(readlink "$ROOT/.pi")"
+npm_link_before="$(readlink "$ROOT/.npm")"
 backups_before="$(find "$DATA" -name '*.bak.*' | wc -l)"
 start
 check "second run leaves /root/.pi symlink intact" test "$(readlink "$ROOT/.pi")" = "$pi_link_before"
+check "second run leaves /root/.npm symlink intact" test "$(readlink "$ROOT/.npm")" = "$npm_link_before"
 check "second run adds no new backups" test "$(find "$DATA" -name '*.bak.*' | wc -l)" = "$backups_before"
 check "second run does not duplicate auth files" test "$(find "$DATA/commandcode" -name 'auth.json*' | wc -l)" -ge 1
 

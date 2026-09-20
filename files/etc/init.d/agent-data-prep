@@ -250,6 +250,12 @@ start() {
 	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || log_warn "cannot link /root/.pi"
 	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || \
 		log_warn "cannot link /root/.commandcode"
+	# npm cache: cron and procd do not source /etc/profile.d, so the
+	# data-runtime NPM_CONFIG_CACHE export never reaches them and npm falls
+	# back to $HOME/.npm on the root overlay.  Pin it with a symlink; a cache
+	# left there by an older build is copied to /data before the link lands.
+	link_directory "$DATA_ROOT/cache/npm" "$ROOT_HOME/.npm" npm || \
+		log_warn "cannot link /root/.npm"
 
 	# Multica runtime_provider migration: sysupgrade keeps the previous UCI
 	# value (ebd46aa-era builds left runtime_provider='pi' via the init

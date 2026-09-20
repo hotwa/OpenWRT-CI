@@ -702,6 +702,7 @@ jobs:
             ./wrt/files/etc/rclone-data-backup \
             ./wrt/files/etc/crontabs \
             ./wrt/files/etc/uci-defaults \
+            ./wrt/files/root \
             ./wrt/files/usr/sbin
           nikki_package_init="$(find ./wrt/package -type f -path '*/luci-app-nikki/root/etc/init.d/nikki' -print -quit)"
           if [ -n "$nikki_package_init" ]; then
@@ -721,6 +722,9 @@ jobs:
           cp -f ./files/etc/config/rclone-data-backup ./wrt/files/etc/config/rclone-data-backup
           cp -f ./files/etc/config/nikki-dns-failopen ./wrt/files/etc/config/nikki-dns-failopen
           cp -f ./files/etc/crontabs/root ./wrt/files/etc/crontabs/root
+          cp -f ./files/.npmrc ./wrt/files/.npmrc
+          cp -f ./files/etc/npmrc ./wrt/files/etc/npmrc
+          cp -f ./files/root/.npmrc ./wrt/files/root/.npmrc
           if [ -n "${WRTBAK_DEVICE_ALIAS:-}" ]; then
             case "$WRTBAK_DEVICE_ALIAS" in
               *[!A-Za-z0-9._-]* )
@@ -732,6 +736,7 @@ jobs:
           fi
           cp -f ./files/etc/data-runtime.env ./wrt/files/etc/data-runtime.env
           cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
+          cp -f ./files/etc/init.d/agent-data-prep ./wrt/files/etc/init.d/agent-data-prep
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/init.d/nikki-dns-failopen ./wrt/files/etc/init.d/nikki-dns-failopen
@@ -770,6 +775,7 @@ jobs:
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
           chmod 0755 \
+            ./wrt/files/etc/init.d/agent-data-prep \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \

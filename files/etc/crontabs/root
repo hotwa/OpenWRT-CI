@@ -1,3 +1,11 @@
+# busybox crond does not source /etc/profile.d, so jobs would otherwise run
+# with an environment where the npm cache resolves to $HOME/.npm on the root
+# overlay.  Pin HOME and the cache location for every job in this table.
+HOME=/root
+NPM_CONFIG_CACHE=/data/cache/npm
+npm_config_cache=/data/cache/npm
+NPM_CONFIG_USERCONFIG=/etc/npmrc
+
 # Check the signed agent-runtime release during the low-traffic maintenance window.
 0 3 * * * /usr/sbin/agent-runtime-auto-upgrade
 */5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard

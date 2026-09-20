@@ -1,0 +1,12 @@
+# npm cache must never live below the root overlay.  On this layout the
+# overlay is the tail of the 1 GiB rootfs partition (about 600 MB); once it
+# fills, mount_root cannot create its workdir and silently falls back to a
+# volatile ramoverlay, so every /etc change is lost at the next reboot.
+#
+# cron and procd never source /etc/profile.d, so the data-runtime
+# NPM_CONFIG_CACHE export does not reach them; this file is the HOME-side
+# guard and /root/.npm is symlinked to the same target by agent-data-prep.
+cache=/data/cache/npm
+fund=false
+audit=false
+update-notifier=false
