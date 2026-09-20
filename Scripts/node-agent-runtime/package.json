@@ -15,7 +15,11 @@
     "pi-commandcode-provider": "latest",
     "pi-agent-modes": "latest",
     "pi-interactive-shell": "latest",
+    "pi-inspect": "latest",
+    "pi-lsp": "latest",
     "pi-mcp-adapter": "latest",
+    "pi-cache-graph": "latest",
+    "pi-cost": "latest",
     "pi-package-manager": "latest",
     "pi-subagents": "latest",
     "pi-web-search": "latest",
@@ -36,6 +40,10 @@
     "@zephyrdeng/pi-review",
     "@luxusai/pi-hindsight",
     "pi-interactive-shell",
+    "pi-inspect",
+    "pi-lsp",
+    "pi-cache-graph",
+    "pi-cost",
     "@narumitw/pi-statusline"
   ]
 }

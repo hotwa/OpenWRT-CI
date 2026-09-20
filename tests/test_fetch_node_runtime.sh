@@ -58,7 +58,7 @@ for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
-for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
+for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-lsp' 'pi-cost' 'pi-cache-graph' 'pi-inspect' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
 node - "$MANIFEST" <<'NODE' || fail "Pi extension catalog is not latest-at-build"
@@ -72,6 +72,9 @@ if (!Array.isArray(manifest.openwrtPiExtensions) || manifest.openwrtPiExtensions
 NODE
 if grep -Fq '@aaronkyriesenbach/pi-package-manager' "$MANIFEST"; then
   fail "the legacy scoped package manager must not be preloaded alongside pi-package-manager"
+fi
+if grep -Fq '@monotykamary/pi-tps' "$MANIFEST"; then
+  fail "standalone pi-tps must not duplicate the TPS extension bundled with pi-cliproxyapi-provider"
 fi
 for forbidden in 'pi-web-access' 'pi-mcp-extension' 'pi-code' '@narumitw/pi-subagents' '@henryqw/pi-subagent'; do
   if grep -Fq "$forbidden" "$MANIFEST"; then

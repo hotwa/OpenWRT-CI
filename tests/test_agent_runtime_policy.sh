@@ -42,6 +42,7 @@ for command in pi cmdc command-code commandcode; do
 done
 grep -Fq 'latest-at-build' "$POLICY_DOC" || fail "policy does not describe latest-at-build Pi/plugin resolution"
 grep -Fq 'verify_pi_extensions.js' "$WORKFLOW" || fail "release workflow does not import-check Pi extensions"
+grep -Fq 'isDirectory()' "$EXTENSION_VERIFIER" || fail "extension verifier does not expand Pi package directory entries"
 grep -Fq 'advance-release' "$WORKFLOW" || fail "release workflow does not advance an immutable runtime sequence"
 
 echo "agent runtime policy tests passed"

@@ -34,7 +34,36 @@ function packageEntries(root, name) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const explicit = manifest.pi?.extensions;
   if (Array.isArray(explicit) && explicit.length) {
-    return explicit.map(entry => path.resolve(packageRoot, entry));
+    return explicit.flatMap(entry => {
+      const resolved = path.resolve(packageRoot, entry);
+      if (!fs.existsSync(resolved)) die(`${name} extension entry is missing: ${resolved}`);
+      if (!fs.statSync(resolved).isDirectory()) return [resolved];
+
+      // Pi package manifests may point at an extension directory. Mirror Pi's
+      // package discovery rules: load visible top-level TS/JS files and
+      // one-level child directories that expose index.{ts,js,...}.
+      const modulePattern = /\.(?:[cm]?[jt]s)$/;
+      const discovered = [];
+      for (const child of fs.readdirSync(resolved, { withFileTypes: true })
+        .filter(item => !item.name.startsWith('.'))
+        .sort((left, right) => left.name.localeCompare(right.name))) {
+        const childPath = path.join(resolved, child.name);
+        if (child.isFile() && modulePattern.test(child.name)) {
+          discovered.push(childPath);
+          continue;
+        }
+        if (!child.isDirectory()) continue;
+        for (const indexName of ['index.ts', 'index.js', 'index.mts', 'index.mjs', 'index.cts', 'index.cjs']) {
+          const indexPath = path.join(childPath, indexName);
+          if (fs.existsSync(indexPath)) {
+            discovered.push(indexPath);
+            break;
+          }
+        }
+      }
+      if (!discovered.length) die(`${name} extension directory has no loadable entries: ${resolved}`);
+      return discovered;
+    });
   }
   for (const entry of ['index.ts', 'index.js', manifest.module, manifest.main, 'dist/index.js']) {
     if (typeof entry !== 'string') continue;

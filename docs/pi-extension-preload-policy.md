@@ -20,6 +20,9 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 | `pi-agent-modes` | latest | 支持 `--modes yolo` 无人值守模式，Multica agent 通过 `--custom-args` 启用；交互式 pi 保持正常模式 |
 | `pi-web-search` | latest | 联网搜索 |
 | `pi-mcp-adapter` | latest | MCP 适配器；每次由实际导入校验决定是否放行 |
+| `pi-lsp` | latest | LSP 诊断与导航；仅在受信配置声明语言服务器后启动外部进程 |
+| `pi-cost` / `pi-inspect` | latest | 成本与会话检查面板；只在显式启动命令后监听本机 5461/5462 |
+| `pi-cache-graph` | latest | `/cache` 图表、统计与导出；无运行时依赖 |
 | `pi-subagents` | latest | 默认最多并发 1–2 个 |
 | `@capdiem/pi-todo` / `@zephyrdeng/pi-review` | latest | 任务清单 / 代码审查 |
 | `@luxusai/pi-hindsight` | latest | 需 `HINDSIGHT_BASE_URL` 与 root-only token 引用 |
@@ -36,6 +39,10 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 明确不预装：`pi-web-access`、`pi-mcp-extension`、`pi-code`、
 `@narumitw/pi-subagents`、`@henryqw/pi-subagent`，以及无 scope 的旧版
 `pi-hindsight`。这些包要么功能重复，要么使用旧的 Pi scope/peer 范围。
+独立的 `@monotykamary/pi-tps` 也不默认预装：
+`@router-for-me/pi-cliproxyapi-provider` 已声明并加载自己的 `tps.ts`，同时加载两套
+TPS 扩展会重复统计、提示和状态展示。需要独立 `pi-tps` 时，应先停用 provider
+包内的 TPS 入口并完成单独兼容性验证。
 
 ## RE-CS-02 现场验收
 
