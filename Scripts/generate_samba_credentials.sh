@@ -74,6 +74,11 @@ for database in passdb.tdb secrets.tdb; do
 done
 
 install -d -m 0755 "$WRT_ROOT/files/etc/samba"
-install -m 0600 "$work_dir/private/passdb.tdb" "$WRT_ROOT/files/etc/samba/passdb.tdb"
-install -m 0600 "$work_dir/private/secrets.tdb" "$WRT_ROOT/files/etc/samba/secrets.tdb"
+# Generation needs root, but OpenWrt's package/install copies the overlay as
+# the invoking build user. Keep credentials private while making that copy
+# possible; image creation and the first-boot reconciler set device ownership.
+build_uid="${SUDO_UID:-$(id -u)}"
+build_gid="${SUDO_GID:-$(id -g)}"
+install -m 0600 -o "$build_uid" -g "$build_gid" "$work_dir/private/passdb.tdb" "$WRT_ROOT/files/etc/samba/passdb.tdb"
+install -m 0600 -o "$build_uid" -g "$build_gid" "$work_dir/private/secrets.tdb" "$WRT_ROOT/files/etc/samba/secrets.tdb"
 echo "Generated paired Samba tdbsam databases for user $SAMBA_USER and SID $SAMBA_SID"

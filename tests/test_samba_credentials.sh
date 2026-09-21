@@ -424,6 +424,15 @@ if command -v smbpasswd >/dev/null 2>&1 && command -v pdbedit >/dev/null 2>&1 &&
 	grep -Fxq 'passdb backend = tdbsam' "$fixture/feeds/packages/net/samba4/files/smb.conf.template"
 	[ "$(sudo stat -c '%a' "$fixture/files/etc/samba/passdb.tdb")" = 600 ]
 	[ "$(sudo stat -c '%a' "$fixture/files/etc/samba/secrets.tdb")" = 600 ]
+	# Mirror package/install as the non-root CI runner: mode-only assertions
+	# miss root-owned 0600 files that sudo can inspect but make cannot copy.
+	mkdir -p "$fixture/image-root"
+	cp -fpR "$fixture/files/." "$fixture/image-root/"
+	for database in passdb.tdb secrets.tdb; do
+		[ "$(stat -c '%u:%g' "$fixture/files/etc/samba/$database")" = "$(id -u):$(id -g)" ]
+		[ "$(stat -c '%a' "$fixture/image-root/etc/samba/$database")" = 600 ]
+		cmp -s "$fixture/files/etc/samba/$database" "$fixture/image-root/etc/samba/$database"
+	done
 	cat >"$fixture/runtime-smb.conf" <<EOF
 [global]
 netbios name = OPENWRT
