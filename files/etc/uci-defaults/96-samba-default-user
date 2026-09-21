@@ -1,10 +1,434 @@
 #!/bin/sh
-# Match the Unix account referenced by the build-generated Samba passdb.
-if ! grep -q '^smb:' /etc/passwd 2>/dev/null; then
+# Match the Unix account referenced by the build-generated Samba passdb and
+# repair the one safe legacy-upgrade case without replacing user credentials.
+
+PASSWD_FILE="${SAMBA_PASSWD_FILE:-/etc/passwd}"
+LIVE_DIR="${SAMBA_LIVE_DIR:-/etc/samba}"
+ROM_DIR="${SAMBA_ROM_DIR:-/rom/etc/samba}"
+LOG_COMMAND="${SAMBA_LOGGER:-logger}"
+MV_COMMAND="${SAMBA_MV_COMMAND:-mv}"
+CONFIG_FILE_OVERRIDE="${SAMBA_CONFIG_FILE:-}"
+UCI_CONFIG_FILE="${SAMBA_UCI_CONFIG:-/etc/config/samba4}"
+TESTPARM_COMMAND="${SAMBA_TESTPARM:-testparm}"
+AD_DAEMON="${SAMBA_AD_DAEMON:-/usr/sbin/samba}"
+
+log_warn() {
+	printf '%s\n' "samba-default-user: WARNING: $*" >&2
+	if command -v "$LOG_COMMAND" >/dev/null 2>&1; then
+		"$LOG_COMMAND" -p daemon.warn -t samba-default-user "$*" >/dev/null 2>&1 || true
+	fi
+}
+
+log_notice() {
+	printf '%s\n' "samba-default-user: $*" >&2
+	if command -v "$LOG_COMMAND" >/dev/null 2>&1; then
+		"$LOG_COMMAND" -p daemon.notice -t samba-default-user "$*" >/dev/null 2>&1 || true
+	fi
+}
+
+config_has_unsafe_directives() {
+	awk '
+		function trim(value) {
+			sub(/^[ \t]+/, "", value)
+			sub(/[ \t]+$/, "", value)
+			return value
+		}
+		{
+			line=$0
+			sub(/\r$/, "", line)
+			clean=trim(line)
+			if (clean == "" || clean ~ /^[#;]/)
+				next
+			if (clean ~ /\\$/)
+				unsafe=1
+			equals=index(clean, "=")
+			if (!equals)
+				next
+			name=tolower(trim(substr(clean, 1, equals - 1)))
+			gsub(/[ \t]+/, " ", name)
+			if (name == "include" || name == "config file")
+				unsafe=1
+		}
+		END { exit unsafe ? 0 : 1 }
+	' "$1" 2>/dev/null
+}
+
+inspect_effective_samba_state() {
+	using_template=0
+	if [ -n "$CONFIG_FILE_OVERRIDE" ]; then
+		active_config="$CONFIG_FILE_OVERRIDE"
+	else
+		if [ -L "$LIVE_DIR/smb.conf" ]; then
+			config_link_target="$(readlink "$LIVE_DIR/smb.conf" 2>/dev/null)"
+			case "$config_link_target" in
+				/var/etc/smb.conf | /tmp/etc/smb.conf) ;;
+				*)
+					log_warn "non-stock Samba config symlink detected; preserving databases for manual review"
+					return 2
+					;;
+			esac
+		elif [ -e "$LIVE_DIR/smb.conf" ]; then
+			log_warn "custom regular smb.conf overrides the firmware template; preserving databases for manual review"
+			return 2
+		fi
+		active_config="$LIVE_DIR/smb.conf.template"
+		using_template=1
+	fi
+
+	if [ -L "$active_config" ] || [ ! -f "$active_config" ]; then
+		log_warn "cannot identify a regular active Samba configuration; preserving databases for manual review"
+		return 1
+	fi
+	if [ "$using_template" -eq 1 ] && [ -f "$UCI_CONFIG_FILE" ] &&
+		grep -Eiq "^[[:space:]]*(option|list)[[:space:]]+['\"]?(smb_options|global_options)['\"]?([[:space:]]|$)" "$UCI_CONFIG_FILE"; then
+		log_warn "custom UCI Samba global options make the effective backend ambiguous; preserving databases for manual review"
+		return 2
+	fi
+	if [ "$using_template" -eq 1 ]; then
+		if [ ! -f "$ROM_DIR/smb.conf.template" ]; then
+			log_warn "firmware Samba template is missing; preserving databases and retrying next boot"
+			return 1
+		fi
+		if ! cmp -s "$active_config" "$ROM_DIR/smb.conf.template"; then
+			log_warn "custom or preserved Samba template differs from ROM; preserving databases for manual review"
+			return 2
+		fi
+	fi
+	if [ -x "$AD_DAEMON" ]; then
+		if [ ! -f "$UCI_CONFIG_FILE" ] ||
+			! grep -Eiq "^[[:space:]]*option[[:space:]]+disable_ad_dc[[:space:]]+['\"]?(1|yes|true|on)['\"]?([[:space:]]|$)" "$UCI_CONFIG_FILE"; then
+			log_warn "Samba AD daemon is available and not explicitly disabled; preserving domain-capable state for manual review"
+			return 2
+		fi
+	fi
+
+	if config_has_unsafe_directives "$active_config"; then
+		log_warn "Samba include, config-file redirect, or continued directive is unsafe to evaluate during first boot; preserving databases for manual review"
+		return 2
+	fi
+	if ! command -v "$TESTPARM_COMMAND" >/dev/null 2>&1; then
+		log_warn "testparm is unavailable; preserving Samba databases and retrying for manual review"
+		return 1
+	fi
+	if ! "$TESTPARM_COMMAND" -s "$active_config" >/dev/null 2>&1; then
+		log_warn "testparm rejected the active Samba configuration; preserving databases and retrying next boot"
+		return 1
+	fi
+
+	testparm_parameter() {
+		"$TESTPARM_COMMAND" -s "--parameter-name=$1" "$active_config" 2>/dev/null |
+			awk 'NF { value=$0 } END { gsub(/^[ \t]+|[ \t]+$/, "", value); print tolower(value) }'
+	}
+
+	effective_config_backend="$(testparm_parameter 'config backend')"
+	effective_backend="$(testparm_parameter 'passdb backend')"
+	effective_private_dir="$(testparm_parameter 'private dir')"
+	effective_security="$(testparm_parameter 'security')"
+	effective_server_role="$(testparm_parameter 'server role')"
+	effective_realm="$(testparm_parameter 'realm')"
+	effective_domain_logons="$(testparm_parameter 'domain logons')"
+
+	if [ -z "$effective_config_backend" ] || [ -z "$effective_private_dir" ] ||
+		[ -z "$effective_backend" ] || [ -z "$effective_security" ] ||
+		[ -z "$effective_server_role" ]; then
+		log_warn "testparm could not resolve the effective Samba state; preserving databases and retrying next boot"
+		return 1
+	fi
+	if [ "$effective_config_backend" != file ] || [ "$effective_private_dir" != /etc/samba ]; then
+		log_warn "custom Samba config backend or private directory detected; preserving databases for manual review"
+		return 2
+	fi
+
+	effective_tdbsam=0
+	effective_smbpasswd=0
+	case "$effective_backend" in
+		tdbsam) effective_tdbsam=1 ;;
+		smbpasswd) effective_smbpasswd=1 ;;
+		*)
+			log_warn "custom Samba passdb backend detected; preserving databases for manual review"
+			return 2
+			;;
+	esac
+
+	effective_standalone=0
+	domain_logons_enabled=0
+	case "$effective_domain_logons" in
+		yes | true | 1 | on) domain_logons_enabled=1 ;;
+	esac
+	if [ "$effective_security" = user ] && [ -z "$effective_realm" ] &&
+		[ "$domain_logons_enabled" -eq 0 ]; then
+		case "$effective_server_role" in
+			auto | standalone | "standalone server" | role_standalone) effective_standalone=1 ;;
+		esac
+	fi
+	if [ "$effective_standalone" -ne 1 ]; then
+		log_warn "domain/member/DC Samba role or security detected; preserving secrets and credential databases for manual review"
+		return 2
+	fi
+	return 0
+}
+
+ensure_unix_user() {
+	grep -q '^smb:' "$PASSWD_FILE" 2>/dev/null && return 0
+
 	uid=1000
-	while awk -F: -v wanted="$uid" '$3 == wanted { found=1 } END { exit !found }' /etc/passwd; do
+	while awk -F: -v wanted="$uid" '$3 == wanted { found=1 } END { exit !found }' "$PASSWD_FILE" 2>/dev/null; do
 		uid=$((uid + 1))
 	done
-	printf 'smb:x:%s:65534:Samba user:/var:/bin/false\n' "$uid" >>/etc/passwd
+	if ! printf 'smb:x:%s:65534:Samba user:/var:/bin/false\n' "$uid" >>"$PASSWD_FILE"; then
+		log_warn "could not create the smb Unix user; Samba may reject the firmware account"
+		return 1
+	fi
+	return 0
+}
+
+cleanup_stage() {
+	stage_dir="$1"
+	rm -f \
+		"$stage_dir/passdb.tdb.new" \
+		"$stage_dir/secrets.tdb.new" \
+		"$stage_dir/passdb.tdb.original" \
+		"$stage_dir/secrets.tdb.original" \
+		"$stage_dir/passdb.tdb.original.restore" \
+		"$stage_dir/secrets.tdb.original.restore" 2>/dev/null || true
+	rmdir "$stage_dir" 2>/dev/null || true
+}
+
+move_replace() {
+	"$MV_COMMAND" -f "$1" "$2" 2>/dev/null
+}
+
+restore_original() {
+	target="$1"
+	backup="$2"
+	had_original="$3"
+
+	if [ "$had_original" -eq 1 ]; then
+		restore_copy="$backup.restore"
+		rm -f "$restore_copy" 2>/dev/null || return 1
+		cp -p "$backup" "$restore_copy" 2>/dev/null || return 1
+		if ! move_replace "$restore_copy" "$target"; then
+			rm -f "$restore_copy" 2>/dev/null || true
+			return 1
+		fi
+	else
+		rm -f "$target" 2>/dev/null || return 1
+	fi
+	return 0
+}
+
+restore_firmware_pair_if_safe() {
+	rom_passdb="$ROM_DIR/passdb.tdb"
+	rom_secrets="$ROM_DIR/secrets.tdb"
+	live_passdb="$LIVE_DIR/passdb.tdb"
+	live_secrets="$LIVE_DIR/secrets.tdb"
+	legacy_passdb="$LIVE_DIR/smbpasswd"
+
+	# Do not follow or replace administrator-managed links during first boot.
+	if [ -L "$LIVE_DIR" ] || [ -L "$live_passdb" ] ||
+		[ -L "$live_secrets" ] || [ -L "$legacy_passdb" ]; then
+		log_warn "symlink detected in the live Samba database path; preserving administrator-managed files"
+		return 0
+	fi
+
+	legacy_configured=0
+	if [ -e "$legacy_passdb" ] && { [ ! -f "$legacy_passdb" ] || [ -s "$legacy_passdb" ]; }; then
+		legacy_configured=1
+	fi
+
+	rom_passdb_ready=0
+	rom_secrets_ready=0
+	[ -f "$rom_passdb" ] && [ -s "$rom_passdb" ] && rom_passdb_ready=1
+	[ -f "$rom_secrets" ] && [ -s "$rom_secrets" ] && rom_secrets_ready=1
+
+	# On overlayfs a passdb supplied by the new ROM is visible at /etc even
+	# though no writable passdb existed before the sysupgrade.  Byte identity
+	# with /rom is therefore the only existing passdb that is not custom state.
+	passdb_state=missing
+	if [ -e "$live_passdb" ]; then
+		if [ -f "$live_passdb" ] && [ "$rom_passdb_ready" -eq 1 ] &&
+			cmp -s "$live_passdb" "$rom_passdb"; then
+			passdb_state=rom
+		else
+			passdb_state=custom
+		fi
+	fi
+
+	secrets_state=missing
+	if [ -e "$live_secrets" ]; then
+		if [ -f "$live_secrets" ] && [ "$rom_secrets_ready" -eq 1 ] &&
+			cmp -s "$live_secrets" "$rom_secrets"; then
+			secrets_state=rom
+		else
+			secrets_state=custom
+		fi
+	fi
+
+	inspect_effective_samba_state
+	inspection_status=$?
+	case "$inspection_status" in
+		0) ;;
+		2) return 0 ;;
+		*) return 1 ;;
+	esac
+
+	# A non-empty smbpasswd file is an administrator credential database.  It
+	# is only a completed policy skip when the effective standalone backend is
+	# still smbpasswd; tdbsam would silently strand those users.
+	if [ "$legacy_configured" -eq 1 ]; then
+		if [ "$effective_smbpasswd" -eq 1 ]; then
+			log_warn "existing legacy smbpasswd database detected; preserving it because the effective standalone backend remains smbpasswd"
+			return 0
+		fi
+		log_warn "legacy smbpasswd users exist but the effective backend is tdbsam; preserving databases for required manual user migration"
+		return 0
+	fi
+
+	if [ "$passdb_state" = custom ]; then
+		if [ "$effective_tdbsam" -eq 1 ]; then
+			log_warn "existing custom passdb.tdb detected with the standalone tdbsam backend; preserving the live credential pair"
+		fi
+		[ "$effective_tdbsam" -eq 1 ] ||
+			log_warn "existing passdb.tdb is not used by tdbsam; preserving all Samba databases for manual review"
+		return 0
+	fi
+
+	if [ "$secrets_state" = custom ] && [ ! -f "$live_secrets" ]; then
+		log_warn "existing secrets.tdb is not a regular file; preserving it for manual review"
+		return 0
+	fi
+
+	if [ "$rom_passdb_ready" -ne 1 ] || [ "$rom_secrets_ready" -ne 1 ]; then
+		log_warn "firmware passdb.tdb/secrets.tdb pair is incomplete; leaving live databases unchanged and retrying next boot"
+		return 1
+	fi
+
+	if [ "$effective_tdbsam" -ne 1 ]; then
+		log_warn "effective standalone backend is smbpasswd; preserving databases instead of installing an unused tdbsam pair"
+		return 0
+	fi
+
+	# Clean first boots and already-repaired upgrades are safe to create the
+	# matching Unix account but do not need writable database copies.
+	if [ "$passdb_state" = rom ] && [ "$secrets_state" = rom ]; then
+		allow_default_smb_user=1
+		return 0
+	fi
+
+	preserve_original_secrets=0
+	[ "$secrets_state" = custom ] && preserve_original_secrets=1
+
+	if [ ! -d "$LIVE_DIR" ] && ! mkdir -p "$LIVE_DIR" 2>/dev/null; then
+		log_warn "cannot create $LIVE_DIR; leaving Samba databases unchanged and retrying next boot"
+		return 1
+	fi
+
+	stage_dir="$LIVE_DIR/.firmware-samba-pair.$$"
+	if ! (umask 077 && mkdir "$stage_dir") 2>/dev/null; then
+		log_warn "cannot create a Samba credential staging directory; leaving databases unchanged and retrying next boot"
+		return 1
+	fi
+
+	had_passdb=0
+	had_secrets=0
+	if [ -e "$live_passdb" ]; then
+		had_passdb=1
+		if ! cp -p "$live_passdb" "$stage_dir/passdb.tdb.original" 2>/dev/null; then
+			log_warn "cannot back up the current passdb.tdb; leaving databases unchanged and retrying next boot"
+			cleanup_stage "$stage_dir"
+			return 1
+		fi
+		chmod 0600 "$stage_dir/passdb.tdb.original" 2>/dev/null || true
+	fi
+	if [ -e "$live_secrets" ]; then
+		had_secrets=1
+		if ! cp -p "$live_secrets" "$stage_dir/secrets.tdb.original" 2>/dev/null; then
+			log_warn "cannot back up the current secrets.tdb; leaving databases unchanged and retrying next boot"
+			cleanup_stage "$stage_dir"
+			return 1
+		fi
+		chmod 0600 "$stage_dir/secrets.tdb.original" 2>/dev/null || true
+	fi
+
+	if ! cp "$rom_passdb" "$stage_dir/passdb.tdb.new" 2>/dev/null ||
+		! cp "$rom_secrets" "$stage_dir/secrets.tdb.new" 2>/dev/null ||
+		! chmod 0600 "$stage_dir/passdb.tdb.new" "$stage_dir/secrets.tdb.new" 2>/dev/null ||
+		! chown 0:0 "$stage_dir/passdb.tdb.new" "$stage_dir/secrets.tdb.new" 2>/dev/null ||
+		! cmp -s "$stage_dir/passdb.tdb.new" "$rom_passdb" ||
+		! cmp -s "$stage_dir/secrets.tdb.new" "$rom_secrets" ||
+		[ "$(stat -c '%a:%u:%g' "$stage_dir/passdb.tdb.new" 2>/dev/null)" != '600:0:0' ] ||
+		[ "$(stat -c '%a:%u:%g' "$stage_dir/secrets.tdb.new" 2>/dev/null)" != '600:0:0' ]; then
+		log_warn "staging or validating the firmware Samba pair failed; leaving databases unchanged and retrying next boot"
+		cleanup_stage "$stage_dir"
+		return 1
+	fi
+
+	# Publish secrets first.  In the sysupgrade case the merged-view passdb is
+	# already the ROM passdb, so an interruption between the two renames leaves
+	# a matched pair instead of exposing new passdb with old machine secrets.
+	if ! move_replace "$stage_dir/secrets.tdb.new" "$live_secrets"; then
+		log_warn "installing secrets.tdb failed; leaving databases unchanged and retrying next boot"
+		cleanup_stage "$stage_dir"
+		return 1
+	fi
+	if ! move_replace "$stage_dir/passdb.tdb.new" "$live_passdb"; then
+		rollback_failed=0
+		if ! restore_original "$live_secrets" "$stage_dir/secrets.tdb.original" "$had_secrets"; then
+			rollback_failed=1
+			log_warn "secrets.tdb rollback also failed; manual Samba database repair is required"
+		fi
+		log_warn "installing passdb.tdb failed; restored the previous secrets state where possible and will retry next boot"
+		if [ "$rollback_failed" -eq 0 ]; then
+			cleanup_stage "$stage_dir"
+		else
+			log_warn "rollback incomplete; retained recovery material at $stage_dir"
+		fi
+		return 1
+	fi
+
+	if ! cmp -s "$live_passdb" "$rom_passdb" ||
+		! cmp -s "$live_secrets" "$rom_secrets" ||
+		[ "$(stat -c '%a:%u:%g' "$live_passdb" 2>/dev/null)" != '600:0:0' ] ||
+		[ "$(stat -c '%a:%u:%g' "$live_secrets" 2>/dev/null)" != '600:0:0' ]; then
+		rollback_failed=0
+		if ! restore_original "$live_passdb" "$stage_dir/passdb.tdb.original" "$had_passdb"; then
+			rollback_failed=1
+			log_warn "passdb.tdb rollback failed; manual Samba database repair is required"
+		fi
+		if ! restore_original "$live_secrets" "$stage_dir/secrets.tdb.original" "$had_secrets"; then
+			rollback_failed=1
+			log_warn "secrets.tdb rollback failed; manual Samba database repair is required"
+		fi
+		log_warn "installed Samba pair failed final validation; restored previous databases where possible and will retry next boot"
+		if [ "$rollback_failed" -eq 0 ]; then
+			cleanup_stage "$stage_dir"
+		else
+			log_warn "rollback incomplete; retained recovery material at $stage_dir"
+		fi
+		return 1
+	fi
+
+	if [ "$preserve_original_secrets" -eq 1 ]; then
+		chmod 0700 "$stage_dir" 2>/dev/null || true
+		log_notice "restored the matched firmware pair and retained pre-migration recovery material at $stage_dir"
+	else
+		cleanup_stage "$stage_dir"
+		log_notice "restored the matched firmware passdb.tdb/secrets.tdb pair after a credential-free legacy upgrade"
+	fi
+	allow_default_smb_user=1
+	return 0
+}
+
+# A non-zero uci-default result keeps this script for a later boot but does not
+# stop OpenWrt from running the other defaults or completing boot.
+retry=0
+allow_default_smb_user=0
+migration_ok=1
+restore_firmware_pair_if_safe || {
+	retry=1
+	migration_ok=0
+}
+if [ "$migration_ok" -eq 1 ] && [ "$allow_default_smb_user" -eq 1 ]; then
+	ensure_unix_user || retry=1
 fi
-exit 0
+exit "$retry"

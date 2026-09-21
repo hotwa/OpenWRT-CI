@@ -20,6 +20,28 @@ Unix 用户 `smb`。密码仅从 GitHub Actions 加密 Secret `SAMBA_DEFAULT_PAS
 注入，含这些数据库的固件必须按 private artifact 处理。所有此类镜像共享固定机器
 SID；轮换 SID 时必须同时重新生成并替换两份 TDB，禁止单独替换其中一个。
 
+`sysupgrade` 可能保留旧固件的 `/etc/samba/secrets.tdb`，同时从新 ROM 暴露新生成的
+`passdb.tdb`，从而把不同机器 SID 的数据库拼在一起。首次启动脚本会识别这一种
+无账号的旧固件场景：仅当 legacy `smbpasswd` 缺失或为空，且当前 `passdb.tdb`
+缺失或与 `/rom` 中的版本逐字节相同时，才先在同一文件系统暂存并验证 ROM 内成对
+数据库，再以 `0600 root:root` 一起安装。迁移还必须通过固件自带 `testparm` 确认
+config backend 为 `file`、passdb backend 精确为 `tdbsam`、private dir 为
+`/etc/samba`、角色为 standalone（或 `auto` + `security=USER`），且没有 UCI 全局覆盖、
+外部 include/config-file 跳转、realm 或 domain-logons 歧义；否则保留现状并要求人工
+处理。干净首启或已经修复的同配对状态保持不动。
+
+非空 legacy `smbpasswd` 只有在有效 backend 仍是 standalone `smbpasswd` 时才仍可直接
+使用；若新模板已切到 `tdbsam`，脚本会终态保留旧库并明确提示人工迁移用户，不能把
+“文件尚在”误报为账号仍可用。不同于 ROM 的现有 `passdb.tdb`、域成员配置、custom
+backend/config/template 及符号链接也都作为管理员定制终态保留，不会重复启动重试或新增
+默认 `smb` Unix 用户。standalone 状态下确需替换旧 `secrets.tdb` 时，即使迁移成功也会
+把旧配对保留在日志所示的 `0700` 恢复目录中，避免删除潜在机器 SID/trust 恢复材料。
+
+不完整 ROM 配对及暂存、校验或发布失败会返回非零，使 OpenWrt 保留该
+`uci-defaults` 脚本供下次启动重试；这不会中断其它 defaults 或阻塞设备启动。若发布后
+的自动回滚自身失败，脚本同样不会删除唯一恢复副本，而会保留权限为 `0700` 的暂存目录，
+并在日志中给出不含密码内容的固定恢复路径供人工处理。
+
 ## 自动分区门槛
 
 `98-provision-emmc-data` 只在 `agent-storage.main.enabled=1` 时运行，并且只
