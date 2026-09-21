@@ -9,6 +9,7 @@ files/etc/crontabs/* text eol=lf
 files/etc/npmrc text eol=lf
 files/root/.npmrc text eol=lf
 files/.npmrc text eol=lf
+files/etc/pi/agent/settings.json text eol=lf
 files/etc/uci-defaults/* text eol=lf
 files/etc/config/* text eol=lf
 files/etc/hotplug.d/*/* text eol=lf

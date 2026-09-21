@@ -3,5 +3,27 @@
   "defaultModel": "deepseek/deepseek-v4.1-flash",
   "defaultThinkingLevel": "medium",
   "enableInstallTelemetry": false,
-  "defaultProjectTrust": "ask"
+  "defaultProjectTrust": "ask",
+  "packages": [
+    "npm:@router-for-me/pi-cliproxyapi-provider",
+    "npm:pi-commandcode-provider",
+    "npm:pi-agent-modes",
+    "pi-package-manager",
+    "btw-pi",
+    "pi-web-search",
+    "pi-undo-redo",
+    "pi-wechat-assistant",
+    "pi-mcp-adapter",
+    "pi-subagents",
+    "@capdiem/pi-todo",
+    "@zephyrdeng/pi-review",
+    "@luxusai/pi-hindsight",
+    "pi-interactive-shell",
+    "pi-inspect",
+    "pi-lsp",
+    "pi-cache-graph",
+    "pi-cost",
+    "@narumitw/pi-statusline"
+  ],
+  "autoUpdate": false
 }

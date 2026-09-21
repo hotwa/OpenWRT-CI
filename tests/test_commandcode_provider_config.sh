@@ -32,15 +32,27 @@ grep -Fq 'COMMANDCODE_API_KEY' "$WLG_WF"
 grep -Fq 'auth.json' "$AUTO_MOUNT"
 grep -Fq 'commandcode/auth.json' "$AUTO_MOUNT"
 
-# The build-time settings template (fetch_node_runtime.sh) must register
-# pi-commandcode-provider with the npm: prefix so Pi 0.85+ auto-loads it
-# without an explicit --extension flag.  Bare package names are unreliable.
+# The canonical settings template must register pi-commandcode-provider with
+# the npm: prefix so Pi 0.85+ auto-loads it without an explicit --extension
+# flag. A bare entry does not force npm package resolution and is rejected.
 FETCH_RUNTIME="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 [ -f "$FETCH_RUNTIME" ] || { echo "missing fetch_node_runtime.sh"; exit 1; }
-grep -Fq '"npm:pi-commandcode-provider"' "$FETCH_RUNTIME" || {
-	echo "fetch_node_runtime.sh must use npm:pi-commandcode-provider (not bare package name)"
+grep -Fq 'PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"' "$FETCH_RUNTIME" || {
+	echo "fetch_node_runtime.sh must declare the canonical Pi settings template"
 	exit 1
 }
+grep -Fq 'install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"' "$FETCH_RUNTIME" || {
+	echo "fetch_node_runtime.sh must install the canonical Pi settings template"
+	exit 1
+}
+grep -Fq '"npm:pi-commandcode-provider"' "$PI_SETTINGS" || {
+	echo "Pi settings must use npm:pi-commandcode-provider"
+	exit 1
+}
+if grep -Eq '^[[:space:]]*"pi-commandcode-provider"[[:space:]]*,?[[:space:]]*$' "$PI_SETTINGS"; then
+	echo "Pi settings must not use a bare pi-commandcode-provider entry"
+	exit 1
+fi
 # The first-boot migrator must create the npm symlink so Pi resolves the
 # npm: package reference against /data/pi/agent/npm/node_modules.
 grep -Fq 'ensure_commandcode_npm_link' "$AUTO_MOUNT" || {

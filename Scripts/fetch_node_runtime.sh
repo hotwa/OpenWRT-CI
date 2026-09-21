@@ -14,6 +14,7 @@ NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"
+PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"
 PI_EXTENSION_PEER_SCRIPT="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
 PI_EXTENSION_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extensions.js"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
@@ -480,35 +481,14 @@ configure_pi_extensions() {
 		echo "ERROR: default Pi model catalog is missing" >&2
 		return 1
 	}
+	[ -s "$PI_SETTINGS_TEMPLATE" ] || {
+		echo "ERROR: default Pi settings template is missing" >&2
+		return 1
+	}
 	install -Dm0644 "$PI_MODEL_CATALOG" "$TARGET_FILES/etc/pi/agent/models.json"
 	cp -f "$PI_MODEL_CATALOG" "$PI_CONFIG_DIR/models.json"
-	cat >"$PI_CONFIG_DIR/settings.json" <<'EOF'
-{
-  "defaultProvider": "commandcode",
-  "defaultModel": "deepseek/deepseek-v4.1-flash",
-  "defaultThinkingLevel": "medium",
-  "enableInstallTelemetry": false,
-  "defaultProjectTrust": "ask",
-  "packages": [
-    "npm:@router-for-me/pi-cliproxyapi-provider",
-    "npm:pi-commandcode-provider",
-    "npm:pi-agent-modes",
-    "pi-package-manager",
-    "btw-pi",
-    "pi-web-search",
-    "pi-wechat-assistant",
-    "pi-mcp-adapter",
-    "pi-subagents",
-    "@capdiem/pi-todo",
-    "@zephyrdeng/pi-review",
-    "@luxusai/pi-hindsight",
-    "pi-interactive-shell",
-    "@narumitw/pi-statusline"
-  ],
-  "autoUpdate": false
-}
-EOF
-	cp -f "$PI_CONFIG_DIR/settings.json" "$TARGET_FILES/etc/pi/agent/settings.json"
+	install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"
+	cp -f "$PI_SETTINGS_TEMPLATE" "$PI_CONFIG_DIR/settings.json"
 }
 
 main() {

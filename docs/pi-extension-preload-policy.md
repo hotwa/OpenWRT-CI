@@ -79,6 +79,17 @@ TPS 扩展会重复统计、提示和状态展示。需要独立 `pi-tps` 时，
   Pi/CommandCode/Multica，而不是只回退一个 npm 包。
 - Pi 设置写入包名，扩展在构建期进入 runtime 的全局 `node_modules`；因此镜像首启不
   依赖 npm registry。
+- 固件默认 `settings.json` 注册全部 `openwrtPiExtensions`。每次启动时
+  `agent-data-prep` 使用固件内 Node 解析 JSON，只把缺失的默认包追加到持久化
+  `/data/pi/agent/settings.json`；用户选择的 provider、model、自定义字段和已有包均
+  保留。无效 JSON 会告警并保持原文件不变，成功更新通过同目录临时文件原子发布。
+  如果合并前普通文件 `.firmware-settings-managed` 的 mtime 与 settings 匹配，重写后
+  会在再次确认 settings 的设备号、inode、mtime、大小均未变化后同步该既有 marker；
+  缺失、过期或符号链接 marker，以及合并后被管理员再次修改的 settings，一律不创建、
+  不更新 marker。
+  该迁移严格为 **append-only**：以后从固件默认清单删除扩展，并不会自动从持久配置
+  卸载它；如确需移除，必须同时提供独立、明确且经过审阅的持久配置迁移，不能仅靠
+  删除 catalog 条目。
 - runtime generation 更新必须走 `/usr/sbin/agent-runtime` 的验签、健康检查、原子切换
   和回滚；不要在 `/data/node`、`/opt/node` 或 `/data/agent-runtime/current` 原地更新。
 - Hindsight 的 URL、API token、OAuth、Cookie 和业务密钥只能通过设备 root-only 环境

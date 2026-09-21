@@ -16,6 +16,9 @@ DATA_ROOT="${AGENT_DATA_PREP_ROOT:-/data}"
 ROOT_HOME="${AGENT_DATA_PREP_HOME:-/root}"
 FIRMWARE_ETC="${AGENT_DATA_PREP_FIRMWARE_ETC:-/etc}"
 PROC_MOUNTS="${AGENT_DATA_PREP_PROC_MOUNTS:-/proc/mounts}"
+PI_SETTINGS_MERGER="${AGENT_DATA_PREP_PI_SETTINGS_MERGER:-/usr/sbin/pi-settings-merge.js}"
+PI_SETTINGS_MERGE_REWRITTEN=0
+PI_SETTINGS_MERGED_STATE=""
 
 log_info() {
 	logger -t agent-data-prep "$*" 2>/dev/null || true
@@ -176,6 +179,109 @@ refresh_commandcode_auth() {
 	fi
 }
 
+# Merge newly shipped default Pi packages into a persistent settings file
+# without replacing administrator-selected providers, models, package entries,
+# or unknown future fields. JSON handling stays in Node so malformed input is
+# rejected before any write, and the helper publishes changes with rename(2).
+merge_pi_settings_packages() {
+	local firmware_settings="$FIRMWARE_ETC/pi/agent/settings.json"
+	local persistent_settings="$DATA_ROOT/pi/agent/settings.json"
+	local node_bin="${AGENT_DATA_PREP_NODE_BIN:-}"
+	local candidate merge_result state remainder dev inode mtime size field
+
+	PI_SETTINGS_MERGE_REWRITTEN=0
+	PI_SETTINGS_MERGED_STATE=""
+
+	[ -r "$firmware_settings" ] || return 0
+	[ -r "$persistent_settings" ] || return 1
+	[ -r "$PI_SETTINGS_MERGER" ] || return 1
+
+	if [ -n "$node_bin" ]; then
+		[ -x "$node_bin" ] || return 1
+	else
+		for candidate in \
+			"$DATA_ROOT/agent-runtime/current/node/bin/node" \
+			/opt/node/bin/node; do
+			if [ -x "$candidate" ]; then
+				node_bin="$candidate"
+				break
+			fi
+		done
+		[ -n "$node_bin" ] || return 1
+	fi
+
+	merge_result="$("$node_bin" "$PI_SETTINGS_MERGER" \
+		"$firmware_settings" "$persistent_settings")" || return 1
+	case "$merge_result" in
+		unchanged) return 0 ;;
+		changed\ *) state="${merge_result#changed }" ;;
+		*) return 1 ;;
+	esac
+
+	# Accept only the helper's exact `dev:inode:mtime:size` publication state.
+	# This state identifies the file the helper itself renamed into place; the
+	# shell must not infer a rewrite from a later observation of the pathname.
+	dev="${state%%:*}"; remainder="${state#*:}"
+	inode="${remainder%%:*}"; remainder="${remainder#*:}"
+	mtime="${remainder%%:*}"; size="${remainder#*:}"
+	[ "$state" = "$dev:$inode:$mtime:$size" ] || return 1
+	for field in "$dev" "$inode" "$mtime" "$size"; do
+		case "$field" in ''|*[!0-9]*) return 1 ;; esac
+	done
+	PI_SETTINGS_MERGED_STATE="$state"
+	PI_SETTINGS_MERGE_REWRITTEN=1
+	return 0
+}
+
+refresh_pi_settings_managed_marker() {
+	local settings_file="$1"
+	local marker="$2"
+	local expected_marker_state="$3"
+	local expected_settings_state="$4"
+	local current_marker_state current_settings_state
+
+	[ -n "$expected_marker_state" ] && [ -n "$expected_settings_state" ] || return 0
+	[ -f "$settings_file" ] && [ ! -L "$settings_file" ] || return 0
+	current_settings_state="$(stat -c '%d:%i:%Y:%s' "$settings_file" 2>/dev/null || true)"
+	[ "$current_settings_state" = "$expected_settings_state" ] || return 0
+	[ -f "$marker" ] && [ ! -L "$marker" ] || return 0
+	current_marker_state="$(stat -c '%d:%i:%Y' "$marker" 2>/dev/null || true)"
+	[ "$current_marker_state" = "$expected_marker_state" ] || return 0
+	touch -r "$settings_file" "$marker" 2>/dev/null
+}
+
+# Keep commandcode-model-sync's firmware-management marker aligned only when
+# the settings file was demonstrably firmware-managed before this append-only
+# package merge. Missing, symlinked, stale, or concurrently changed markers
+# are never created, followed, or refreshed.
+reconcile_pi_settings_packages() {
+	local settings_file="$DATA_ROOT/pi/agent/settings.json"
+	local marker="$DATA_ROOT/pi/agent/.firmware-settings-managed"
+	local settings_mtime marker_mtime managed_marker_state
+
+	managed_marker_state=""
+	if [ -f "$settings_file" ] && [ ! -L "$settings_file" ] && \
+	   [ -f "$marker" ] && [ ! -L "$marker" ]; then
+		settings_mtime="$(stat -c '%Y' "$settings_file" 2>/dev/null || true)"
+		marker_mtime="$(stat -c '%Y' "$marker" 2>/dev/null || true)"
+		if [ -n "$settings_mtime" ] && [ "$settings_mtime" = "$marker_mtime" ]; then
+			managed_marker_state="$(stat -c '%d:%i:%Y' "$marker" 2>/dev/null || true)"
+		fi
+	fi
+
+	if ! merge_pi_settings_packages >/dev/null 2>&1; then
+		log_warn "cannot merge default Pi packages; persistent settings preserved"
+		return 0
+	fi
+
+	[ "$PI_SETTINGS_MERGE_REWRITTEN" -eq 1 ] || return 0
+	[ -n "$managed_marker_state" ] || return 0
+	refresh_pi_settings_managed_marker \
+		"$settings_file" "$marker" "$managed_marker_state" "$PI_SETTINGS_MERGED_STATE" || \
+		log_warn "Pi packages merged but firmware-settings marker could not be refreshed"
+	return 0
+}
+
 start() {
 	if ! wait_data_mount; then
 		log_warn "skipped: $DATA_ROOT not mounted within 90s"
@@ -256,6 +362,11 @@ start() {
 	# left there by an older build is copied to /data before the link lands.
 	link_directory "$DATA_ROOT/cache/npm" "$ROOT_HOME/.npm" npm || \
 		log_warn "cannot link /root/.npm"
+
+	# `/root/.pi` may just have been migrated over the firmware-seeded copy.
+	# Reconcile packages only after that migration so retained sysupgrade data
+	# receives new defaults while all user settings remain authoritative.
+	reconcile_pi_settings_packages
 
 	# Multica runtime_provider migration: sysupgrade keeps the previous UCI
 	# value (ebd46aa-era builds left runtime_provider='pi' via the init

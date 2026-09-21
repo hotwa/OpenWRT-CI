@@ -34,7 +34,9 @@ for term in 'linux-arm64-musl' 'linux-x64-musl' \
   'prune_foreign_platform_builds' 'verify_agent_runtime_arch' \
   'install_pi_search_tools' \
   'PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"' \
+  'PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"' \
   'install -Dm0644 "$PI_MODEL_CATALOG" "$TARGET_FILES/etc/pi/agent/models.json"' \
+  'install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"' \
   'cmdc' 'command-code' 'commandcode'; do
   grep -Fq -- "$term" "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh omits $term"
 done
@@ -46,7 +48,7 @@ done
 # configure_pi_extensions must register every preinstalled package in Pi's
 # settings so pi actually loads them (not just installs them under /opt/node).
 # Match both "pi-commandcode-provider" (legacy) and "npm:pi-commandcode-provider" (current).
-grep -Fq 'pi-commandcode-provider' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not register pi-commandcode-provider in settings"
+grep -Fq 'pi-commandcode-provider' "$SETTINGS" || fail "default settings do not register pi-commandcode-provider"
 
 if grep -Fq 'CONFIG_PACKAGE_ripgrep=y' "$ROOT_DIR/Config/GENERAL.txt"; then
   fail "feed ripgrep would pull Rust into every firmware build"
@@ -61,14 +63,20 @@ done
 for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-undo-redo' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-mcp-adapter' 'pi-lsp' 'pi-cost' 'pi-cache-graph' 'pi-inspect' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
-node - "$MANIFEST" <<'NODE' || fail "Pi extension catalog is not latest-at-build"
+node - "$MANIFEST" "$SETTINGS" <<'NODE' || fail "Pi extension catalog/settings contract is invalid"
 const fs = require('node:fs');
-const [manifestPath] = process.argv.slice(2);
+const [manifestPath, settingsPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 for (const [name, selector] of Object.entries(manifest.dependencies || {})) {
   if (selector !== 'latest') process.exit(1);
 }
 if (!Array.isArray(manifest.openwrtPiExtensions) || manifest.openwrtPiExtensions.length === 0) process.exit(2);
+if (!Array.isArray(settings.packages)) process.exit(3);
+const configured = new Set(settings.packages.map(spec => spec.replace(/^npm:/, '')));
+for (const extension of manifest.openwrtPiExtensions) {
+  if (!configured.has(extension)) process.exit(4);
+}
 NODE
 if grep -Fq '@aaronkyriesenbach/pi-package-manager' "$MANIFEST"; then
   fail "the legacy scoped package manager must not be preloaded alongside pi-package-manager"
