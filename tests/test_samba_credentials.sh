@@ -156,7 +156,7 @@ EOF
 		live_recovery_stage="$(find "$live_case/live" -maxdepth 1 -type d -name '.firmware-samba-pair.*' -print -quit)"
 		[ -n "$live_recovery_stage" ]
 		[ "$(run_root stat -c '%a' "$live_recovery_stage")" = 700 ]
-		grep -Fxq 'legacy-machine-secrets' "$live_recovery_stage/secrets.tdb.original"
+		run_root grep -Fxq 'legacy-machine-secrets' "$live_recovery_stage/secrets.tdb.original"
 		grep -Fq "retained pre-migration recovery material at $live_recovery_stage" "$live_case/run.log"
 
 		# Exercise the production stock symlink/template path, not only the
@@ -212,8 +212,8 @@ EOF
 		retained_stage="$(find "$retained_case/live" -maxdepth 1 -type d -name '.firmware-samba-pair.*' -print -quit)"
 		[ -n "$retained_stage" ]
 		[ "$(run_root stat -c '%a' "$retained_stage")" = 700 ]
-		[ -f "$retained_stage/passdb.tdb.original" ]
-		[ -f "$retained_stage/secrets.tdb.original" ]
+		run_root test -f "$retained_stage/passdb.tdb.original"
+		run_root test -f "$retained_stage/secrets.tdb.original"
 		[ "$(run_root stat -c '%a' "$retained_stage/passdb.tdb.original")" = 600 ]
 		[ "$(run_root stat -c '%a' "$retained_stage/secrets.tdb.original")" = 600 ]
 		grep -Fq "rollback incomplete; retained recovery material at $retained_stage" "$retained_case/run.log"

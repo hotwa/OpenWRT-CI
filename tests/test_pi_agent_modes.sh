@@ -4,11 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
+PI_SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
 AGENT_RUNTIME="$ROOT_DIR/files/usr/sbin/agent-runtime"
 
 fail() { echo "pi-agent-modes: $*" >&2; exit 1; }
 
-for path in "$PACKAGE_JSON" "$FETCH_SCRIPT" "$AGENT_RUNTIME"; do
+for path in "$PACKAGE_JSON" "$FETCH_SCRIPT" "$PI_SETTINGS" "$AGENT_RUNTIME"; do
   [ -f "$path" ] || fail "missing $path"
 done
 
@@ -28,8 +29,12 @@ NODE
 
 # The staged settings.json template must install pi-agent-modes so the
 # headless Multica agent loads the yolo mode without interactive approval.
-grep -Fq '"npm:pi-agent-modes"' "$FETCH_SCRIPT" ||
-  fail "fetch_node_runtime.sh settings template must include npm:pi-agent-modes"
+grep -Fq 'PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"' "$FETCH_SCRIPT" ||
+  fail "fetch_node_runtime.sh must declare the canonical Pi settings template"
+grep -Fq 'install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"' "$FETCH_SCRIPT" ||
+  fail "fetch_node_runtime.sh must install the canonical Pi settings template"
+grep -Fq '"npm:pi-agent-modes"' "$PI_SETTINGS" ||
+  fail "canonical Pi settings template must include npm:pi-agent-modes"
 
 # The retired plan-mode vendored extension link must not be staged.
 if grep -Fq '/tmp/agent-runtime-pi-plan-mode.ts' "$FETCH_SCRIPT"; then

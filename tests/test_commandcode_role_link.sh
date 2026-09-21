@@ -14,8 +14,9 @@ grep -Fq 'COMMANDCODE_ROLE_LINK_BIN' "$AUTO_MOUNT"
 grep -Fq 'commandcode-role-link' "$MULTICA_INIT"
 grep -Fq './files/usr/sbin/commandcode-role-link ./wrt/files/usr/sbin/commandcode-role-link' "$WORKFLOW"
 grep -Fq './wrt/files/usr/sbin/commandcode-role-link' "$WORKFLOW"
-grep -Fq '5cfbcb3' "$ROLE_CARD"
 grep -Fq 'CommandCode' "$ROLE_CARD"
+grep -Fq 'CommandCode 每轮请求重新读取用户级 `AGENTS.md`' "$ROLE_CARD"
+grep -Fq '/etc/openwrt-ci/firmware-commit' "$ROLE_CARD"
 
 CASE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$CASE_ROOT"' EXIT

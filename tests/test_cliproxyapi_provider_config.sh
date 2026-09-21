@@ -10,8 +10,9 @@ MULTICA="$ROOT_DIR/files/etc/init.d/multica"
 AGENT_DATA_PREP="$ROOT_DIR/files/etc/init.d/agent-data-prep"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 FETCH="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
+PI_SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
 
-for file in "$SCRIPT" "$WORKFLOW" "$WLG_WORKFLOW" "$PROFILE" "$MULTICA" "$AGENT_DATA_PREP" "$MANIFEST" "$FETCH"; do
+for file in "$SCRIPT" "$WORKFLOW" "$WLG_WORKFLOW" "$PROFILE" "$MULTICA" "$AGENT_DATA_PREP" "$MANIFEST" "$FETCH" "$PI_SETTINGS"; do
 	[ -f "$file" ] || { echo "missing required file: $file"; exit 1; }
 done
 bash -n "$SCRIPT"
@@ -23,7 +24,9 @@ grep -Fq 'CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}' "$WLG_WORKFLO
 grep -Fq 'CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}' "$WLG_WORKFLOW"
 grep -Fq 'PiCliProxyApiProviderConfig.sh' "$WORKFLOW"
 grep -Fq '@router-for-me/pi-cliproxyapi-provider' "$MANIFEST"
-grep -Fq '"npm:@router-for-me/pi-cliproxyapi-provider"' "$FETCH"
+grep -Fq 'PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"' "$FETCH"
+grep -Fq 'install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"' "$FETCH"
+grep -Fq '"npm:@router-for-me/pi-cliproxyapi-provider"' "$PI_SETTINGS"
 grep -Fq 'CLIPROXYAPI_BASE_URL="http://192.168.11.159:8317/v1"' "$PROFILE"
 grep -Fq 'cliproxyapi-base-url' "$PROFILE"
 grep -Fq 'CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url"' "$MULTICA"

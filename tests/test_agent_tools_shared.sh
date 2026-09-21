@@ -17,7 +17,11 @@ grep -Fq 'agent-tools-link' "$MULTICA_INIT"
 grep -Fq './files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link' "$WORKFLOW"
 grep -Fq '/data/shared/agent-tools' "$ROLE_CARD"
 grep -Fq 'Pi 没有内置 MCP' "$ROLE_CARD"
-grep -Fq '04cc174' "$ROLE_CARD"
+grep -Fq '/etc/openwrt-ci/firmware-commit' "$ROLE_CARD"
+if grep -Eq '[[:space:]]`[0-9a-f]{7,40}`[[:space:]]' "$ROLE_CARD"; then
+	echo "role card must not pin a historical firmware commit" >&2
+	exit 1
+fi
 
 CASE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$CASE_ROOT"' EXIT
