@@ -14,6 +14,10 @@ POLICY_FILE="${DATA_RUNTIME_POLICY_FILE:-/etc/data-runtime.env}"
 STATUS_FILE="$RUN_DIR/data-runtime.status"
 RUNTIME_ENV_FILE="$RUN_DIR/data-runtime.env"
 MOUNTS_FILE="${DATA_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
+ROOT_MOUNTINFO_FILE="${DATA_RUNTIME_ROOT_MOUNTINFO_FILE:-/proc/self/mountinfo}"
+ROOT_OVERLAY_STATUS_FILE="${DATA_RUNTIME_ROOT_OVERLAY_STATUS_FILE:-$RUN_DIR/root-overlay.status}"
+ROOT_OVERLAY_PERSIST_DIR="${DATA_RUNTIME_ROOT_OVERLAY_PERSIST_DIR:-$DATA_ROOT/.root-overlay-health}"
+ROOT_OVERLAY_PERSIST_FILE="$ROOT_OVERLAY_PERSIST_DIR/last-degraded.status"
 MIN_OVERLAY_KIB=51200
 
 log() { logger -t data-runtime -- "$*" 2>/dev/null || true; }
@@ -35,6 +39,142 @@ load_policy() {
 # byte can be written before any runtime is sent there.
 data_mount_present() {
 	awk -v target="$DATA_ROOT" '$2 == target && $1 ~ /^\/dev\// && $3 !~ /^(overlay|tmpfs|ramfs|squashfs)$/ { found = 1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null
+}
+
+detect_root_overlay() {
+	local record
+
+	ROOT_OVERLAY_STATE=degraded
+	ROOT_OVERLAY_REASON=mountinfo-unreadable
+	ROOT_OVERLAY_FSTYPE=unknown
+	ROOT_OVERLAY_UPPER=unknown
+	ROOT_MOUNT_OPTIONS=unknown
+
+	record="$(awk '$5 == "/" { print; found = 1; exit } END { exit !found }' \
+		"$ROOT_MOUNTINFO_FILE" 2>/dev/null)" || return 0
+	[ -n "$record" ] || return 0
+
+	ROOT_OVERLAY_FSTYPE="$(printf '%s\n' "$record" | awk '{
+		for (i = 1; i <= NF; i++) {
+			if ($i == "-") {
+				print $(i + 1)
+				exit
+			}
+		}
+	}')"
+	[ -n "$ROOT_OVERLAY_FSTYPE" ] || ROOT_OVERLAY_FSTYPE=unknown
+	ROOT_MOUNT_OPTIONS="$(printf '%s\n' "$record" | awk '{ print $6; exit }')"
+	[ -n "$ROOT_MOUNT_OPTIONS" ] || ROOT_MOUNT_OPTIONS=unknown
+
+	if [ "$ROOT_OVERLAY_FSTYPE" != overlay ]; then
+		ROOT_OVERLAY_UPPER=not-applicable
+		case "$ROOT_OVERLAY_FSTYPE" in
+			ext4|f2fs|ubifs|jffs2|btrfs|xfs)
+				case ",$ROOT_MOUNT_OPTIONS," in
+					*,rw,*)
+						ROOT_OVERLAY_STATE=healthy
+						ROOT_OVERLAY_REASON=persistent-root
+						;;
+					*) ROOT_OVERLAY_REASON=root-read-only ;;
+				esac
+				;;
+			tmpfs|ramfs) ROOT_OVERLAY_REASON=volatile-root ;;
+			squashfs|erofs) ROOT_OVERLAY_REASON=read-only-root ;;
+			*) ROOT_OVERLAY_REASON=unsupported-root-filesystem ;;
+		esac
+		return 0
+	fi
+
+	ROOT_OVERLAY_UPPER="$(printf '%s\n' "$record" | \
+		sed -n 's/.*[, ]upperdir=\([^, ]*\).*/\1/p')"
+	[ -n "$ROOT_OVERLAY_UPPER" ] || ROOT_OVERLAY_UPPER=unknown
+	case "$ROOT_OVERLAY_UPPER" in
+		/overlay/upper)
+			ROOT_OVERLAY_STATE=healthy
+			ROOT_OVERLAY_REASON=persistent-overlay
+			;;
+		/tmp/root/upper)
+			ROOT_OVERLAY_REASON=ram-overlay
+			;;
+		unknown)
+			ROOT_OVERLAY_REASON=overlay-upper-missing
+			;;
+		*)
+			ROOT_OVERLAY_REASON=unexpected-overlay-upper
+			;;
+	esac
+}
+
+write_root_overlay_record() {
+	local destination="$1" mode="$2" parent temporary boot_id observed_epoch
+
+	parent="${destination%/*}"
+	[ "$parent" != "$destination" ] || return 1
+	[ ! -L "$parent" ] || return 1
+	mkdir -p "$parent" 2>/dev/null || return 1
+	[ -d "$parent" ] && [ ! -L "$parent" ] || return 1
+	[ ! -L "$destination" ] || return 1
+
+	boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+	case "$boot_id" in
+		''|*[!0-9a-fA-F-]*) boot_id=unknown ;;
+	esac
+	observed_epoch="$(date +%s 2>/dev/null || true)"
+	is_number "$observed_epoch" || observed_epoch=0
+	temporary="$destination.new.$$"
+	[ ! -L "$temporary" ] || return 1
+	(
+		umask 077
+		{
+			printf 'state=%s\n' "$ROOT_OVERLAY_STATE"
+			printf 'reason=%s\n' "$ROOT_OVERLAY_REASON"
+			printf 'root_fstype=%s\n' "$ROOT_OVERLAY_FSTYPE"
+			printf 'root_mount_options=%s\n' "$ROOT_MOUNT_OPTIONS"
+			printf 'root_upper=%s\n' "$ROOT_OVERLAY_UPPER"
+			printf 'boot_id=%s\n' "$boot_id"
+			printf 'observed_epoch=%s\n' "$observed_epoch"
+		} >"$temporary"
+	) 2>/dev/null || {
+		rm -f "$temporary" 2>/dev/null || true
+		return 1
+	}
+	chmod "$mode" "$temporary" 2>/dev/null || {
+		rm -f "$temporary" 2>/dev/null || true
+		return 1
+	}
+	mv "$temporary" "$destination" 2>/dev/null || {
+		rm -f "$temporary" 2>/dev/null || true
+		return 1
+	}
+}
+
+write_persistent_root_overlay_alert() {
+	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
+	[ ! -L "$ROOT_OVERLAY_PERSIST_DIR" ] || return 1
+	if [ ! -e "$ROOT_OVERLAY_PERSIST_DIR" ]; then
+		(umask 077; mkdir "$ROOT_OVERLAY_PERSIST_DIR") 2>/dev/null || return 1
+	fi
+	[ -d "$ROOT_OVERLAY_PERSIST_DIR" ] && [ ! -L "$ROOT_OVERLAY_PERSIST_DIR" ] || return 1
+	chmod 0700 "$ROOT_OVERLAY_PERSIST_DIR" 2>/dev/null || return 1
+	write_root_overlay_record "$ROOT_OVERLAY_PERSIST_FILE" 0600
+}
+
+report_root_overlay_health() {
+	detect_root_overlay
+	write_root_overlay_record "$ROOT_OVERLAY_STATUS_FILE" 0644 || \
+		log "WARN: could not write volatile root overlay health status"
+
+	if [ "$ROOT_OVERLAY_STATE" = degraded ]; then
+		log "CRITICAL: root overlay is not persistent ($ROOT_OVERLAY_REASON, upper=$ROOT_OVERLAY_UPPER)"
+		if data_mount_present; then
+			write_persistent_root_overlay_alert || \
+				log "WARN: could not write persistent root overlay alert"
+		fi
+	fi
+
+	# Overlay health reporting is diagnostic only. It must never block boot or
+	# alter the data-runtime storage decision.
+	return 0
 }
 
 data_write_probe() {
@@ -97,6 +237,7 @@ write_state() {
 
 start() {
 	local state root detail overlay_kib
+	report_root_overlay_health || true
 	load_policy; overlay_kib="$(overlay_available_kib)"
 	if data_mount_present && data_write_probe && prepare_persistent_root; then
 		state=persistent; root="$DATA_ROOT"; detail=verified-data-mount

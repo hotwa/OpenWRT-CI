@@ -15,3 +15,15 @@ if [ -f "$DATA_RUNTIME_ENV_FILE" ] && [ ! -L "$DATA_RUNTIME_ENV_FILE" ] && [ -r 
 		*) unset DATA_RUNTIME_STATE DATA_RUNTIME_ROOT ;;
 	esac
 fi
+
+# A degraded root-overlay status means /etc and /root may be backed by RAM.
+# Never source this diagnostic file or interpolate its contents into the
+# terminal: the login warning is deliberately fixed text.
+ROOT_OVERLAY_STATUS_FILE=/var/run/root-overlay.status
+if [ -t 1 ] && [ "$(id -u 2>/dev/null)" = 0 ] && \
+	[ -f "$ROOT_OVERLAY_STATUS_FILE" ] && [ ! -L "$ROOT_OVERLAY_STATUS_FILE" ] && \
+	grep -Fqx 'state=degraded' "$ROOT_OVERLAY_STATUS_FILE" 2>/dev/null; then
+	printf '\n\033[1;31mWARNING: persistent root overlay is unavailable or could not be verified.\033[0m\n'
+	printf '\033[1;31mChanges under /etc and /root may be lost after reboot. See /var/run/root-overlay.status.\033[0m\n\n'
+fi
+unset ROOT_OVERLAY_STATUS_FILE
