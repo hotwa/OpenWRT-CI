@@ -1,27 +1,82 @@
 #!/bin/sh
 
 CRONTAB_FILE="${CRONTAB_FILE:-/etc/crontabs/root}"
-AUTO_UPGRADE_OLD='0 3 * * * /usr/sbin/agent-runtime-auto-upgrade'
+AUTO_UPGRADE_COMMAND='/usr/sbin/agent-runtime-auto-upgrade'
 AUTO_UPGRADE_NEW='7 3 * * * /usr/sbin/agent-runtime-auto-upgrade'
+RUNTIME_GUARD='*/5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard'
+LOG_HYGIENE='*/30 * * * * /usr/sbin/multica-log-hygiene #multica log hygiene'
 
-mkdir -p "$(dirname "$CRONTAB_FILE")"
-touch "$CRONTAB_FILE"
+case "$CRONTAB_FILE" in
+	*/*)
+		cron_dir=${CRONTAB_FILE%/*}
+		[ -n "$cron_dir" ] || cron_dir=/
+		cron_name=${CRONTAB_FILE##*/}
+		;;
+	*)
+		cron_dir=.
+		cron_name=$CRONTAB_FILE
+		;;
+esac
 
-# Migrate only the exact schedule owned by this firmware. Preserve an
-# administrator's custom agent-runtime schedule if one already exists.
-if grep -Fqx "$AUTO_UPGRADE_OLD" "$CRONTAB_FILE" 2>/dev/null; then
-	cron_tmp="${CRONTAB_FILE}.tmp.$$"
-	awk -v old="$AUTO_UPGRADE_OLD" -v new="$AUTO_UPGRADE_NEW" \
-		'{ if ($0 == old) print new; else print }' "$CRONTAB_FILE" >"$cron_tmp" &&
-		mv -f "$cron_tmp" "$CRONTAB_FILE"
-elif ! grep -Fq '/usr/sbin/agent-runtime-auto-upgrade' "$CRONTAB_FILE" 2>/dev/null; then
-	printf '%s\n' "$AUTO_UPGRADE_NEW" >>"$CRONTAB_FILE"
+cron_tmp=''
+cleanup_cron_tmp() {
+	[ -n "$cron_tmp" ] || return 0
+	rm -f "$cron_tmp" >/dev/null 2>&1 || true
+}
+fail_cron_update() {
+	printf '%s\n' "multica-maintenance-cron: $*" >&2
+	exit 1
+}
+trap cleanup_cron_tmp 0
+trap 'exit 1' 1 2 15
+
+mkdir -p "$cron_dir" || fail_cron_update "cannot create $cron_dir"
+touch "$CRONTAB_FILE" || fail_cron_update "cannot create or update $CRONTAB_FILE"
+
+# Build the complete replacement beside the destination. Every active schedule
+# for this owned command is removed first, so old, new, custom, duplicate, and
+# mixed inputs all converge to one canonical 03:07 entry. Comments and every
+# unrelated cron entry retain their original content.
+cron_tmp="$cron_dir/.${cron_name}.tmp.$$"
+(umask 077; : >"$cron_tmp") || fail_cron_update "cannot create temporary crontab"
+awk -v command="$AUTO_UPGRADE_COMMAND" '
+	$1 !~ /^#/ && $6 == command { next }
+	{ print }
+' "$CRONTAB_FILE" >"$cron_tmp" || fail_cron_update "cannot filter existing crontab"
+
+printf '%s\n' "$AUTO_UPGRADE_NEW" >>"$cron_tmp" ||
+	fail_cron_update "cannot append the canonical auto-upgrade schedule"
+
+grep -Fq '#multica runtime guard' "$cron_tmp" 2>/dev/null
+grep_status=$?
+if [ "$grep_status" -eq 1 ]; then
+	printf '%s\n' "$RUNTIME_GUARD" >>"$cron_tmp" ||
+		fail_cron_update "cannot append the runtime guard schedule"
+elif [ "$grep_status" -ne 0 ]; then
+	fail_cron_update "cannot inspect the runtime guard schedule"
 fi
 
-grep -Fq '#multica runtime guard' "$CRONTAB_FILE" 2>/dev/null ||
-	printf '%s\n' '*/5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard' >>"$CRONTAB_FILE"
-grep -Fq '#multica log hygiene' "$CRONTAB_FILE" 2>/dev/null ||
-	printf '%s\n' '*/30 * * * * /usr/sbin/multica-log-hygiene #multica log hygiene' >>"$CRONTAB_FILE"
+grep -Fq '#multica log hygiene' "$cron_tmp" 2>/dev/null
+grep_status=$?
+if [ "$grep_status" -eq 1 ]; then
+	printf '%s\n' "$LOG_HYGIENE" >>"$cron_tmp" ||
+		fail_cron_update "cannot append the log hygiene schedule"
+elif [ "$grep_status" -ne 0 ]; then
+	fail_cron_update "cannot inspect the log hygiene schedule"
+fi
+
+# Validate the staged file before publication. Exactly one active invocation
+# must remain, and it must be the byte-exact canonical line.
+awk -v command="$AUTO_UPGRADE_COMMAND" -v canonical="$AUTO_UPGRADE_NEW" '
+	$1 !~ /^#/ && $6 == command {
+		owned++
+		if ($0 == canonical) exact++
+	}
+	END { exit !(owned == 1 && exact == 1) }
+' "$cron_tmp" || fail_cron_update "staged crontab failed validation"
+
+mv -f "$cron_tmp" "$CRONTAB_FILE" || fail_cron_update "cannot publish the staged crontab"
+cron_tmp=''
 
 [ -x /etc/init.d/cron ] && /etc/init.d/cron restart >/dev/null 2>&1 || true
 exit 0
