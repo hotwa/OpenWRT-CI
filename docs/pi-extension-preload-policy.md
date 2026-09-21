@@ -19,6 +19,7 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 | `pi-commandcode-provider` | latest | Pi 调用 CommandCode provider |
 | `pi-agent-modes` | latest | 支持 `--modes yolo` 无人值守模式，Multica agent 通过 `--custom-args` 启用；交互式 pi 保持正常模式 |
 | `pi-web-search` | latest | 联网搜索 |
+| `pi-undo-redo` | latest | `/undo`、`/redo` 与工作区快照；非 Git 目录只覆盖显式 `write`/`edit` 路径 |
 | `pi-mcp-adapter` | latest | MCP 适配器；每次由实际导入校验决定是否放行 |
 | `pi-lsp` | latest | LSP 诊断与导航；仅在受信配置声明语言服务器后启动外部进程 |
 | `pi-cost` / `pi-inspect` | latest | 成本与会话检查面板；只在显式启动命令后监听本机 5461/5462 |

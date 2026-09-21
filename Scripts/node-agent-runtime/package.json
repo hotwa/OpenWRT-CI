@@ -22,6 +22,7 @@
     "pi-cost": "latest",
     "pi-package-manager": "latest",
     "pi-subagents": "latest",
+    "pi-undo-redo": "latest",
     "pi-web-search": "latest",
     "pi-wechat-assistant": "latest",
     "pnpm": "latest"
@@ -33,6 +34,7 @@
     "pi-commandcode-provider",
     "pi-agent-modes",
     "pi-web-search",
+    "pi-undo-redo",
     "pi-wechat-assistant",
     "pi-mcp-adapter",
     "pi-subagents",

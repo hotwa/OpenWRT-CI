@@ -44,6 +44,12 @@ function packageEntries(root, name) {
       // one-level child directories that expose index.{ts,js,...}.
       const modulePattern = /\.(?:[cm]?[jt]s)$/;
       const discovered = [];
+      // A directory with an explicit index is one extension package entry;
+      // sibling files are its implementation modules, not extra extensions.
+      for (const indexName of ['index.ts', 'index.js', 'index.mts', 'index.mjs', 'index.cts', 'index.cjs']) {
+        const indexPath = path.join(resolved, indexName);
+        if (fs.existsSync(indexPath)) return [indexPath];
+      }
       for (const child of fs.readdirSync(resolved, { withFileTypes: true })
         .filter(item => !item.name.startsWith('.'))
         .sort((left, right) => left.name.localeCompare(right.name))) {
