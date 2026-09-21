@@ -200,6 +200,8 @@ on:
         required: false
       CLIPROXYAPI_API_KEY:
         required: false
+      SAMBA_DEFAULT_PASSWORD:
+        required: false
       CLIPROXYAPI_BASE_URL:
         required: false
 env:
@@ -596,6 +598,8 @@ jobs:
 
       - name: Custom Packages and Agent Runtimes
         id: custom_packages
+        env:
+          SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
         run: |
           cd ./wrt/package/
 
@@ -743,6 +747,7 @@ jobs:
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
           cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
+          cp -f ./files/etc/uci-defaults/96-samba-default-user ./wrt/files/etc/uci-defaults/96-samba-default-user
           cp -f ./files/etc/uci-defaults/99-enable-nikki-dns-failopen ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen
           mkdir -p ./wrt/files/etc/agent-tools
           cp -f ./files/etc/agent-tools/README.md ./wrt/files/etc/agent-tools/README.md
@@ -783,6 +788,7 @@ jobs:
             ./wrt/files/etc/uci-defaults/93-logd-ring-size \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
             ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron \
+            ./wrt/files/etc/uci-defaults/96-samba-default-user \
             ./wrt/files/etc/uci-defaults/98-provision-emmc-data \
             ./wrt/files/etc/uci-defaults/99-auto-mount-data \
             ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
@@ -812,6 +818,21 @@ jobs:
             echo "ERROR: data runtime init script is missing" >&2
             exit 1
           }
+
+          if grep -Fxq 'CONFIG_PACKAGE_luci-app-samba4=y' "./Config/$WRT_CONFIG.txt" ./Config/GENERAL.txt; then
+            if command -v sudo >/dev/null 2>&1; then
+              sudo -E "$GITHUB_WORKSPACE/Scripts/generate_samba_credentials.sh" "$GITHUB_WORKSPACE/wrt"
+            else
+              "$GITHUB_WORKSPACE/Scripts/generate_samba_credentials.sh" "$GITHUB_WORKSPACE/wrt"
+            fi
+            {
+              echo 'WRT_PRIVATE_BUILD=true'
+              echo 'WRT_PRIVATE_BUILD_REASON=samba-default-credential'
+              echo 'WRT_ARTIFACT_PRIVACY_SUFFIX=private'
+            } >> "$GITHUB_ENV"
+          else
+            rm -f ./wrt/files/etc/uci-defaults/96-samba-default-user
+          fi
 
       - name: Inject Private Firmware Configuration
         if: inputs.WRT_FEATURE_OVERLAY == true

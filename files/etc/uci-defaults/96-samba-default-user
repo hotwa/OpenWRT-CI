@@ -1,0 +1,10 @@
+#!/bin/sh
+# Match the Unix account referenced by the build-generated Samba passdb.
+if ! grep -q '^smb:' /etc/passwd 2>/dev/null; then
+	uid=1000
+	while awk -F: -v wanted="$uid" '$3 == wanted { found=1 } END { exit !found }' /etc/passwd; do
+		uid=$((uid + 1))
+	done
+	printf 'smb:x:%s:65534:Samba user:/var:/bin/false\n' "$uid" >>/etc/passwd
+fi
+exit 0

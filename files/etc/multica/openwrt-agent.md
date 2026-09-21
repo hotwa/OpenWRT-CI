@@ -48,7 +48,7 @@
 - **Pi 默认权限**：Pi 是只读诊断/规划助手。默认仅允许采集状态、阅读配置、生成计划及提出命令；任何写配置、重启服务、安装软件、删除文件或网络变更，都必须由用户针对该操作明确确认后才可执行。
 - **透明代理与分流**：`luci-app-nikki`（Sing-box / Clash-Meta 内核）+ `mosdns` 双层 DNS 分流。
 - **运行时自动维护**：若 `multica.main.auto_runtime_upgrade='1'`（固件默认值），每天
-  凌晨 03:00 先由 `/usr/sbin/agent-runtime-auto-upgrade` 执行签名 release 检查；仅在
+  凌晨 03:07 由 `/usr/sbin/agent-runtime-auto-upgrade` 执行签名 release 检查（避开整点维护锁竞争）；仅在
   没有活跃 Agent 任务且确有兼容新版时升级。日志写入 `/data/multica/logs/agent-runtime.log`。
   `agent-runtime` 自己负责锁、验签、哈希、原子切换、Multica 重启和失败回滚；设置为
   `0` 可暂停自动升级。

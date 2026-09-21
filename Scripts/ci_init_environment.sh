@@ -52,7 +52,7 @@ APT_CMD_TIMEOUT=120 aptx_retry clean || echo "WARN: apt clean failed (non-fatal)
 
 # 4) host build prerequisites (fatal if the toolchain bits cannot install).
 echo "== [env] apt install build prerequisites =="
-aptx_retry install dos2unix libfuse-dev libncurses-dev libncursesw5-dev libssl-dev libelf-dev musl musl-tools qemu-user qemu-user-static \
+aptx_retry install dos2unix libfuse-dev libncurses-dev libncursesw5-dev libssl-dev libelf-dev musl musl-tools qemu-user qemu-user-static samba \
 	|| { echo "::error::apt install of build prerequisites failed"; exit 1; }
 
 # 5) bundled ImmortalWrt environment bootstrap (needs root; runs under the

@@ -7,11 +7,12 @@ set -u
 
 CONFIG="multica"
 SECTION="main"
-DATA_DIR="/data/multica"
+DATA_ROOT="${DATA_ROOT:-/data}"
+DATA_DIR="${DATA_DIR:-$DATA_ROOT/multica}"
 LOG_DIR="$DATA_DIR/logs"
 LOG_FILE="$LOG_DIR/agent-runtime.log"
-LOCK_DIR="/var/run/multica-maintenance.lock"
-RUNTIME_BIN="/usr/sbin/agent-runtime"
+LOCK_DIR="${LOCK_DIR:-/var/run/multica-maintenance.lock}"
+RUNTIME_BIN="${RUNTIME_BIN:-/usr/sbin/agent-runtime}"
 
 log() {
 	local message="$*"
@@ -19,6 +20,7 @@ log() {
 		printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date)" "$message" >>"$LOG_FILE"
 	fi
 	logger -t agent-runtime-auto-upgrade -- "$message" 2>/dev/null || true
+	printf '%s\n' "$message"
 }
 
 cfg() {
@@ -54,7 +56,7 @@ main() {
 	esac
 
 	[ -x "$RUNTIME_BIN" ] || { log "agent-runtime manager unavailable"; return 0; }
-	[ -d /data ] && [ -w /data ] || { log "skipping runtime check because /data is unavailable"; return 0; }
+	[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ] || { log "skipping runtime check because /data is unavailable"; return 0; }
 	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
 		log "another Multica maintenance task is already running"
 		return 0

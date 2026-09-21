@@ -7,7 +7,7 @@ npm_config_cache=/data/cache/npm
 NPM_CONFIG_USERCONFIG=/etc/npmrc
 
 # Check the signed agent-runtime release during the low-traffic maintenance window.
-0 3 * * * /usr/sbin/agent-runtime-auto-upgrade
+7 3 * * * /usr/sbin/agent-runtime-auto-upgrade
 */5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard
 */30 * * * * /usr/sbin/multica-log-hygiene #multica log hygiene
 */30 * * * * /usr/sbin/pi-cliproxyapi-catalog-probe #refresh CLIProxyAPI model catalog

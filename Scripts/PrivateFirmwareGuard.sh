@@ -63,6 +63,12 @@ if [ -s "$headscale_authkey" ]; then
 	add_reason headscale-authkey
 fi
 
+# Build-time Samba credentials are paired binary databases. Their contents
+# are secret even though no plaintext password is present in the overlay.
+if [ -s "$TARGET_FILES/etc/samba/passdb.tdb" ] || [ -s "$TARGET_FILES/etc/samba/secrets.tdb" ]; then
+	add_reason samba-default-credential
+fi
+
 multica_config="$TARGET_FILES/etc/config/multica"
 if [ -r "$multica_config" ]; then
 	multica_token="$(uci_option_value "$multica_config" multica main token)"

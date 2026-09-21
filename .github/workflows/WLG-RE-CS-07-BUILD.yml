@@ -27,6 +27,7 @@ jobs:
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+      SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH || false }}
       WRT_CONFIG: IPQ60XX-RE-CS-07-NOWIFI

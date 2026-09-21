@@ -14,7 +14,11 @@
 - `/data/smb`：Samba 文件目录，与智能体状态隔离；
 - `/opt/data -> /data`、`/opt/smb -> /data/smb`：仅为人工管理提供的兼容链接。
 
-Samba 共享本身仍需要在 LuCI 中配置用户和权限；固件不会创建匿名可写共享。
+Samba 共享本身仍需要在 LuCI 中配置路径和权限；固件不会创建匿名可写共享。启用
+`luci-app-samba4` 的构建会在 CI 中生成配套的 `passdb.tdb`/`secrets.tdb`，并创建
+Unix 用户 `smb`。密码仅从 GitHub Actions 加密 Secret `SAMBA_DEFAULT_PASSWORD`
+注入，含这些数据库的固件必须按 private artifact 处理。所有此类镜像共享固定机器
+SID；轮换 SID 时必须同时重新生成并替换两份 TDB，禁止单独替换其中一个。
 
 ## 自动分区门槛
 

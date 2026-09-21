@@ -1,9 +1,22 @@
 #!/bin/sh
 
-CRONTAB_FILE="/etc/crontabs/root"
+CRONTAB_FILE="${CRONTAB_FILE:-/etc/crontabs/root}"
+AUTO_UPGRADE_OLD='0 3 * * * /usr/sbin/agent-runtime-auto-upgrade'
+AUTO_UPGRADE_NEW='7 3 * * * /usr/sbin/agent-runtime-auto-upgrade'
 
-mkdir -p /etc/crontabs
+mkdir -p "$(dirname "$CRONTAB_FILE")"
 touch "$CRONTAB_FILE"
+
+# Migrate only the exact schedule owned by this firmware. Preserve an
+# administrator's custom agent-runtime schedule if one already exists.
+if grep -Fqx "$AUTO_UPGRADE_OLD" "$CRONTAB_FILE" 2>/dev/null; then
+	cron_tmp="${CRONTAB_FILE}.tmp.$$"
+	awk -v old="$AUTO_UPGRADE_OLD" -v new="$AUTO_UPGRADE_NEW" \
+		'{ if ($0 == old) print new; else print }' "$CRONTAB_FILE" >"$cron_tmp" &&
+		mv -f "$cron_tmp" "$CRONTAB_FILE"
+elif ! grep -Fq '/usr/sbin/agent-runtime-auto-upgrade' "$CRONTAB_FILE" 2>/dev/null; then
+	printf '%s\n' "$AUTO_UPGRADE_NEW" >>"$CRONTAB_FILE"
+fi
 
 grep -Fq '#multica runtime guard' "$CRONTAB_FILE" 2>/dev/null ||
 	printf '%s\n' '*/5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard' >>"$CRONTAB_FILE"
