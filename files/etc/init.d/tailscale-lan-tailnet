@@ -42,6 +42,142 @@ ensure_default_option() {
 	changed=1
 }
 
+FIREWALL_CONFIG_DIR="${FIREWALL_CONFIG_DIR:-/etc/config}"
+FIREWALL_UCI_DEFAULT_SAVEDIR="${FIREWALL_UCI_DEFAULT_SAVEDIR:-/tmp/.uci}"
+
+cleanup_uci_confdir=''
+cleanup_uci_override_dir=''
+cleanup_uci_savedir=''
+cleanup_uci_package=''
+
+cleanup_uci() {
+	[ -n "$cleanup_uci_confdir" ] || return 1
+	[ -n "$cleanup_uci_override_dir" ] || return 1
+	[ -n "$cleanup_uci_savedir" ] || return 1
+	[ -n "$cleanup_uci_package" ] || return 1
+	[ ! -e "$FIREWALL_UCI_DEFAULT_SAVEDIR/$cleanup_uci_package" ] || return 1
+	[ ! -L "$FIREWALL_UCI_DEFAULT_SAVEDIR/$cleanup_uci_package" ] || return 1
+	uci -c "$cleanup_uci_confdir" -C "$cleanup_uci_override_dir" \
+		-t "$cleanup_uci_savedir" "$@"
+}
+
+cleanup_uci_transaction() {
+	local transaction_dir="$1"
+	local candidate_package="$2"
+
+	[ -n "$transaction_dir" ] || return 0
+	# Remove only the exact files and empty directories created by this
+	# transaction. Never recurse over a computed path.
+	[ -n "$candidate_package" ] && {
+		rm -f "$transaction_dir/delta/$candidate_package" 2>/dev/null || true
+		rm -f "$transaction_dir/$candidate_package" 2>/dev/null || true
+	}
+	rmdir "$transaction_dir/override" 2>/dev/null || true
+	rmdir "$transaction_dir/delta" 2>/dev/null || true
+	rmdir "$transaction_dir" 2>/dev/null || true
+}
+
+delete_option() {
+	local option="$1"
+	local candidate_option
+
+	candidate_option="$cleanup_uci_package.${option#firewall.}"
+
+	if ! cleanup_uci -q get "$candidate_option" >/dev/null 2>&1; then
+		# Missing legacy options are expected. A package-level lookup must still
+		# succeed so parse/I/O/namespace errors are not mistaken for absence.
+		if ! cleanup_uci -q get "$cleanup_uci_package" >/dev/null 2>&1; then
+			logger -t tailscale-lan-tailnet "failed to inspect isolated firewall candidate"
+			return 1
+		fi
+		return 0
+	fi
+
+	if ! cleanup_uci -q delete "$candidate_option"; then
+		logger -t tailscale-lan-tailnet "failed to delete legacy UCI option: $option"
+		return 1
+	fi
+	changed=1
+}
+
+cleanup_legacy_firewall_options() {
+	local option transaction_dir transaction_suffix candidate_path
+
+	changed=0
+	cleanup_uci_confdir=''
+	cleanup_uci_override_dir=''
+	cleanup_uci_savedir=''
+	cleanup_uci_package=''
+	[ -f "$FIREWALL_CONFIG_DIR/firewall" ] || {
+		logger -t tailscale-lan-tailnet "committed firewall UCI file is unavailable"
+		return 1
+	}
+	transaction_dir="$(mktemp -d "$FIREWALL_CONFIG_DIR/.tailscale-fw.XXXXXX")" || {
+		logger -t tailscale-lan-tailnet "failed to create isolated UCI transaction"
+		return 1
+	}
+	transaction_suffix="${transaction_dir##*.}"
+	cleanup_uci_package="tailscale_fw_$transaction_suffix"
+	cleanup_uci_confdir="$transaction_dir"
+	cleanup_uci_override_dir="$transaction_dir/override"
+	cleanup_uci_savedir="$transaction_dir/delta"
+	candidate_path="$transaction_dir/$cleanup_uci_package"
+	if ! mkdir "$cleanup_uci_override_dir" "$cleanup_uci_savedir" ||
+		! chmod 0700 "$cleanup_uci_override_dir" "$cleanup_uci_savedir" ||
+		! ln -s ../firewall "$candidate_path"; then
+		logger -t tailscale-lan-tailnet "failed to prepare isolated UCI transaction"
+		cleanup_uci_transaction "$transaction_dir" "$cleanup_uci_package"
+		return 1
+	fi
+	if [ -e "$FIREWALL_UCI_DEFAULT_SAVEDIR/$cleanup_uci_package" ] ||
+		[ -L "$FIREWALL_UCI_DEFAULT_SAVEDIR/$cleanup_uci_package" ] ||
+		[ "$(readlink "$candidate_path" 2>/dev/null)" != '../firewall' ]; then
+		logger -t tailscale-lan-tailnet "refusing non-isolated UCI transaction namespace"
+		cleanup_uci_transaction "$transaction_dir" "$cleanup_uci_package"
+		return 1
+	fi
+
+	# The random package symlink resolves to the committed firewall file, but
+	# has its own empty override and delta namespaces. libuci therefore cannot
+	# read or flush /tmp/.uci/firewall. Its normal commit path still locks the
+	# real file, reloads it under that lock, fsyncs, and atomically renames the
+	# candidate on the same filesystem.
+	for option in \
+		firewall.tailscale_lan_to_tailnet.tailscale_lan_to_tailnet \
+		firewall.tailscale_lan_to_tailnet.cidr4 \
+		firewall.tailscale_lan_to_tailnet.cidr6 \
+		firewall.tailscale_tailnet_to_lan.tailscale_tailnet_to_lan; do
+		if ! delete_option "$option"; then
+			cleanup_uci_transaction "$transaction_dir" "$cleanup_uci_package"
+			cleanup_uci_confdir=''
+			cleanup_uci_override_dir=''
+			cleanup_uci_savedir=''
+			cleanup_uci_package=''
+			return 1
+		fi
+	done
+
+	if [ "$changed" -eq 1 ]; then
+		if ! cleanup_uci commit "$cleanup_uci_package"; then
+			logger -t tailscale-lan-tailnet "failed to commit legacy firewall option cleanup"
+			cleanup_uci_transaction "$transaction_dir" "$cleanup_uci_package"
+			cleanup_uci_confdir=''
+			cleanup_uci_override_dir=''
+			cleanup_uci_savedir=''
+			cleanup_uci_package=''
+			return 1
+		fi
+		firewall_changed=1
+	fi
+
+	cleanup_uci_transaction "$transaction_dir" "$cleanup_uci_package"
+	cleanup_uci_confdir=''
+	cleanup_uci_override_dir=''
+	cleanup_uci_savedir=''
+	cleanup_uci_package=''
+	return 0
+}
+
 ensure_list_entry() {
 	local option="$1"
 	local value="$2"
@@ -120,10 +256,8 @@ ensure_dropbear_access() {
 }
 
 apply_firewall() {
-	local cidr4="$1"
-	local cidr6="$2"
-	local masq="$3"
-	local tailnet_to_lan="$4"
+	local masq="$1"
+	local tailnet_to_lan="$2"
 
 	# Static policy markers for audits:
 	# firewall.tailscale.input='ACCEPT'
@@ -132,8 +266,8 @@ apply_firewall() {
 	# firewall.tailscale.masq
 	# src='lan'
 	# dest='tailscale'
-	# tailscale_lan_to_tailnet='1'
-	# tailscale_tailnet_to_lan='1'
+	# CIDR and policy state live in tailscale.lan_to_tailnet.  Keep the
+	# forwarding sections limited to options understood by fw4.
 	changed=0
 	ensure_option "firewall.tailscale" "zone"
 	ensure_option "firewall.tailscale.name" "tailscale"
@@ -159,12 +293,6 @@ apply_firewall() {
 	ensure_option "firewall.tailscale_lan_to_tailnet.src" "lan"
 	ensure_option "firewall.tailscale_lan_to_tailnet.dest" "tailscale"
 	ensure_option "firewall.tailscale_lan_to_tailnet.enabled" "1"
-	ensure_option "firewall.tailscale_lan_to_tailnet.tailscale_lan_to_tailnet" "1"
-
-	# Keep these documented in UCI for operator visibility; fw4 routes the
-	# forwarding by zone, while Nikki/DAE generated rules keep the CIDRs direct.
-	ensure_option "firewall.tailscale_lan_to_tailnet.cidr4" "$cidr4"
-	ensure_option "firewall.tailscale_lan_to_tailnet.cidr6" "$cidr6"
 
 	# Keep the zone default at REJECT. This is the only reverse forwarding
 	# allowed by the private Mesh profile; Headscale ACLs remain the access
@@ -173,7 +301,6 @@ apply_firewall() {
 	ensure_option "firewall.tailscale_tailnet_to_lan.src" "tailscale"
 	ensure_option "firewall.tailscale_tailnet_to_lan.dest" "lan"
 	ensure_option "firewall.tailscale_tailnet_to_lan.enabled" "$tailnet_to_lan"
-	ensure_option "firewall.tailscale_tailnet_to_lan.tailscale_tailnet_to_lan" "$tailnet_to_lan"
 
 	if [ "$changed" -eq 1 ]; then
 		uci commit firewall
@@ -239,27 +366,39 @@ reload_services() {
 }
 
 start() {
-	local enabled tailnet_to_lan cidr4 cidr6 dns_domain magicdns masq
+	local enabled tailnet_to_lan dns_domain magicdns masq
 
 	command -v uci >/dev/null 2>&1 || return 0
 	ensure_tailscale_config
 	ensure_dropbear_access
 	config_load tailscale
 	config_get enabled lan_to_tailnet enabled '0'
-	[ "$enabled" = '1' ] || return 0
+	# Older images stored private audit metadata in fw4 forwarding sections.
+	# fw4 ignores those fields but warns on every reload. Remove them on every
+	# reconciliation, including when the gateway policy is currently disabled;
+	# the authoritative CIDRs and switches remain under tailscale.lan_to_tailnet.
+	cleanup_legacy_firewall_options || return 1
+	if [ "$enabled" != '1' ]; then
+		if [ "$tailscale_changed" -eq 1 ] || [ "$dropbear_changed" -eq 1 ] ||
+			[ "$firewall_changed" -eq 1 ]; then
+			logger -t tailscale-lan-tailnet "reconciled managed LAN/Tailnet settings while gateway policy is disabled"
+		fi
+		# A successful cleanup commit must be reflected in the running fw4
+		# configuration even when policy creation is intentionally skipped.
+		reload_services
+		return 0
+	fi
 	config_get tailnet_to_lan "$SECTION" tailnet_to_lan '1'
 	case "$tailnet_to_lan" in
 		1|true|yes|on) tailnet_to_lan=1 ;;
 		*) tailnet_to_lan=0 ;;
 	esac
 
-	config_get cidr4 "$SECTION" cidr4 "$DEFAULT_CIDR4"
-	config_get cidr6 "$SECTION" cidr6 "$DEFAULT_CIDR6"
 	config_get dns_domain "$SECTION" dns_domain "$DEFAULT_DNS_DOMAIN"
 	config_get magicdns "$SECTION" magicdns "$DEFAULT_MAGICDNS"
 	config_get masq "$SECTION" masq '1'
 
-	apply_firewall "$cidr4" "$cidr6" "$masq" "$tailnet_to_lan"
+	apply_firewall "$masq" "$tailnet_to_lan"
 	apply_dnsmasq "$dns_domain" "$magicdns"
 	reapply_dns_guard
 	reapply_nikki_guard
