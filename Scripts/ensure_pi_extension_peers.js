@@ -40,6 +40,13 @@ if (!catalog.dependencies || typeof catalog.dependencies !== 'object') die('cata
 if (!Array.isArray(catalog.openwrtPiExtensions) || catalog.openwrtPiExtensions.length === 0) {
   die('catalog has no openwrtPiExtensions list');
 }
+if (catalog.openwrtPiLazyExtensions !== undefined && !Array.isArray(catalog.openwrtPiLazyExtensions)) {
+  die('catalog openwrtPiLazyExtensions must be an array when present');
+}
+const allPiExtensions = [...new Set([
+  ...catalog.openwrtPiExtensions,
+  ...(catalog.openwrtPiLazyExtensions || []),
+])];
 for (const [name, selector] of Object.entries(catalog.dependencies)) {
   if (selector !== 'latest') die(`catalog dependency ${name} must use latest, got ${JSON.stringify(selector)}`);
 }
@@ -72,7 +79,7 @@ function readPackage(name) {
 
 function peerNames() {
   const peers = new Set([piPackage]);
-  for (const extension of catalog.openwrtPiExtensions) {
+  for (const extension of allPiExtensions) {
     const { pkg } = readPackage(extension);
     for (const group of [pkg.peerDependencies, pkg.dependencies, pkg.optionalDependencies]) {
       for (const name of Object.keys(group || {})) {
@@ -142,7 +149,7 @@ for (const name of Object.keys(catalog.dependencies).sort()) components[name] = 
 const resolved = {
   schema_version: 1,
   pi_version: piVersion,
-  extension_packages: Object.fromEntries(catalog.openwrtPiExtensions.map(name => [name, components[name]])),
+  extension_packages: Object.fromEntries(allPiExtensions.map(name => [name, components[name]])),
   aligned_peers: peers,
   components,
 };

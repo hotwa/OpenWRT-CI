@@ -91,6 +91,13 @@ if (!fs.existsSync(catalogPath)) die(`missing catalog: ${catalogPath}`);
 if (!fs.existsSync(nodeModules)) die(`missing node_modules: ${nodeModules}`);
 const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 if (!Array.isArray(catalog.openwrtPiExtensions)) die('catalog has no openwrtPiExtensions list');
+if (catalog.openwrtPiLazyExtensions !== undefined && !Array.isArray(catalog.openwrtPiLazyExtensions)) {
+  die('catalog openwrtPiLazyExtensions must be an array when present');
+}
+const allPiExtensions = [...new Set([
+  ...catalog.openwrtPiExtensions,
+  ...(catalog.openwrtPiLazyExtensions || []),
+])];
 
 const piRoot = path.join(nodeModules, '@earendil-works', 'pi-coding-agent');
 const piManifestPath = path.join(piRoot, 'package.json');
@@ -174,7 +181,7 @@ async function verify(name, entry) {
 }
 
 (async () => {
-  for (const name of catalog.openwrtPiExtensions) {
+  for (const name of allPiExtensions) {
     for (const entry of packageEntries(nodeModules, name)) await verify(name, entry);
   }
   console.log('PI EXTENSIONS OK');

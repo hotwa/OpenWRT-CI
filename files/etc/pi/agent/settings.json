@@ -13,7 +13,9 @@
     "pi-web-search",
     "pi-undo-redo",
     "pi-wechat-assistant",
+    "pi-lazy-extensions",
     "pi-mcp-adapter",
+    "pi-tool-search",
     "pi-subagents",
     "@capdiem/pi-todo",
     "@zephyrdeng/pi-review",
@@ -25,5 +27,9 @@
     "pi-cost",
     "@narumitw/pi-statusline"
   ],
+  "toolSearch": {
+    "alwaysEnabled": [],
+    "showToolSearchFooterStatus": false
+  },
   "autoUpdate": false
 }

@@ -17,12 +17,15 @@
     "pi-interactive-shell": "latest",
     "pi-inspect": "latest",
     "pi-lsp": "latest",
+    "pi-lazy-extensions": "latest",
     "pi-mcp-adapter": "latest",
     "pi-cache-graph": "latest",
     "pi-cost": "latest",
     "pi-package-manager": "latest",
     "pi-subagents": "latest",
     "pi-undo-redo": "latest",
+    "pi-tool-search": "latest",
+    "pi-web-access": "latest",
     "pi-web-search": "latest",
     "pi-wechat-assistant": "latest",
     "pnpm": "latest"
@@ -36,7 +39,9 @@
     "pi-web-search",
     "pi-undo-redo",
     "pi-wechat-assistant",
+    "pi-lazy-extensions",
     "pi-mcp-adapter",
+    "pi-tool-search",
     "pi-subagents",
     "@capdiem/pi-todo",
     "@zephyrdeng/pi-review",
@@ -47,5 +52,8 @@
     "pi-cache-graph",
     "pi-cost",
     "@narumitw/pi-statusline"
+  ],
+  "openwrtPiLazyExtensions": [
+    "pi-web-access"
   ]
 }

@@ -26,6 +26,7 @@ mkdir -p "$FW/pi/agent" "$FW/commandcode" "$FW/multica" "$FW/opencode"
 mkdir -p "$DATA" "$ROOT"
 
 cp "$ROOT_DIR/files/etc/pi/agent/settings.json" "$FW/pi/agent/settings.json"
+cp "$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json" "$FW/pi/agent/lazy-extensions.json"
 cat > "$FW/pi/agent/auth.json" <<'JSON'
 {"apiKey":"firmware-key-123"}
 JSON
@@ -193,6 +194,7 @@ start
 
 check "wait_data_mount sees /data mount" wait_data_mount
 check "/data/pi/agent/settings.json copied from firmware" test -f "$DATA/pi/agent/settings.json"
+check "/data/pi/agent/lazy-extensions.json copied from firmware" test -f "$DATA/pi/agent/lazy-extensions.json"
 check "/data/pi/agent/auth.json copied from firmware" test -f "$DATA/pi/agent/auth.json"
 check "/data/commandcode/auth.json matches firmware key" cmp -s "$FW/commandcode/auth.json" "$DATA/commandcode/auth.json"
 check "/root/.pi is symlink to /data/pi" test -L "$ROOT/.pi"

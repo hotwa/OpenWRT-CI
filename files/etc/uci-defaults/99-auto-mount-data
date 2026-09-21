@@ -794,7 +794,7 @@ prepare_agent_storage() {
 		cmp -s "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
 		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
-	for config_file in models.json settings.json auth.json commandcode-models.json; do
+	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json; do
 		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
 		cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
