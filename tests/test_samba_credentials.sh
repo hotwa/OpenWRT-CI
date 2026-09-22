@@ -434,7 +434,8 @@ if command -v smbpasswd >/dev/null 2>&1 && command -v pdbedit >/dev/null 2>&1 &&
 	# Mirror package/install as the non-root CI runner: mode-only assertions
 	# miss root-owned 0600 files that sudo can inspect but make cannot copy.
 	mkdir -p "$fixture/image-root"
-	# The generated databases are deliberately 0600 root:root. A hosted CI
+	# The generator keeps the databases 0600 but assigns SUDO_UID/GID, so a hosted
+	# CI runner can copy the staged overlay without weakening the credential mode.
 	cp -fpR "$fixture/files/." "$fixture/image-root/"
 	for database in passdb.tdb secrets.tdb; do
 		# The root-only generator restores SUDO_UID/GID to let the regular build
