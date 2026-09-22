@@ -48,6 +48,8 @@ done
 grep -Fq -- 'ensure_pi_extension_peers.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not align Pi peers"
 grep -Fq -- 'verify_pi_extensions.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not load-check Pi extensions"
 grep -Fq -- 'verify_pi_extension_conflicts.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not run Pi native conflict checks"
+grep -Fq "path.join(stagingDir, 'lib', 'node_modules')" "$CONFLICT_VERIFIER" || \
+  fail "Pi native conflict checker does not support installed signed generations"
 for term in '--ignore-scripts' '--legacy-peer-deps' 'PI EXTENSION DEPENDENCY TREE OK' 'PI EXTENSIONS OK'; do
   grep -Fq -- "$term" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" || fail "Pi extension build gate omits $term"
 done

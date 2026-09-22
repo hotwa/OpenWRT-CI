@@ -43,12 +43,26 @@ function isPackageName(name) {
 
 const options = parseArgs(process.argv);
 const stagingDir = path.resolve(options.directory);
-const nodeModules = path.join(stagingDir, 'node_modules');
-const catalogPath = fs.existsSync(path.join(stagingDir, 'package.json'))
-  ? path.join(stagingDir, 'package.json')
-  : path.join(stagingDir, 'agent-runtime-package.json');
-if (!fs.existsSync(nodeModules)) die(`missing node_modules: ${nodeModules}`);
-if (!fs.existsSync(catalogPath)) die(`missing catalog: ${catalogPath}`);
+// fetch_node_runtime.sh invokes this while dependencies are still in its npm
+// staging directory. The signed-generation probe invokes it after that tree
+// has been installed beneath Node's normal lib/node_modules location.
+const nodeModuleCandidates = [
+  path.join(stagingDir, 'node_modules'),
+  path.join(stagingDir, 'lib', 'node_modules'),
+];
+const nodeModules = nodeModuleCandidates.find(candidate => {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+});
+const catalogPath = [
+  path.join(stagingDir, 'package.json'),
+  path.join(stagingDir, 'agent-runtime-package.json'),
+].find(candidate => fs.existsSync(candidate));
+if (!nodeModules) die(`missing node_modules; checked: ${nodeModuleCandidates.join(', ')}`);
+if (!catalogPath) die(`missing package catalog under: ${stagingDir}`);
 
 const catalog = readJson(catalogPath, 'catalog');
 const settings = readJson(path.resolve(options.settings), 'Pi settings');
