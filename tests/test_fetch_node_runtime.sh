@@ -8,6 +8,7 @@ UV_FETCH="$ROOT_DIR/Scripts/fetch_uv_runtime.sh"
 MANIFEST="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 PEER_RESOLVER="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
 EXTENSION_VERIFIER="$ROOT_DIR/Scripts/verify_pi_extensions.js"
+CONFLICT_VERIFIER="$ROOT_DIR/Scripts/verify_pi_extension_conflicts.js"
 MODELS="$ROOT_DIR/files/etc/pi/agent/models.json"
 SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
 LAZY_EXTENSIONS="$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json"
@@ -15,13 +16,14 @@ PROFILE_NODE="$ROOT_DIR/files/etc/profile.d/20-node-agent.sh"
 PROFILE_UPDATE="$ROOT_DIR/files/etc/profile.d/30-agent-update-check.sh"
 
 fail() { echo "node runtime guard: $*" >&2; exit 1; }
-for path in "$WORKFLOW" "$FETCH_SCRIPT" "$UV_FETCH" "$MANIFEST" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" "$MODELS" "$SETTINGS" "$LAZY_EXTENSIONS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
+for path in "$WORKFLOW" "$FETCH_SCRIPT" "$UV_FETCH" "$MANIFEST" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" "$CONFLICT_VERIFIER" "$MODELS" "$SETTINGS" "$LAZY_EXTENSIONS" "$PROFILE_NODE" "$PROFILE_UPDATE"; do
   [ -f "$path" ] || fail "missing $path"
 done
 bash -n "$FETCH_SCRIPT"
 bash -n "$UV_FETCH"
 node --check "$PEER_RESOLVER"
 node --check "$EXTENSION_VERIFIER"
+node --check "$CONFLICT_VERIFIER"
 [ ! -e "$ROOT_DIR/Scripts/node-agent-runtime/package-lock.json" ] ||
   fail "source catalog lockfile would freeze latest-at-build plugin resolution"
 
@@ -45,6 +47,7 @@ for term in 'linux-arm64-musl' 'linux-x64-musl' \
 done
 grep -Fq -- 'ensure_pi_extension_peers.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not align Pi peers"
 grep -Fq -- 'verify_pi_extensions.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not load-check Pi extensions"
+grep -Fq -- 'verify_pi_extension_conflicts.js' "$FETCH_SCRIPT" || fail "fetch_node_runtime.sh does not run Pi native conflict checks"
 for term in '--ignore-scripts' '--legacy-peer-deps' 'PI EXTENSION DEPENDENCY TREE OK' 'PI EXTENSIONS OK'; do
   grep -Fq -- "$term" "$PEER_RESOLVER" "$EXTENSION_VERIFIER" || fail "Pi extension build gate omits $term"
 done

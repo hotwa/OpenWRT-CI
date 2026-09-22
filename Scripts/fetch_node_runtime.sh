@@ -18,6 +18,7 @@ PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"
 PI_LAZY_EXTENSIONS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json"
 PI_EXTENSION_PEER_SCRIPT="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
 PI_EXTENSION_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extensions.js"
+PI_EXTENSION_CONFLICT_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extension_conflicts.js"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
 
 # Default Node.js target version (Node 24 LTS line)
@@ -280,7 +281,8 @@ preinstall_cli_agents_and_extensions() (
 	}
 	[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package.json" ] && \
 		[ -f "$PI_EXTENSION_PEER_SCRIPT" ] && \
-		[ -f "$PI_EXTENSION_VERIFY_SCRIPT" ] || {
+		[ -f "$PI_EXTENSION_VERIFY_SCRIPT" ] && \
+		[ -f "$PI_EXTENSION_CONFLICT_VERIFY_SCRIPT" ] || {
 		echo "ERROR: latest-at-build Pi extension resolver is incomplete" >&2
 		return 1
 	}
@@ -300,6 +302,8 @@ preinstall_cli_agents_and_extensions() (
 	node "$PI_EXTENSION_PEER_SCRIPT" --directory "$staging_dir" \
 		--os linux --cpu "$npm_arch" --libc musl
 	node "$PI_EXTENSION_VERIFY_SCRIPT" --directory "$staging_dir"
+	node "$PI_EXTENSION_CONFLICT_VERIFY_SCRIPT" --directory "$staging_dir" \
+		--settings "$PI_SETTINGS_TEMPLATE"
 
 	[ -d "$staging_dir/node_modules" ] || {
 		echo "ERROR: npm install completed without producing node_modules" >&2

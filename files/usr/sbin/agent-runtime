@@ -389,6 +389,37 @@ quarantine_runtime() {
 	log "quarantined incompatible generation $name"
 }
 
+verify_runtime_components() {
+	# The signed manifest records the exact versions of every direct Node
+	# component.  A manual `npm install -g` under /opt/node used to evade the
+	# executable probes below: Pi could report a newer package while its peers
+	# remained from the signed baseline.  Read only package metadata here; the
+	# archive signature and critical ELF digests cover the executable payload.
+	local runtime="$1" node_dir manifest node_modules
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	manifest="$runtime/manifest.json"
+	node_modules="$node_dir/lib/node_modules"
+	[ -n "$node_dir" ] && [ -x "$node_dir/bin/node" ] && \
+		[ -f "$manifest" ] && [ ! -L "$manifest" ] && \
+		[ -d "$node_modules" ] && [ ! -L "$node_modules" ] || return 1
+	"$node_dir/bin/node" - "$manifest" "$node_modules" <<'NODE' >/dev/null 2>&1
+const fs = require('node:fs');
+const path = require('node:path');
+const [manifestPath, nodeModules] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const components = manifest.components;
+const packageName = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
+if (!components || Array.isArray(components) || typeof components !== 'object') process.exit(1);
+for (const [name, expected] of Object.entries(components)) {
+  if (name === 'multica' || name === 'uv' || name === 'cpython') continue;
+  if (!packageName.test(name) || typeof expected !== 'string' || !expected) process.exit(1);
+  const packageJson = path.join(nodeModules, ...name.split('/'), 'package.json');
+  const installed = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+  if (installed.name !== name || installed.version !== expected) process.exit(1);
+}
+NODE
+}
+
 runtime_health() {
 	local runtime="$1" command node_dir uv_dir multica
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
@@ -404,6 +435,7 @@ runtime_health() {
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 			"$command" --version >/dev/null 2>&1 || return 1
 	done
+	verify_runtime_components "$runtime" || return 1
 	return 0
 }
 
@@ -778,7 +810,7 @@ case "${1:-}" in
 	list) emit true ok 'runtime generations' "$EX_OK" "$(do_list)" ;;
 	verify)
 		runtime="$(current_runtime)"
-		manifest_compatible "$runtime" && runtime_health "$runtime" || emit false health_failed 'active runtime verification failed' "$EX_HEALTH"
+		manifest_compatible "$runtime" && verify_critical_hashes "$runtime" && runtime_health "$runtime" || emit false health_failed 'active runtime verification failed' "$EX_HEALTH"
 		emit true ok 'active runtime verified' "$EX_OK" "$(do_status)"
 		;;
 	reconcile)

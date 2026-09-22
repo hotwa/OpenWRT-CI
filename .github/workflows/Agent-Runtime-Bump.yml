@@ -118,6 +118,8 @@ jobs:
             docker run --rm --platform "$platform" \
               -v "$RUNNER_TEMP/generation/$arch:/generation:ro" \
               -v "$GITHUB_WORKSPACE/Scripts/verify_pi_extensions.js:/verify_pi_extensions.js:ro" \
+              -v "$GITHUB_WORKSPACE/Scripts/verify_pi_extension_conflicts.js:/verify_pi_extension_conflicts.js:ro" \
+              -v "$GITHUB_WORKSPACE/files/etc/pi/agent/settings.json:/pi-settings.json:ro" \
               alpine:3.20 /bin/sh -ec '
               # The official musl Node binary links libgcc_s.so.1 and
               # libstdc++.so.6. OpenWrt provides both runtime libraries,
@@ -132,6 +134,7 @@ jobs:
               cd /generation/node/lib/node_modules
               test -s /generation/node/lib/node_modules/command-code/dist/index.mjs
               node /verify_pi_extensions.js --directory /generation/node
+              node /verify_pi_extension_conflicts.js --directory /generation/node --settings /pi-settings.json
               NODE_PATH=/generation/node/lib/node_modules node -e \
                 "require(\"@napi-rs/keyring\"); require(\"zigpty\");"
             '

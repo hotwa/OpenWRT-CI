@@ -72,6 +72,14 @@ export AGENT_DATA_PREP_FIRMWARE_ETC="$FW"
 export AGENT_DATA_PREP_PROC_MOUNTS="$MOUNTS"
 export AGENT_DATA_PREP_NODE_BIN="$(command -v node)"
 export AGENT_DATA_PREP_PI_SETTINGS_MERGER="$PI_SETTINGS_MERGER"
+FIRMWARE_NODE="$TMP_ROOT/firmware-node"
+mkdir -p "$FIRMWARE_NODE/lib/node_modules/pi-commandcode-provider"
+printf '%s\n' '{"name":"pi-commandcode-provider","version":"0.8.0"}' \
+	> "$FIRMWARE_NODE/lib/node_modules/pi-commandcode-provider/package.json"
+mkdir -p "$DATA/pi/agent/npm/node_modules/pi-commandcode-provider"
+printf '%s\n' '{"name":"pi-commandcode-provider","version":"0.7.1"}' \
+	> "$DATA/pi/agent/npm/node_modules/pi-commandcode-provider/package.json"
+export AGENT_DATA_PREP_PI_FIRMWARE_NODE_ROOT="$FIRMWARE_NODE"
 # shellcheck source=/dev/null
 . "$SCRIPT"
 
@@ -186,6 +194,8 @@ check "all-build data baseline includes agent-data-prep" \
 check "all-build data baseline includes npm config guards" npm_guards_in_all_builds
 check "all-build data baseline includes executable Pi settings merger" pi_settings_merger_in_all_builds
 check "Pi settings merger normalizes registry versions but preserves literal specs" pi_settings_registry_and_literal_specs
+check "agent-data-prep reconciles firmware Pi extension links every boot" \
+	grep -q 'reconcile_firmware_pi_extension_links' "$SCRIPT"
 
 # ---------------------------------------------------------------------------
 # 1. First run provisions everything
@@ -213,6 +223,12 @@ check "Pi settings merge preserves restrictive file mode" test "$(stat -c '%a' "
 check "Pi settings merge preserves file owner" test "$(stat -c '%u' "$DATA/pi/agent/settings.json")" = "$user_settings_uid"
 check "Pi settings merge preserves file group" test "$(stat -c '%g' "$DATA/pi/agent/settings.json")" = "$user_settings_gid"
 check "Pi settings merge leaves no temporary file" test -z "$(find "$DATA/pi/agent" -maxdepth 1 -name '.settings.json.new.*' -print)"
+check "stale firmware-managed Pi extension is replaced by a signed-runtime link" \
+	test -L "$DATA/pi/agent/npm/node_modules/pi-commandcode-provider"
+check "Pi extension link targets the current firmware runtime" \
+	test "$(readlink "$DATA/pi/agent/npm/node_modules/pi-commandcode-provider")" = "$FIRMWARE_NODE/lib/node_modules/pi-commandcode-provider"
+check "stale Pi extension is retained as a recovery backup" \
+	grep -rlq '"version":"0.7.1"' "$DATA/pi/agent/npm/node_modules"
 
 # ---------------------------------------------------------------------------
 # 2. Second run is idempotent (no symlink churn, no extra backups)
@@ -220,11 +236,14 @@ check "Pi settings merge leaves no temporary file" test -z "$(find "$DATA/pi/age
 pi_link_before="$(readlink "$ROOT/.pi")"
 npm_link_before="$(readlink "$ROOT/.npm")"
 backups_before="$(find "$DATA" -name '*.bak.*' | wc -l)"
+extension_backups_before="$(find "$DATA/pi/agent/npm/node_modules" -name '*.firmware-managed-backup.*' | wc -l)"
 settings_inode_before="$(stat -c '%i' "$DATA/pi/agent/settings.json")"
 start
 check "second run leaves /root/.pi symlink intact" test "$(readlink "$ROOT/.pi")" = "$pi_link_before"
 check "second run leaves /root/.npm symlink intact" test "$(readlink "$ROOT/.npm")" = "$npm_link_before"
 check "second run adds no new backups" test "$(find "$DATA" -name '*.bak.*' | wc -l)" = "$backups_before"
+check "second run adds no new Pi extension backups" \
+	test "$(find "$DATA/pi/agent/npm/node_modules" -name '*.firmware-managed-backup.*' | wc -l)" = "$extension_backups_before"
 check "second run does not duplicate auth files" test "$(find "$DATA/commandcode" -name 'auth.json*' | wc -l)" -ge 1
 check "second run does not rewrite already-merged Pi settings" test "$(stat -c '%i' "$DATA/pi/agent/settings.json")" = "$settings_inode_before"
 check "second run does not duplicate Pi packages" pi_settings_preserved_and_merged

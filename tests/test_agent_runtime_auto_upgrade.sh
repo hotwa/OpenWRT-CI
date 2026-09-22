@@ -11,6 +11,7 @@ LOG_HYGIENE="$ROOT_DIR/files/usr/sbin/multica-log-hygiene"
 RUNTIME_GUARD="$ROOT_DIR/files/usr/sbin/multica-runtime-guard"
 LOGD_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/93-logd-ring-size"
 CRON_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/95-multica-maintenance-cron"
+CRON_RECONCILER="$ROOT_DIR/files/usr/sbin/multica-maintenance-cron-reconcile"
 
 [ -x "$SCRIPT" ] || { echo "auto-upgrade wrapper is missing or not executable"; exit 1; }
 [ -f "$CRON" ] || { echo "nightly runtime cron is missing"; exit 1; }
@@ -24,13 +25,16 @@ sh -n "$LOG_HYGIENE"
 sh -n "$RUNTIME_GUARD"
 [ -x "$LOGD_DEFAULTS" ] || { echo "logd ring-size defaults are missing or not executable"; exit 1; }
 [ -x "$CRON_DEFAULTS" ] || { echo "Multica cron defaults are missing or not executable"; exit 1; }
+[ -f "$CRON_RECONCILER" ] || { echo "Multica cron reconciler is missing"; exit 1; }
 sh -n "$LOGD_DEFAULTS"
 sh -n "$CRON_DEFAULTS"
+sh -n "$CRON_RECONCILER"
 grep -Fq "system.@system[0].log_size=256" "$LOGD_DEFAULTS"
-grep -Fq '#multica runtime guard' "$CRON_DEFAULTS"
-grep -Fq '#multica log hygiene' "$CRON_DEFAULTS"
-grep -Fq "AUTO_UPGRADE_COMMAND='/usr/sbin/agent-runtime-auto-upgrade'" "$CRON_DEFAULTS"
-grep -Fq "AUTO_UPGRADE_NEW='7 3 * * * /usr/sbin/agent-runtime-auto-upgrade'" "$CRON_DEFAULTS"
+grep -Fq 'multica-maintenance-cron-reconcile' "$CRON_DEFAULTS"
+grep -Fq '#multica runtime guard' "$CRON_RECONCILER"
+grep -Fq '#multica log hygiene' "$CRON_RECONCILER"
+grep -Fq "AUTO_UPGRADE_COMMAND='/usr/sbin/agent-runtime-auto-upgrade'" "$CRON_RECONCILER"
+grep -Fq "AUTO_UPGRADE_NEW='7 3 * * * /usr/sbin/agent-runtime-auto-upgrade'" "$CRON_RECONCILER"
 
 cron_fixture="$(mktemp)"
 cron_failure_fixture="$(mktemp -d)"
@@ -42,16 +46,16 @@ printf '%s\n' \
 	'11 4 * * * /usr/sbin/agent-runtime-auto-upgrade' \
 	'# 0 3 * * * /usr/sbin/agent-runtime-auto-upgrade (historical note)' \
 	'1 2 * * * /usr/bin/unrelated' >"$cron_fixture"
-CRONTAB_FILE="$cron_fixture" sh "$CRON_DEFAULTS"
+CRONTAB_FILE="$cron_fixture" sh "$CRON_RECONCILER"
 grep -Fqx '7 3 * * * /usr/sbin/agent-runtime-auto-upgrade' "$cron_fixture"
 grep -Fqx '1 2 * * * /usr/bin/unrelated' "$cron_fixture"
 grep -Fqx '# 0 3 * * * /usr/sbin/agent-runtime-auto-upgrade (historical note)' "$cron_fixture"
 [ "$(awk '$1 !~ /^#/ && $6 == "/usr/sbin/agent-runtime-auto-upgrade" { count++ } END { print count + 0 }' "$cron_fixture")" -eq 1 ]
-CRONTAB_FILE="$cron_fixture" sh "$CRON_DEFAULTS"
+CRONTAB_FILE="$cron_fixture" sh "$CRON_RECONCILER"
 [ "$(awk '$1 !~ /^#/ && $6 == "/usr/sbin/agent-runtime-auto-upgrade" { count++ } END { print count + 0 }' "$cron_fixture")" -eq 1 ]
 
 printf '%s\n' '11 4 * * * /usr/sbin/agent-runtime-auto-upgrade' >"$cron_fixture"
-CRONTAB_FILE="$cron_fixture" sh "$CRON_DEFAULTS"
+CRONTAB_FILE="$cron_fixture" sh "$CRON_RECONCILER"
 grep -Fqx '7 3 * * * /usr/sbin/agent-runtime-auto-upgrade' "$cron_fixture"
 if grep -Fqx '11 4 * * * /usr/sbin/agent-runtime-auto-upgrade' "$cron_fixture"; then
 	echo "custom auto-upgrade schedule was not normalized" >&2
@@ -72,7 +76,7 @@ EOF
 chmod +x "$cron_failure_fixture/bin/mv"
 if PATH="$cron_failure_fixture/bin:$PATH" \
 	CRONTAB_FILE="$cron_failure_fixture/root" \
-	sh "$CRON_DEFAULTS" >/dev/null 2>&1; then
+	sh "$CRON_RECONCILER" >/dev/null 2>&1; then
 	echo "cron defaults succeeded despite an injected publish failure" >&2
 	exit 1
 fi
@@ -129,6 +133,7 @@ grep -Fq 'check: {"ok":true,"code":"no_update"}' "$runtime_fixture/unlocked.out"
 [ "$(wc -l <"$AGENT_RUNTIME_TEST_CALLS")" -eq 1 ]
 grep -Fq './files/etc/crontabs/root ./wrt/files/etc/crontabs/root' "$CORE"
 grep -Fq './files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade' "$CORE"
+grep -Fq './files/usr/sbin/multica-maintenance-cron-reconcile ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile' "$CORE"
 grep -Fq './files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene' "$CORE"
 grep -Fq './files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard' "$CORE"
 grep -Fq './files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size' "$CORE"

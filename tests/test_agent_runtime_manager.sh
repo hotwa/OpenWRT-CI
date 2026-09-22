@@ -26,7 +26,7 @@ sh -n "$UV_PROVISION"
 
 grep -Fq 'START=91' "$INIT" || fail "runtime reconcile boot order changed"
 grep -Fq 'agent-runtime reconcile --json' "$INIT" || fail "runtime reconcile missing"
-for term in 'generations' 'quarantine' 'flock -n 9' 'usign -V' 'archive_is_safe' 'links_are_safe' 'verify_critical_hashes' 'runtime_health' 'runtime_uv_dir' 'critical_uv'; do
+for term in 'generations' 'quarantine' 'flock -n 9' 'usign -V' 'archive_is_safe' 'links_are_safe' 'verify_critical_hashes' 'verify_runtime_components' 'runtime_health' 'runtime_uv_dir' 'critical_uv'; do
   grep -Fq "$term" "$MANAGER" || fail "manager omits $term"
 done
 for term in 'publish_pi_models' "vllm-qwen38"; do

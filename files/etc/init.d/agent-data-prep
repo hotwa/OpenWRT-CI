@@ -17,6 +17,7 @@ ROOT_HOME="${AGENT_DATA_PREP_HOME:-/root}"
 FIRMWARE_ETC="${AGENT_DATA_PREP_FIRMWARE_ETC:-/etc}"
 PROC_MOUNTS="${AGENT_DATA_PREP_PROC_MOUNTS:-/proc/mounts}"
 PI_SETTINGS_MERGER="${AGENT_DATA_PREP_PI_SETTINGS_MERGER:-/usr/sbin/pi-settings-merge.js}"
+PI_FIRMWARE_NODE_ROOT="${AGENT_DATA_PREP_PI_FIRMWARE_NODE_ROOT:-/opt/node}"
 PI_SETTINGS_MERGE_REWRITTEN=0
 PI_SETTINGS_MERGED_STATE=""
 
@@ -282,6 +283,87 @@ reconcile_pi_settings_packages() {
 	return 0
 }
 
+reconcile_multica_maintenance_cron() {
+	# sysupgrade retains executed uci-defaults markers and the old crontab, so
+	# a one-shot migration cannot repair pre-03:07 images. This service remains
+	# enabled on devices with retained /data and leaves unrelated cron entries
+	# untouched.
+	if [ -x /usr/sbin/multica-maintenance-cron-reconcile ]; then
+		/usr/sbin/multica-maintenance-cron-reconcile >/dev/null 2>&1 || \
+			log_warn "cannot reconcile Multica maintenance cron"
+	fi
+}
+
+pi_package_name() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 1
+	sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | sed -n '1p'
+}
+
+firmware_pi_extension_dir() {
+	local package_name="$1" candidate
+	for candidate in \
+		"$DATA_ROOT/agent-runtime/current/node/lib/node_modules/$package_name" \
+		"$PI_FIRMWARE_NODE_ROOT/lib/node_modules/$package_name"; do
+		[ -d "$candidate" ] && [ -f "$candidate/package.json" ] || continue
+		[ "$(pi_package_name "$candidate/package.json")" = "$package_name" ] || continue
+		printf '%s' "$candidate"
+		return 0
+	done
+	return 1
+}
+
+reconcile_firmware_pi_extension_link() {
+	# Pi resolves npm: extensions from /data first. A real directory retained by
+	# sysupgrade can therefore pin a default extension long after its matching
+	# signed runtime moved forward. Preserve a timestamped copy, then atomically
+	# point this firmware-managed package at the selected immutable runtime.
+	local package_name="$1" node_modules link_path target temporary backup stamp
+	node_modules="$DATA_ROOT/pi/agent/npm/node_modules"
+	link_path="$node_modules/$package_name"
+	target="$(firmware_pi_extension_dir "$package_name" 2>/dev/null || true)"
+	[ -n "$target" ] || {
+		log_warn "firmware Pi extension is unavailable: $package_name"
+		return 0
+	}
+	ensure_real_directory "$DATA_ROOT/pi/agent/npm" || return 1
+	ensure_real_directory "$node_modules" || return 1
+	if [ -L "$link_path" ] && [ "$(readlink "$link_path" 2>/dev/null || true)" = "$target" ]; then
+		return 0
+	fi
+	if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+		[ "$(pi_package_name "$link_path/package.json" 2>/dev/null || true)" = "$package_name" ] || {
+			log_warn "refusing to replace non-firmware Pi extension path: $link_path"
+			return 0
+		}
+		stamp="$(date +%Y%m%d%H%M%S 2>/dev/null || echo migration)"
+		backup="$link_path.firmware-managed-backup.$stamp"
+		while [ -e "$backup" ] || [ -L "$backup" ]; do
+			backup="$backup.$$.next"
+		done
+		mv "$link_path" "$backup" || return 1
+	else
+		backup=''
+	fi
+	temporary="${link_path}.new.$$"
+	ln -s "$target" "$temporary" || {
+		[ -z "$backup" ] || mv "$backup" "$link_path" 2>/dev/null || true
+		return 1
+	}
+	if ! mv "$temporary" "$link_path"; then
+		rm -f "$temporary" 2>/dev/null || true
+		[ -z "$backup" ] || mv "$backup" "$link_path" 2>/dev/null || true
+		return 1
+	fi
+	log_info "linked firmware-managed Pi extension $package_name to $target"
+}
+
+reconcile_firmware_pi_extension_links() {
+	# These npm: sources are firmware-owned. Keep them inside the signed runtime
+	# even when sysupgrade retains an old manually installed copy on /data.
+	reconcile_firmware_pi_extension_link pi-commandcode-provider || \
+		log_warn "cannot reconcile pi-commandcode-provider"
+}
+
 start() {
 	if ! wait_data_mount; then
 		log_warn "skipped: $DATA_ROOT not mounted within 90s"
@@ -318,6 +400,7 @@ start() {
 	done
 
 	refresh_commandcode_auth || log_warn "cannot refresh CommandCode auth on /data"
+	reconcile_multica_maintenance_cron
 
 	# Multica role card (rendered role markdown used by both Multica and Pi).
 	if [ -r "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
@@ -367,6 +450,7 @@ start() {
 	# Reconcile packages only after that migration so retained sysupgrade data
 	# receives new defaults while all user settings remain authoritative.
 	reconcile_pi_settings_packages
+	reconcile_firmware_pi_extension_links
 
 	# Multica runtime_provider migration: sysupgrade keeps the previous UCI
 	# value (ebd46aa-era builds left runtime_provider='pi' via the init

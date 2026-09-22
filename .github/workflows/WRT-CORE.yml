@@ -777,6 +777,7 @@ jobs:
           cp -f ./files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
+          cp -f ./files/usr/sbin/multica-maintenance-cron-reconcile ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile
           cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
@@ -805,6 +806,7 @@ jobs:
             ./wrt/files/usr/sbin/agent-tools-link \
             ./wrt/files/usr/sbin/rclone-data-backup \
             ./wrt/files/usr/sbin/agent-runtime-auto-upgrade \
+            ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile \
             ./wrt/files/usr/sbin/multica-log-hygiene \
             ./wrt/files/usr/sbin/multica-runtime-guard \
             ./wrt/files/usr/sbin/nikki-dns-failopen
