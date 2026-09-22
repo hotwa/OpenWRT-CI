@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERATOR="$ROOT_DIR/Scripts/generate_samba_credentials.sh"
 DEFAULT_USER="$ROOT_DIR/files/etc/uci-defaults/96-samba-default-user"
