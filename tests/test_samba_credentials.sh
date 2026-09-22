@@ -429,7 +429,9 @@ if command -v smbpasswd >/dev/null 2>&1 && command -v pdbedit >/dev/null 2>&1 &&
 	mkdir -p "$fixture/image-root"
 	cp -fpR "$fixture/files/." "$fixture/image-root/"
 	for database in passdb.tdb secrets.tdb; do
-		[ "$(stat -c '%u:%g' "$fixture/files/etc/samba/$database")" = "$(id -u):$(id -g)" ]
+		# The generator runs through sudo so the staged firmware databases must
+		# remain root-owned even when this guard itself runs as GitHub's runner.
+		[ "$(stat -c '%u:%g' "$fixture/files/etc/samba/$database")" = '0:0' ]
 		[ "$(stat -c '%a' "$fixture/image-root/etc/samba/$database")" = 600 ]
 		cmp -s "$fixture/files/etc/samba/$database" "$fixture/image-root/etc/samba/$database"
 	done
