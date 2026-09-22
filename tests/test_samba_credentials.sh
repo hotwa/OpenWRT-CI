@@ -427,7 +427,10 @@ if command -v smbpasswd >/dev/null 2>&1 && command -v pdbedit >/dev/null 2>&1 &&
 	# Mirror package/install as the non-root CI runner: mode-only assertions
 	# miss root-owned 0600 files that sudo can inspect but make cannot copy.
 	mkdir -p "$fixture/image-root"
-	cp -fpR "$fixture/files/." "$fixture/image-root/"
+	# The generated databases are deliberately 0600 root:root. A hosted CI
+	# runner is unprivileged, so copy this root-owned firmware fixture through
+	# sudo rather than weakening the credentials' file mode for the test.
+	sudo cp -fpR "$fixture/files/." "$fixture/image-root/"
 	for database in passdb.tdb secrets.tdb; do
 		# The generator runs through sudo so the staged firmware databases must
 		# remain root-owned even when this guard itself runs as GitHub's runner.
