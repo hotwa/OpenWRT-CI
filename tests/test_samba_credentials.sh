@@ -6,6 +6,13 @@ DEFAULT_USER="$ROOT_DIR/files/etc/uci-defaults/96-samba-default-user"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 ENV_INIT="$ROOT_DIR/Scripts/ci_init_environment.sh"
 
+on_guard_error() {
+	local status=$?
+	printf 'Samba credentials guard failed at line %s\n' "$1" >&2
+	exit "$status"
+}
+trap 'on_guard_error $LINENO' ERR
+
 bash -n "$GENERATOR"
 sh -n "$DEFAULT_USER"
 grep -Eq 'aptx_retry install .* samba( | \\)$' "$ENV_INIT"
