@@ -81,7 +81,7 @@ EOF
 			case_dir="$1"
 			mv_command="${2:-mv}"
 			fail_rollback="${3:-0}"
-			testparm_command="${4:-testparm}"
+			testparm_command="${4:-$passing_testparm}"
 			run_root env \
 				SAMBA_PASSWD_FILE="$case_dir/passwd" \
 				SAMBA_LIVE_DIR="$case_dir/live" \
@@ -98,7 +98,7 @@ EOF
 
 		run_stock_case() {
 			case_dir="$1"
-			testparm_command="${2:-testparm}"
+			testparm_command="${2:-$passing_testparm}"
 			run_root env \
 				SAMBA_PASSWD_FILE="$case_dir/passwd" \
 				SAMBA_LIVE_DIR="$case_dir/live" \
@@ -165,18 +165,54 @@ for argument in "$@"; do
 done
 case "$parameter" in
 	'') exit 0 ;;
-	'config backend') printf '%s\n' file ;;
-	'passdb backend') printf '%s\n' tdbsam ;;
-	'private dir') printf '%s\n' /etc/samba ;;
-	security) printf '%s\n' user ;;
-	'server role') printf '%s\n' 'standalone server' ;;
-	realm) printf '\n' ;;
-	'domain logons') printf '%s\n' no ;;
+esac
+config=''
+for argument in "$@"; do
+	case "$argument" in
+		--parameter-name=* | -*) ;;
+		*) config="$argument" ;;
+	esac
+done
+value="$(awk -v wanted="$parameter" '
+function trim(text) {
+	sub(/^[ \t]+/, "", text)
+	sub(/[ \t]+$/, "", text)
+	return text
+}
+function normalize(text) {
+	text=tolower(trim(text))
+	gsub(/[ \t]+/, " ", text)
+	return text
+}
+{
+	line=$0
+	sub(/\r$/, "", line)
+	if (line ~ /^[ \t]*[#;]/)
+		next
+	equals=index(line, "=")
+	if (!equals)
+		next
+	key=normalize(substr(line, 1, equals - 1))
+	if (key == normalize(wanted))
+		value=trim(substr(line, equals + 1))
+}
+END { print value }
+' "$config")"
+case "$parameter" in
+	'config backend') printf '%s\n' "${value:-file}" ;;
+	'passdb backend') printf '%s\n' "${value:-tdbsam}" ;;
+	'private dir') printf '%s\n' "${value:-/etc/samba}" ;;
+	security) printf '%s\n' "${value:-user}" ;;
+	'server role') printf '%s\n' "${value:-standalone server}" ;;
+	realm) printf '%s\n' "$value" ;;
+	'domain logons') printf '%s\n' "${value:-no}" ;;
 	*) exit 1 ;;
 esac
 EOF
 			chmod 0755 "$wrapper"
 		}
+		passing_testparm="$runtime_fixture/passing-testparm"
+		make_passing_testparm "$passing_testparm"
 
 		# A legacy sysupgrade exposes the new ROM passdb through overlayfs while
 		# retaining an old secrets.tdb and an empty smbpasswd user database.
@@ -198,13 +234,11 @@ EOF
 
 		# Exercise the production stock symlink/template path, not only the
 		# explicit config injection used by the remaining unit fixtures.
-		stock_testparm="$runtime_fixture/passing-testparm"
-		make_passing_testparm "$stock_testparm"
 		stock_case="$(new_runtime_case stock-template-upgrade)"
 		cp "$stock_case/rom/passdb.tdb" "$stock_case/live/passdb.tdb"
 		printf '%s\n' 'stock-legacy-secrets' >"$stock_case/live/secrets.tdb"
 		: >"$stock_case/live/smbpasswd"
-		run_stock_case "$stock_case" "$stock_testparm" 2>"$stock_case/run.log"
+		run_stock_case "$stock_case" 2>"$stock_case/run.log"
 		run_root cmp -s "$stock_case/live/passdb.tdb" "$stock_case/rom/passdb.tdb"
 		run_root cmp -s "$stock_case/live/secrets.tdb" "$stock_case/rom/secrets.tdb"
 		grep -q '^smb:' "$stock_case/passwd"
