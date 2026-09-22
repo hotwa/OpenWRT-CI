@@ -98,6 +98,7 @@ EOF
 
 		run_stock_case() {
 			case_dir="$1"
+			testparm_command="${2:-testparm}"
 			run_root env \
 				SAMBA_PASSWD_FILE="$case_dir/passwd" \
 				SAMBA_LIVE_DIR="$case_dir/live" \
@@ -105,6 +106,7 @@ EOF
 				SAMBA_UCI_CONFIG="$case_dir/samba4" \
 				SAMBA_AD_DAEMON="$case_dir/no-ad-daemon" \
 				SAMBA_LOGGER=: \
+				SAMBA_TESTPARM="$testparm_command" \
 				sh "$DEFAULT_USER"
 		}
 
@@ -148,6 +150,34 @@ EOF
 			chmod 0755 "$wrapper"
 		}
 
+		# Runtime-release runners deliberately install only the build tooling, not
+		# Samba.  Keep this fixture hermetic while exercising the stock-template
+		# branch with the effective values supplied by testparm on the target.
+		make_passing_testparm() {
+			wrapper="$1"
+			cat >"$wrapper" <<'EOF'
+#!/bin/sh
+parameter=''
+for argument in "$@"; do
+	case "$argument" in
+		--parameter-name=*) parameter="${argument#--parameter-name=}" ;;
+	esac
+done
+case "$parameter" in
+	'') exit 0 ;;
+	'config backend') printf '%s\n' file ;;
+	'passdb backend') printf '%s\n' tdbsam ;;
+	'private dir') printf '%s\n' /etc/samba ;;
+	security) printf '%s\n' user ;;
+	'server role') printf '%s\n' 'standalone server' ;;
+	realm) printf '\n' ;;
+	'domain logons') printf '%s\n' no ;;
+	*) exit 1 ;;
+esac
+EOF
+			chmod 0755 "$wrapper"
+		}
+
 		# A legacy sysupgrade exposes the new ROM passdb through overlayfs while
 		# retaining an old secrets.tdb and an empty smbpasswd user database.
 		live_case="$(new_runtime_case live-upgrade)"
@@ -168,11 +198,13 @@ EOF
 
 		# Exercise the production stock symlink/template path, not only the
 		# explicit config injection used by the remaining unit fixtures.
+		stock_testparm="$runtime_fixture/passing-testparm"
+		make_passing_testparm "$stock_testparm"
 		stock_case="$(new_runtime_case stock-template-upgrade)"
 		cp "$stock_case/rom/passdb.tdb" "$stock_case/live/passdb.tdb"
 		printf '%s\n' 'stock-legacy-secrets' >"$stock_case/live/secrets.tdb"
 		: >"$stock_case/live/smbpasswd"
-		run_stock_case "$stock_case" 2>"$stock_case/run.log"
+		run_stock_case "$stock_case" "$stock_testparm" 2>"$stock_case/run.log"
 		run_root cmp -s "$stock_case/live/passdb.tdb" "$stock_case/rom/passdb.tdb"
 		run_root cmp -s "$stock_case/live/secrets.tdb" "$stock_case/rom/secrets.tdb"
 		grep -q '^smb:' "$stock_case/passwd"
