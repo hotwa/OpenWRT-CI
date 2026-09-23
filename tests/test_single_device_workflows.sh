@@ -12,11 +12,16 @@ for wf in "RE-Mesh-BUILD.yml" "RE-CS-07-BUILD.yml"; do
 	path="$ROOT_DIR/.github/workflows/$wf"
 	[ -f "$path" ] || { echo "missing workflow $wf"; exit 1; }
 	grep -Fq 'inputs:' "$path"
-	grep -Fq 'secrets: inherit' "$path"
+	grep -Eq '^[[:space:]]*secrets:$' "$path"
+	! grep -Fq 'secrets: inherit' "$path"
 done
 
 MESH="$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"
 grep -Fq 'strategy:' "$MESH"
+grep -Fq 'BUILD_TARGET:' "$MESH"
+grep -Fq 'options: [all, re-ss-01, re-cs-02]' "$MESH"
+grep -Fq 'default: all' "$MESH"
+grep -Fq "inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == matrix.build_target" "$MESH"
 grep -Fq 'RE_SS_01_LAN_IP:' "$MESH"
 grep -Fq 'RE_CS_02_LAN_IP:' "$MESH"
 grep -Fq 'IPQ60XX-RE-SS-01' "$MESH"

@@ -26,7 +26,7 @@ case "$key" in
 	headscale_auto_enroll.main.hostname_prefix) printf 'openwrt\n' ;;
 	headscale_auto_enroll.main.ssh) printf '1\n' ;;
 	headscale_auto_enroll.main.accept_dns) printf '0\n' ;;
-	headscale_auto_enroll.main.accept_routes) printf '0\n' ;;
+	tailscale.settings.accept_routes) printf '0\n' ;;
 	headscale_auto_enroll.main.max_attempts) printf '1\n' ;;
 	headscale_auto_enroll.main.retry_interval) printf '0\n' ;;
 	headscale_auto_enroll.main.restore_gate_file) printf '%s/gate.json\n' "$TEST_ROOT" ;;
@@ -92,6 +92,20 @@ export TEST_LOG="$LOG_FILE"
 export HEADSCALE_AUTO_ENROLL_LOCK_DIR="$LOCK_DIR"
 export HEADSCALE_AUTO_ENROLL_TAILSCALE_INIT="$BIN_DIR/tailscale-init"
 export HEADSCALE_AUTO_ENROLL_DONE_FILE="$WORK_DIR/auto-enroll.done"
+export HEADSCALE_AUTO_ENROLL_STATE_READY_FILE="$WORK_DIR/tailscale-state.ready"
+touch "$HEADSCALE_AUTO_ENROLL_STATE_READY_FILE"
+
+# A factory image without a mounted, independent /data volume must not consume
+# an auth key or create a replacement Tailnet node on the root overlay.
+: >"$LOG_FILE"
+rm -f "$HEADSCALE_AUTO_ENROLL_STATE_READY_FILE"
+printf '{"state":"no_backup"}\n' >"$GATE_FILE"
+TEST_SCENARIO=no-state "$SCRIPT"
+[ ! -s "$LOG_FILE" ] || {
+	echo "Headscale enrollment ran before persistent Tailnet state was ready" >&2
+	exit 1
+}
+touch "$HEADSCALE_AUTO_ENROLL_STATE_READY_FILE"
 
 # A pending recovery decision must be observed before a terminal no-backup
 # decision allows registration.

@@ -71,13 +71,8 @@ grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   exit 1
 }
 
-grep -q 'WRTBAK_FIRSTBOOT_AUTO_ENABLED:' "$WORKFLOW" || {
-  echo "CPE-5G workflow must expose the opt-in wrtbak firstboot restore switch"
-  exit 1
-}
-
-grep -q "WRTBAK_FIRSTBOOT_AUTO_ENABLED: \${{ inputs.WRTBAK_FIRSTBOOT_AUTO_ENABLED || '0' }}" "$WORKFLOW" || {
-  echo "CPE-5G workflow must default wrtbak firstboot restore to disabled"
+! grep -q 'WRTBAK_FIRSTBOOT_AUTO_ENABLED:' "$WORKFLOW" || {
+  echo "CPE-5G must not expose a wrtbak restore switch"
   exit 1
 }
 

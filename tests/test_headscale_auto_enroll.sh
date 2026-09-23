@@ -54,8 +54,13 @@ grep -q "option auth_key_file '/etc/tailscale/headscale.authkey'" "$CONFIG" || {
 }
 
 grep -q "option hostname_override ''" "$CONFIG" || {
-  echo "headscale hostname override default is missing"
-  exit 1
+	echo "headscale hostname override default is missing"
+	exit 1
+}
+
+grep -q "option hostname_prefix ''" "$CONFIG" || {
+	echo "headscale default hostname prefix must be empty"
+	exit 1
 }
 
 grep -q "option accept_dns '0'" "$CONFIG" || {
@@ -63,10 +68,10 @@ grep -q "option accept_dns '0'" "$CONFIG" || {
   exit 1
 }
 
-grep -q "option accept_routes '0'" "$CONFIG" || {
-  echo "headscale auto-enroll must not accept routes by default"
+if grep -q "option accept_routes" "$CONFIG"; then
+  echo "headscale auto-enroll must not own the Tailnet route-acceptance policy"
   exit 1
-}
+fi
 
 grep -q "option restore_gate_file '/root/wrtbak/firstboot/gate.json'" "$CONFIG" || {
   echo "headscale auto-enroll does not declare the wrtbak recovery gate"
@@ -80,6 +85,16 @@ grep -q "option restore_gate_attempts '90'" "$CONFIG" || {
 
 grep -q -- '--accept-dns=' "$SCRIPT" || {
   echo "script does not pass accept-dns explicitly"
+  exit 1
+}
+
+grep -Fq 'tailscale.settings.accept_routes' "$SCRIPT" || {
+  echo "script does not read the canonical Tailscale route-acceptance policy"
+  exit 1
+}
+
+grep -Fq 'accept_routes="$(tailnet_accept_routes)"' "$SCRIPT" || {
+  echo "script does not apply the canonical Tailscale route-acceptance policy"
   exit 1
 }
 
@@ -124,8 +139,18 @@ grep -q 'build_hostname "$hostname_override" "$hostname_prefix"' "$SCRIPT" || {
 }
 
 grep -q 'tailscale set' "$SCRIPT" || {
-  echo "script does not use tailscale set for already-enrolled nodes"
-  exit 1
+	echo "script does not use tailscale set for already-enrolled nodes"
+	exit 1
+}
+
+grep -q -- '--hostname="$hostname"' "$SCRIPT" || {
+	echo "script does not apply the migrated hostname to existing nodes"
+	exit 1
+}
+
+grep -q 'TAILSCALE_STATE_READY_FILE' "$SCRIPT" || {
+	echo "script does not hold enrollment until persistent Tailscale state is ready"
+	exit 1
 }
 
 grep -q 'disable_tailscale_settings_reconciler' "$SCRIPT" || {
@@ -175,19 +200,17 @@ grep -q 'Scripts/HeadscaleAutoEnroll.sh' "$WORKFLOW" || {
 
 for caller_workflow in $(discover_device_workflows); do
   workflow_name="$(basename "$caller_workflow")"
-  # WLG builds intentionally use explicit secrets to avoid injecting private
-  # secrets into a friend-facing firmware. Verify the required SSH key secret
-  # is passed instead of requiring full secrets: inherit.
-  if echo "$workflow_name" | grep -qi 'wlg'; then
-    grep -q 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' "$caller_workflow" || {
-      echo "$workflow_name does not pass OPENWRT_DROPBEAR_AUTHORIZED_KEYS to WRT-CORE"
-      exit 1
-    }
-  else
-    grep -q 'secrets: inherit' "$caller_workflow" || {
-      echo "$workflow_name does not pass repository secrets to WRT-CORE"
-      exit 1
-    }
+  grep -q '^[[:space:]]*secrets:$' "$caller_workflow" || {
+    echo "$workflow_name does not use an explicit WRT-CORE secret allowlist"
+    exit 1
+  }
+  grep -q 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' "$caller_workflow" || {
+    echo "$workflow_name does not pass OPENWRT_DROPBEAR_AUTHORIZED_KEYS to WRT-CORE"
+    exit 1
+  }
+  if grep -q 'secrets: inherit\|HEADSCALE_CD_AUTHKEY' "$caller_workflow"; then
+    echo "$workflow_name still grants an inherited or CD deployment secret"
+    exit 1
   fi
 done
 
@@ -200,6 +223,11 @@ grep -q 'set_config_option accept_dns 0' "$CI_INJECTOR" || {
   echo "CI injector does not force accept_dns off"
   exit 1
 }
+
+if grep -q 'HEADSCALE_OPENWRT_ACCEPT_ROUTES\|set_config_option accept_routes' "$CI_INJECTOR"; then
+  echo "CI injector must not override the canonical Tailscale route-acceptance policy"
+  exit 1
+fi
 
 grep -q 'derive_headscale_hostname' "$CI_INJECTOR" || {
   echo "CI injector does not derive a stable Headscale hostname"
@@ -218,7 +246,6 @@ cp "$CONFIG" "$WORK_DIR/etc/config/headscale_auto_enroll"
 TEST_AUTH_KEY="hskey-auth-""testredacted"
 INJECT_LOG="$WORK_DIR/inject.log"
 HEADSCALE_OPENWRT_AUTHKEY="$TEST_AUTH_KEY" \
-HEADSCALE_OPENWRT_ACCEPT_ROUTES=1 \
 WRT_NAME=DAE-WRT \
 WRT_IP=192.168.12.1 \
 bash "$CI_INJECTOR" "$WORK_DIR" >"$INJECT_LOG"
@@ -233,17 +260,17 @@ grep -q "option accept_dns '0'" "$WORK_DIR/etc/config/headscale_auto_enroll" || 
   exit 1
 }
 
-grep -q "option accept_routes '1'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
-  echo "CI injector does not honor accept-routes override"
+if grep -q "option accept_routes" "$WORK_DIR/etc/config/headscale_auto_enroll"; then
+  echo "CI injector injected a duplicate route-acceptance setting"
   exit 1
-}
+fi
 
 grep -q "option advertise_routes ''" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
 	echo "CI injector must defer route selection to the live router LAN"
 	exit 1
 }
 
-grep -q "option hostname_override 'openwrt-dae-wrt-12'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+grep -q "option hostname_override 'dae-wrt-s12'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
   echo "CI injector does not derive hostname_override from WRT_NAME and WRT_IP"
   exit 1
 }

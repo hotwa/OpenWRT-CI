@@ -11,13 +11,13 @@ die() {
 validate_device() {
 	case "$1" in
 		jdcloud_re-cs-07)
-			required_packages=(gre luci-proto-gre ip-full luci-app-wrtbak)
+			required_packages=(gre luci-proto-gre ip-full)
 			;;
 		jdcloud_re-cs-02)
-			required_packages=(luci-app-wrtbak)
+			required_packages=()
 			;;
 		jdcloud_re-ss-01)
-			required_packages=(luci-app-wrtbak)
+			required_packages=()
 			;;
 		*) die "unsupported expected device: $1" ;;
 	esac

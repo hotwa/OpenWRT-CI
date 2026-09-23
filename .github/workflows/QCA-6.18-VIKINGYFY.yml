@@ -44,20 +44,18 @@ on:
         description: '可选：限制允许访问 WAN SSH 的来源 IP/CIDR，例如 203.0.113.10/32。留空表示不限制来源。'
         required: false
         type: string
-      WRTBAK_DEVICE_ALIAS:
-        description: '可选：写入 luci-app-wrtbak 的设备别名，例如 office-re-ss-01。'
-        default: ''
+      WAN_PROTOCOL:
+        description: 'WAN 接入方式：DHCP 保持固件默认；PPPoE 读取仓库 Secret，不接受明文密码。'
+        default: 'dhcp'
         required: false
-        type: string
-      WRTBAK_PROXY_PROFILE:
-        description: '可选：wrtbak R2 代理配置，auto/home/office/dorm。'
-        default: 'auto'
-        required: false
-        type: string
+        type: choice
+        options:
+          - dhcp
+          - pppoe
 
 #CI权限
 permissions:
-  actions: write
+  actions: read
   contents: write
 
 #CI任务
@@ -76,7 +74,24 @@ jobs:
 
     #调用公用编译核心WRT-CORE.yml
     uses: ./.github/workflows/WRT-CORE.yml
-    secrets: inherit
+    # Explicit allowlist: build-time private configuration and the isolated
+    # CI Debug SSH gate. Deployment credentials are deliberately absent.
+    secrets:
+      HEADSCALE_OPENWRT_AUTHKEY: ${{ secrets.HEADSCALE_OPENWRT_AUTHKEY }}
+      HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+      HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+      MULTICA_TOKEN: ${{ secrets.MULTICA_TOKEN }}
+      MULTICA_SERVER_URL: ${{ secrets.MULTICA_SERVER_URL }}
+      MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
+      MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
+      COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+      CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+      SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       #编译配置
@@ -97,8 +112,7 @@ jobs:
       WRT_WAN_SSH: ${{ inputs.WAN_SSH || false }}
       WRT_WAN_SSH_PORT: ${{ inputs.WAN_SSH_PORT || '22' }}
       WRT_WAN_SSH_SOURCE: ${{ inputs.WAN_SSH_SOURCE }}
-      WRTBAK_DEVICE_ALIAS: ${{ inputs.WRTBAK_DEVICE_ALIAS || '' }}
-      WRTBAK_PROXY_PROFILE: ${{ inputs.WRTBAK_PROXY_PROFILE || 'auto' }}
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
       #默认密码，仅作提示，修改无用
       WRT_PW: 无
       #源码链接

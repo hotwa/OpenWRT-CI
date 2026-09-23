@@ -12,16 +12,25 @@ on:
         description: 'Router LAN IP (e.g. 192.168.50.1)'
         required: false
         default: '192.168.50.1'
+      WAN_PROTOCOL:
+        description: 'WAN protocol: DHCP keeps the default; PPPoE uses private repository secrets.'
+        required: false
+        type: choice
+        default: dhcp
+        options: [dhcp, pppoe]
 
 permissions:
-  actions: write
-  contents: write
+  actions: read
+  contents: read
 
 jobs:
   build:
     uses: ./.github/workflows/WRT-CORE.yml
     secrets:
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
       HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
       HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
@@ -45,11 +54,10 @@ jobs:
       WRT_BUILD_ONLY: true
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-07
       WRT_REQUIRED_DEVICE: jdcloud_re-cs-07
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
       # Same guarded first-boot eMMC -> /data layout as the RE-SS-01 gate.
       WRT_EMMC_DATA_PROVISIONING: true
       WRT_CONTAINER_RUNTIME_TEST: true
-      WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
-      WRTBAK_DEVICE_ALIAS: wlg-re-cs-07
       CI_NAME: WLG-RE-CS-07-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360

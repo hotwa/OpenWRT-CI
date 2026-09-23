@@ -1,0 +1,76 @@
+#!/bin/sh
+# Keep the cryptographic Tailnet identity on the independently mounted /data
+# filesystem. A factory image may replace the root overlay, but must never
+# turn an existing router into a second Headscale node merely because its
+# state file lived under /etc.
+set -eu
+
+DATA_ROOT="${TAILSCALE_STATE_DATA_ROOT:-/data}"
+STATE_DIR="${TAILSCALE_STATE_DIR:-$DATA_ROOT/tailscale}"
+STATE_FILE="${TAILSCALE_STATE_FILE:-$STATE_DIR/tailscaled.state}"
+LEGACY_STATE_FILE="${TAILSCALE_LEGACY_STATE_FILE:-/etc/tailscale/tailscaled.state}"
+MOUNTS_FILE="${TAILSCALE_STATE_MOUNTS_FILE:-/proc/mounts}"
+CONFIG="${TAILSCALE_STATE_CONFIG:-tailscale.settings}"
+INIT="${TAILSCALE_STATE_INIT:-/etc/init.d/tailscale}"
+LOCK_DIR="${TAILSCALE_STATE_LOCK_DIR:-/var/run/tailscale-state-persist.lock}"
+READY_FILE="${TAILSCALE_STATE_READY_FILE:-/var/run/tailscale-state-persist.ready}"
+
+log() {
+	logger -t tailscale-state-persist -- "$*" 2>/dev/null || true
+}
+
+data_is_persistent_mount() {
+	[ -d "$DATA_ROOT" ] && [ ! -L "$DATA_ROOT" ] || return 1
+	awk -v mount="$DATA_ROOT" '
+		$2 == mount && $1 ~ /^\/dev\// && $3 !~ /^(overlay|tmpfs|ramfs|rootfs)$/ { found = 1 }
+		END { exit found ? 0 : 1 }
+	' "$MOUNTS_FILE"
+}
+
+set_state_file() {
+	local current
+	current="$(uci -q get "$CONFIG.state_file" 2>/dev/null || true)"
+	[ "$current" = "$STATE_FILE" ] && return 0
+	uci -q set "$CONFIG.state_file=$STATE_FILE"
+	uci -q commit tailscale
+}
+
+release_lock() {
+	rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+main() {
+	[ -x "$INIT" ] || exit 0
+	rm -f "$READY_FILE"
+	data_is_persistent_mount || {
+		"$INIT" stop >/dev/null 2>&1 || true
+		log "deferred: $DATA_ROOT is not an independent block-backed mount; enrollment is held"
+		exit 0
+	}
+
+	mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+	trap release_lock EXIT HUP INT TERM
+	mkdir -p "$STATE_DIR"
+	chmod 700 "$STATE_DIR"
+
+	# The data copy is authoritative once present. Never overwrite it: copying a
+	# newer but unknown legacy state could clone or replace the live node identity.
+	if [ ! -s "$STATE_FILE" ] && [ -s "$LEGACY_STATE_FILE" ]; then
+		"$INIT" stop >/dev/null 2>&1 || true
+		umask 077
+		tmp="$STATE_FILE.new.$$"
+		cp "$LEGACY_STATE_FILE" "$tmp"
+		chmod 600 "$tmp"
+		mv -f "$tmp" "$STATE_FILE"
+		log "migrated existing Tailnet state into $STATE_DIR"
+	fi
+
+	set_state_file
+	: >"$READY_FILE"
+	chmod 600 "$READY_FILE"
+	"$INIT" enable >/dev/null 2>&1 || true
+	"$INIT" start >/dev/null 2>&1 || true
+	[ -s "$STATE_FILE" ] || log "no existing Tailnet state; a new enrollment may create one"
+}
+
+main "$@"

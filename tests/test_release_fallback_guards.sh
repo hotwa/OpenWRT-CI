@@ -1,115 +1,65 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
+CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
+RELEASE="$ROOT_DIR/.github/workflows/WRT-RELEASE.yml"
 
-[ -f "$WORKFLOW" ] || { echo "missing WRT-CORE workflow"; exit 1; }
+[ -f "$CORE" ] || { echo "missing WRT-CORE workflow"; exit 1; }
+[ -f "$RELEASE" ] || { echo "missing WRT-RELEASE workflow"; exit 1; }
 
-action_count=0
-while IFS= read -r action; do
-  [ -n "$action" ] || continue
-  action_count=$((action_count + 1))
-  ref="${action##*@}"
-  if ! printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
-    echo "WRT-CORE uses a mutable external Action ref: $action"
+check_pinned_actions() {
+  local workflow="$1" action ref count=0
+  while IFS= read -r action; do
+    [ -n "$action" ] || continue
+    case "$action" in
+      ./*) continue ;;
+    esac
+    count=$((count + 1))
+    ref="${action##*@}"
+    if ! printf '%s' "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+      echo "$(basename "$workflow") uses a mutable external Action ref: $action"
+      exit 1
+    fi
+  done < <(sed -n -E 's/^[[:space:]]*uses:[[:space:]]*([^#[:space:]]+).*/\1/p' "$workflow")
+  [ "$count" -gt 0 ] || {
+    echo "$(basename "$workflow") contains no external Action pins"
     exit 1
-  fi
-done < <(sed -n -E 's/^[[:space:]]*uses:[[:space:]]*([^#[:space:]]+).*/\1/p' "$WORKFLOW")
-[ "$action_count" -ge 5 ] || {
-  echo "WRT-CORE action pin test did not inspect the expected actions"
-  exit 1
+  }
 }
 
-grep -Fq 'endersonmenezes/free-disk-space@713d134e243b926eba4a5cce0cf608bfd1efb89a # v2.1.1' "$WORKFLOW"
-grep -Fq 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0' "$WORKFLOW"
-grep -Fq 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0' "$WORKFLOW"
-grep -Fq 'node-version: 24.20.0' "$WORKFLOW"
+check_pinned_actions "$CORE"
+check_pinned_actions "$RELEASE"
 
-grep -q 'name: Upload Firmware Artifact' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not upload firmware artifacts before release"
-  exit 1
-}
+grep -Fq '  build:' "$CORE"
+grep -Fq '  release:' "$CORE"
+grep -Fq 'contents: read' "$CORE"
+grep -Fq 'actions: read' "$CORE"
+grep -Fq 'name: Define Public Release Input' "$CORE"
+grep -Fq 'name: Upload Immutable Public Release Input' "$CORE"
+grep -Fq 'overwrite: false' "$CORE"
+grep -Fq 'uses: ./.github/workflows/WRT-RELEASE.yml' "$CORE"
 
-grep -q 'uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the SHA-pinned Node24 upload-artifact v6 action"
-  exit 1
-}
-
-if grep -q 'uses: actions/upload-artifact@v4' "$WORKFLOW"; then
-  echo "WRT-CORE.yml still uses upload-artifact@v4, which targets Node.js 20"
+if grep -Eq 'gh[[:space:]]+release|HEADSCALE_CD_AUTHKEY|WRT_CD_TAILSCALE|TailscaleSysupgradeDeploy' "$CORE"; then
+  echo "WRT-CORE build boundary still contains release or deployment capability"
   exit 1
 fi
 
-# The cache action may be used as a single combined step (actions/cache@) or
-# split into explicit restore/save sub-actions (actions/cache/restore@ and
-# actions/cache/save@). At least one SHA-pinned v6.1.0 cache action must exist.
-if ! grep -Eq 'uses:[[:space:]]*actions/cache(/(restore|save))?@55cc8345863c7cc4c66a329aec7e433d2d1c52a9[[:space:]]*# v6.1.0' "$WORKFLOW"; then
-  echo "WRT-CORE.yml does not use the SHA-pinned Node24 cache v6.1.0 action (combined or split restore/save)"
+grep -Fq 'workflow_call:' "$RELEASE"
+grep -Fq 'artifact_name:' "$RELEASE"
+grep -Fq 'release_tag:' "$RELEASE"
+grep -Fq 'contents: write' "$RELEASE"
+grep -Fq 'actions: read' "$RELEASE"
+grep -Fq 'actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0' "$RELEASE"
+grep -Fq 'sha256sum --check --strict' "$RELEASE"
+grep -Fq 'metadata.json is missing' "$RELEASE"
+grep -Fq 'SHA256SUMS does not cover exactly the release payload' "$RELEASE"
+grep -Fq 'gh release create -R "$GITHUB_REPOSITORY"' "$RELEASE"
+grep -Fq 'gh release upload -R "$GITHUB_REPOSITORY"' "$RELEASE"
+
+if grep -Eq 'HEADSCALE_CD_AUTHKEY|WRT_CD_TAILSCALE|TailscaleSysupgradeDeploy|secrets:' "$RELEASE"; then
+  echo "WRT-RELEASE must not receive deployment or repository secrets"
   exit 1
 fi
 
-if grep -Eq 'uses:[[:space:]]*actions/cache(/(restore|save))?@(v4|v5)\b' "$WORKFLOW"; then
-  echo "WRT-CORE.yml still uses an unpinned/legacy cache action (v4/v5)"
-  exit 1
-fi
-
-grep -q 'name: Release Firmware' "$WORKFLOW" || {
-  echo "WRT-CORE.yml is missing the Release Firmware step"
-  exit 1
-}
-
-grep -q 'gh release create' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the official gh CLI to create releases"
-  exit 1
-}
-
-grep -q 'gh release upload' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not use the official gh CLI to upload release assets"
-  exit 1
-}
-
-grep -q 'gh release create -R "$GITHUB_REPOSITORY"' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not force gh release create to target the workflow repository"
-  exit 1
-}
-
-grep -q 'gh release upload -R "$GITHUB_REPOSITORY"' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not force gh release upload to target the workflow repository"
-  exit 1
-}
-
-grep -q 'WRT_INFO_VALUE="${WRT_SOURCE%%/\*}"' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not compute a fallback release filename prefix"
-  exit 1
-}
-
-grep -q 'GH_TOKEN: ${{secrets.GITHUB_TOKEN}}' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not pass GITHUB_TOKEN to gh as GH_TOKEN"
-  exit 1
-}
-
-grep -q 'actions: write' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not grant actions: write permission for cache cleanup"
-  exit 1
-}
-
-grep -q 'retry_cmd 5 15 gh release upload' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not retry gh release upload"
-  exit 1
-}
-
-grep -q 'for asset in "${assets\[@\]}"; do' "$WORKFLOW" || {
-  echo "WRT-CORE.yml does not upload release assets one by one"
-  exit 1
-}
-
-# The split restore/save architecture uses a unique per-run save key, so it
-# never needs to delete a cache entry before saving. Assert that the old
-# delete-before-save pattern is gone.
-if grep -Eq 'gh[[:space:]]+cache[[:space:]]+delete' "$WORKFLOW"; then
-  echo "WRT-CORE.yml still deletes caches before save; the split restore/save architecture must not"
-  exit 1
-fi
-
-echo "release fallback guards test passed"
+echo "release boundary guards passed"

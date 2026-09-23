@@ -35,8 +35,6 @@ grep -Fq './files/etc/uci-defaults/99-auto-mount-data ./wrt/files/usr/sbin/auto-
 
 grep -Fq 'destructive GPT provisioning remains disabled by its UCI gate' "$CORE"
 grep -Fq 'read-only data storage diagnosis helper' "$CORE"
-grep -Fq 'WRTBAK_DEVICE_ALIAS is not safe for the data backup namespace' "$CORE"
-grep -Fq 'option device_alias' "$CORE"
 grep -Fq 'Preserve that explicit' "$CORE"
 grep -Fq '[ ! -f ./wrt/files/etc/config/agent-storage ]' "$CORE"
 

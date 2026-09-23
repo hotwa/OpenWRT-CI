@@ -63,6 +63,21 @@ if [ -s "$headscale_authkey" ]; then
 	add_reason headscale-authkey
 fi
 
+# The subscription URL is written only by the private build injector, as base64
+# in a one-shot UCI-defaults file. It remains recoverable from a firmware image.
+nikki_subscription_defaults="$TARGET_FILES/etc/uci-defaults/98-nikki-subscription"
+if [ -s "$nikki_subscription_defaults" ] && grep -q 'base64 -d' "$nikki_subscription_defaults"; then
+	add_reason nikki-subscription-url
+fi
+
+# WAN PPPoE credentials are encoded in a one-shot defaults file so they can be
+# applied before the network service starts.  They are still recoverable from
+# the firmware image and therefore must never be released as a public artifact.
+pppoe_defaults="$TARGET_FILES/etc/uci-defaults/97-wan-pppoe"
+if [ -s "$pppoe_defaults" ] && grep -q 'network.wan.password' "$pppoe_defaults"; then
+	add_reason wan-pppoe-credential
+fi
+
 # Build-time Samba credentials are paired binary databases. Their contents
 # are secret even though no plaintext password is present in the overlay.
 if [ -s "$TARGET_FILES/etc/samba/passdb.tdb" ] || [ -s "$TARGET_FILES/etc/samba/secrets.tdb" ]; then

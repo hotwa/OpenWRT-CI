@@ -16,7 +16,6 @@ CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-07=y
 CONFIG_PACKAGE_gre=y
 CONFIG_PACKAGE_luci-proto-gre=y
 CONFIG_PACKAGE_ip-full=y
-CONFIG_PACKAGE_luci-app-wrtbak=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/.config" "$DEVICE"
 
@@ -24,17 +23,14 @@ cat >"$WORK_DIR/re-cs-02.config" <<'EOT'
 CONFIG_TARGET_qualcommax=y
 CONFIG_TARGET_qualcommax_ipq60xx=y
 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
-CONFIG_PACKAGE_luci-app-wrtbak=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/re-cs-02.config" jdcloud_re-cs-02
-grep -v '^CONFIG_PACKAGE_luci-app-wrtbak=y$' "$WORK_DIR/re-cs-02.config" >"$WORK_DIR/re-cs-02-missing.config"
 ! bash "$SCRIPT" defconfig "$WORK_DIR/re-cs-02-missing.config" jdcloud_re-cs-02 >/dev/null 2>&1
 
 cat >"$WORK_DIR/re-ss-01.config" <<'EOT'
 CONFIG_TARGET_qualcommax=y
 CONFIG_TARGET_qualcommax_ipq60xx=y
 CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
-CONFIG_PACKAGE_luci-app-wrtbak=y
 EOT
 bash "$SCRIPT" defconfig "$WORK_DIR/re-ss-01.config" jdcloud_re-ss-01
 
@@ -45,7 +41,6 @@ cat >"$WORK_DIR/bin/targets/qualcommax/ipq60xx/qualcommax-ipq60xx-generic.manife
 gre - 1
 luci-proto-gre - 1
 ip-full - 1
-luci-app-wrtbak - 1
 EOT
 cp "$WORK_DIR/.config" "$WORK_DIR/upload/Config-IPQ60XX-RE-CS-07-NOWIFI.txt"
 bash "$SCRIPT" stage "$WORK_DIR/bin/targets" "$WORK_DIR/upload" "$DEVICE"

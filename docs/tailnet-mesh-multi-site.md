@@ -79,17 +79,20 @@ For a `192.168.0.0/16` multi-site plan, assign each router one unique `/24` and
 approve that exact CIDR for that router's site tag. A router must never
 advertise the whole `/16`: that would overlap every other site and turn a
 single compromised router into a route for the entire private address pool.
-With `accept_routes=1` and the private-Mesh forwardings enabled, every
-controller-approved site `/24` is reachable in both directions after flash.
+With `tailscale.settings.accept_routes=1` and the private-Mesh forwardings
+enabled, every controller-approved site `/24` is reachable in both directions
+after flash.
 
 The wrtbak gate remains authoritative: restored Tailscale state is reloaded
 before a new key is consumed. Successful new, restored and already-enrolled
 paths all remove a residual writable auth-key file and reapply DNS/Nikki health
 guards.
 
-`accept_routes=1` is the private-build/Tailnet gateway default. Validate table
-52, Nikki marks, WireGuard and other policy-routing plugins on real hardware
-before promotion.
+`tailscale.settings.accept_routes=1` is the private-build/Tailnet gateway
+default and the only router route-acceptance source. Auto-enrollment applies
+that value on new, restored and already-enrolled nodes; it does not hold an
+independent route setting. Validate table 52, Nikki marks, WireGuard and other
+policy-routing plugins on real hardware before promotion.
 
 ## 5. MagicDNS and transparent proxy coexistence
 

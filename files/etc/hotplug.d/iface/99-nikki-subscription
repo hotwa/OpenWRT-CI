@@ -1,0 +1,4 @@
+#!/bin/sh
+[ "${ACTION:-}" = ifup ] || exit 0
+[ "${INTERFACE:-}" = wan ] || exit 0
+/usr/sbin/nikki-subscription-sync >/dev/null 2>&1 &

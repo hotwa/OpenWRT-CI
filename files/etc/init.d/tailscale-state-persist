@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+
+# data-runtime settles at START=90 and headscale-auto-enroll at START=98.
+# Place the migration between them so an old state is reused before enrollment.
+START=96
+STOP=10
+
+start() {
+	/usr/sbin/tailscale-state-persist
+}
+
+stop() {
+	rm -f /var/run/tailscale-state-persist.ready
+}

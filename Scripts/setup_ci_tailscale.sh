@@ -62,7 +62,11 @@ fi
 # here, because the control plane may reject a client-requested tag even when
 # the key itself is already scoped to it. Tailscale 1.94.2 also has no
 # documented `tailscale up --ephemeral` flag.
-HOSTNAME_LABEL="ci-debug-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+HOSTNAME_PREFIX="${CI_TSCALE_HOSTNAME_PREFIX:-ci-debug}"
+case "$HOSTNAME_PREFIX" in
+  ''|*[!a-z0-9-]*) echo "ERROR: CI_TSCALE_HOSTNAME_PREFIX is invalid" >&2; exit 1 ;;
+esac
+HOSTNAME_LABEL="${HOSTNAME_PREFIX}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 if ! $SUDO tailscale up \
     --login-server="$HEADSCALE_LOGIN" \
     --auth-key="$HEADSCALE_AUTHKEY" \

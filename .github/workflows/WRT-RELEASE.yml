@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 VIKINGYFY
+
+# A narrow release boundary for the public artifact emitted by WRT-CORE.
+# Firmware compilation never receives this job's contents:write token.
+name: WRT-RELEASE
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: 'Immutable public release-input artifact from this workflow run'
+        required: true
+        type: string
+      release_tag:
+        description: 'Release tag to create or update'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Verify and publish public firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout release helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Validate release handoff identity
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          case "$ARTIFACT_NAME" in
+            "release-input-"*"-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}") ;;
+            *)
+              echo "ERROR: release artifact must be an immutable handoff from this workflow run" >&2
+              exit 1
+              ;;
+          esac
+          case "$RELEASE_TAG" in
+            ''|*[!A-Za-z0-9._-]*)
+              echo "ERROR: release tag contains unsupported characters" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Download immutable public release input
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: release-input
+
+      - name: Verify release artifact and metadata
+        id: verify_release
+        env:
+          ARTIFACT_DIR: ${{ github.workspace }}/release-input
+        run: |
+          set -euo pipefail
+          die() {
+            echo "ERROR: release-input verification failed: $*" >&2
+            exit 1
+          }
+
+          [ -d "$ARTIFACT_DIR" ] || die "artifact directory is missing"
+          [ -f "$ARTIFACT_DIR/SHA256SUMS" ] || die "SHA256SUMS is missing"
+          [ -f "$ARTIFACT_DIR/metadata.json" ] || die "metadata.json is missing"
+          [ -z "$(find "$ARTIFACT_DIR" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ] ||
+            die "artifact must contain only top-level regular files"
+          [ -z "$(find "$ARTIFACT_DIR" -mindepth 2 -print -quit)" ] ||
+            die "artifact must not contain nested paths"
+
+          expected="$(mktemp)"
+          listed="$(mktemp)"
+          sorted_listed="$(mktemp)"
+          trap 'rm -f "$expected" "$listed" "$sorted_listed"' EXIT
+          find "$ARTIFACT_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort > "$expected"
+
+          while IFS= read -r line || [ -n "$line" ]; do
+            digest="${line%%  *}"
+            filename="${line#"$digest  "}"
+            [ "$line" = "$digest  $filename" ] || die "SHA256SUMS contains a malformed line"
+            printf '%s' "$digest" | grep -Eq '^[0-9a-fA-F]{64}$' || die "SHA256SUMS contains an invalid digest"
+            case "$filename" in
+              ''|-*|.|..|*/*|*\\*) die "SHA256SUMS contains an unsafe filename" ;;
+            esac
+            if grep -Fxq -- "$filename" "$listed"; then
+              die "SHA256SUMS contains a duplicate filename"
+            fi
+            printf '%s\n' "$filename" >> "$listed"
+          done < "$ARTIFACT_DIR/SHA256SUMS"
+
+          LC_ALL=C sort "$listed" > "$sorted_listed"
+          cmp -s "$expected" "$sorted_listed" || die "SHA256SUMS does not cover exactly the release payload"
+          (cd "$ARTIFACT_DIR" && sha256sum --check --strict -- SHA256SUMS >/dev/null) ||
+            die "SHA256SUMS verification failed"
+
+          jq -e '
+            type == "object"
+            and (.source_repository | type == "string" and length > 0)
+            and (.source_branch | type == "string" and length > 0)
+            and (.source_commit | type == "string" and test("^[0-9a-f]{40}$"))
+            and (.config | type == "string" and length > 0)
+          ' "$ARTIFACT_DIR/metadata.json" >/dev/null || die "metadata.json is incomplete or invalid"
+
+          {
+            echo 'source_repository<<EOF'
+            jq -r '.source_repository' "$ARTIFACT_DIR/metadata.json"
+            echo EOF
+            echo 'source_branch<<EOF'
+            jq -r '.source_branch' "$ARTIFACT_DIR/metadata.json"
+            echo EOF
+            echo 'source_commit<<EOF'
+            jq -r '.source_commit' "$ARTIFACT_DIR/metadata.json"
+            echo EOF
+            echo 'config<<EOF'
+            jq -r '.config' "$ARTIFACT_DIR/metadata.json"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Release verified firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_DIR: ${{ github.workspace }}/release-input
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REPOSITORY: ${{ steps.verify_release.outputs.source_repository }}
+          SOURCE_BRANCH: ${{ steps.verify_release.outputs.source_branch }}
+          SOURCE_COMMIT: ${{ steps.verify_release.outputs.source_commit }}
+          WRT_CONFIG: ${{ steps.verify_release.outputs.config }}
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/Scripts/retry.sh"
+          notes_file="$RUNNER_TEMP/release-notes.txt"
+          cat > "$notes_file" <<EOF
+          这是已由 CI 校验 SHA256SUMS 与 metadata.json 的公开固件包。
+
+          源码：${SOURCE_REPOSITORY}
+          分支：${SOURCE_BRANCH}
+          提交：${SOURCE_COMMIT}
+          配置：${WRT_CONFIG}
+          EOF
+
+          if ! gh release view -R "$GITHUB_REPOSITORY" "$RELEASE_TAG" >/dev/null 2>&1; then
+            retry_cmd 5 15 gh release create -R "$GITHUB_REPOSITORY" "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" --notes-file "$notes_file"
+          fi
+
+          mapfile -d '' -t assets < <(find "$ARTIFACT_DIR" -maxdepth 1 -type f -print0 | LC_ALL=C sort -z)
+          [ "${#assets[@]}" -gt 0 ] || {
+            echo "ERROR: verified release input has no assets" >&2
+            exit 1
+          }
+          for asset in "${assets[@]}"; do
+            retry_cmd 5 15 gh release upload -R "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$asset" --clobber
+          done

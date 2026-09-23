@@ -9,10 +9,10 @@ PKG_PATH="$GITHUB_WORKSPACE/$WRT_DIR/package/"
 preload_nikki_geodata() {
 	mkdir -p "$GITHUB_WORKSPACE/files/etc/nikki/run"
 
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.dat"
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geosite.dat"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.dat"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geosite.dat"
 	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.metadb"
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/ASN.mmdb"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/ASN.mmdb"
 
 	cd "$PKG_PATH" && echo "nikki geodata has been preloaded into files/etc/nikki/run!"
 }

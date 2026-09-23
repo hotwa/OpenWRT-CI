@@ -2,6 +2,18 @@
 
 [ -d /etc/tailscale ] || mkdir -p /etc/tailscale
 
+# Upgrade old automatic names in place. Explicit administrator names are left
+# alone; only the repository's legacy openwrt- prefix is migrated.
+legacy_name="$(uci -q get headscale_auto_enroll.main.hostname_override 2>/dev/null || true)"
+case "$legacy_name" in
+	openwrt-?*)
+		migrated_name="$(printf '%s' "${legacy_name#openwrt-}" | sed -E 's/-([0-9]+)$/-s\1/')"
+		uci set "headscale_auto_enroll.main.hostname_override=${migrated_name}"
+		uci set 'headscale_auto_enroll.main.hostname_prefix='
+		uci commit headscale_auto_enroll
+		;;
+esac
+
 if [ -x /etc/init.d/headscale-auto-enroll ]; then
 	/etc/init.d/headscale-auto-enroll enable >/dev/null 2>&1 || true
 	/etc/init.d/headscale-auto-enroll start >/dev/null 2>&1 || true

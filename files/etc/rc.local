@@ -3,6 +3,5 @@
 
 rm -rf /.config
 ln -sf /root/.config /.config
-/usr/local/bin/viewturbocore --start
 
 exit 0

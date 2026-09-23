@@ -6,6 +6,7 @@ DONE_FILE="${HEADSCALE_AUTO_ENROLL_DONE_FILE:-/etc/tailscale/auto-enroll.done}"
 TAG="headscale-auto-enroll"
 LOCK_DIR="${HEADSCALE_AUTO_ENROLL_LOCK_DIR:-/var/run/headscale-auto-enroll.lock}"
 TAILSCALE_INIT="${HEADSCALE_AUTO_ENROLL_TAILSCALE_INIT:-/etc/init.d/tailscale}"
+TAILSCALE_STATE_READY_FILE="${HEADSCALE_AUTO_ENROLL_STATE_READY_FILE:-/var/run/tailscale-state-persist.ready}"
 
 log() {
 	logger -t "$TAG" "$*"
@@ -19,6 +20,24 @@ cfg() {
 	value="$(uci -q get "$CONFIG.$SECTION.$name" 2>/dev/null || true)"
 	[ -n "$value" ] || value="$default"
 	printf '%s' "$value"
+}
+
+# Route acceptance is a device-wide Tailnet policy. Keep it in the tailscale
+# UCI section so first enrollment, a restored state, and an already-enrolled
+# node cannot drift from one another. Missing or malformed legacy values retain
+# the private-Mesh default of enabled.
+tailnet_accept_routes() {
+	local value
+
+	value="$(uci -q get tailscale.settings.accept_routes 2>/dev/null || true)"
+	case "$value" in
+		0|false|no|off) printf '0' ;;
+		1|true|yes|on|'') printf '1' ;;
+		*)
+			log "invalid tailscale.settings.accept_routes=$value; defaulting to 1"
+			printf '1'
+			;;
+	esac
 }
 
 bool_arg() {
@@ -399,7 +418,7 @@ build_hostname() {
 	local hostname=""
 
 	if [ -n "$override" ]; then
-		printf '%s' "$override" | tr -cs 'A-Za-z0-9_.-' '-'
+		printf '%s' "$override" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
 		return 0
 	fi
 
@@ -412,11 +431,11 @@ build_hostname() {
 	fi
 
 	if [ -n "$prefix" ]; then
-		printf '%s-%s' "$prefix" "$hostname" | tr -cs 'A-Za-z0-9_.-' '-'
+		printf '%s-%s' "$prefix" "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
 	elif [ -n "$board" ]; then
-		printf '%s-%s' "$hostname" "$board" | tr -cs 'A-Za-z0-9_.-' '-'
+		printf '%s-%s' "$hostname" "$board" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
 	else
-		printf '%s' "$hostname" | tr -cs 'A-Za-z0-9_.-' '-'
+		printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
 	fi
 }
 
@@ -450,19 +469,22 @@ run_tailscale_up() {
 }
 
 apply_runtime_preferences() {
-	local ssh_enabled="$1"
-	local accept_dns="$2"
-	local accept_routes="$3"
-	local advertise_routes="$4"
+	local hostname="$1"
+	local ssh_enabled="$2"
+	local accept_dns="$3"
+	local accept_routes="$4"
+	local advertise_routes="$5"
 
 	if [ -n "$advertise_routes" ]; then
 		tailscale set \
+			--hostname="$hostname" \
 			--ssh="$(bool_arg "$ssh_enabled")" \
 			--accept-dns="$(bool_arg "$accept_dns")" \
 			--accept-routes="$(bool_arg "$accept_routes")" \
 			--advertise-routes="$advertise_routes"
 	else
 		tailscale set \
+			--hostname="$hostname" \
 			--ssh="$(bool_arg "$ssh_enabled")" \
 			--accept-dns="$(bool_arg "$accept_dns")" \
 			--accept-routes="$(bool_arg "$accept_routes")"
@@ -485,6 +507,10 @@ main() {
 
 	command -v tailscale >/dev/null 2>&1 || { log "tailscale command not found"; exit 0; }
 	acquire_enroll_lock || exit 0
+	[ -f "$TAILSCALE_STATE_READY_FILE" ] || {
+		log "persistent /data Tailnet state is not ready; enrollment is held"
+		exit 0
+	}
 	if ! disable_tailscale_settings_reconciler; then
 		log "warning: could not disable optional tailscale-settings reconciler"
 	fi
@@ -494,10 +520,10 @@ main() {
 	provision_url="$(cfg provision_url '')"
 	provision_token_file="$(cfg provision_token_file '')"
 	hostname_override="$(cfg hostname_override '')"
-	hostname_prefix="$(cfg hostname_prefix openwrt)"
+	hostname_prefix="$(cfg hostname_prefix '')"
 	ssh_enabled="$(cfg ssh 1)"
 	accept_dns="$(cfg accept_dns 0)"
-	accept_routes="$(cfg accept_routes 1)"
+	accept_routes="$(tailnet_accept_routes)"
 	configured_advertise_routes="$(cfg advertise_routes '')"
 	lan_state="$(read_actual_lan_cidr)" || {
 		log "refusing route advertisement: LAN must have an active RFC1918 IPv4 prefix between /24 and /30"
@@ -525,9 +551,10 @@ main() {
 	restore_gate_attempts="$(cfg restore_gate_attempts 90)"
 	restore_gate_interval="$(cfg restore_gate_interval 10)"
 	delete_auth_key_file="$(cfg delete_auth_key_file 1)"
+	hostname="$(build_hostname "$hostname_override" "$hostname_prefix")"
 
 	if is_enrolled; then
-		if apply_runtime_preferences "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
+		if apply_runtime_preferences "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
 			log "tailscale already enrolled; runtime preferences applied"
 		else
 			log "tailscale already enrolled; failed to apply runtime preferences"
@@ -542,7 +569,7 @@ main() {
 	case "$restore_gate_state" in
 		already_done|restored)
 			if reload_recovered_state; then
-				if apply_runtime_preferences "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
+				if apply_runtime_preferences "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
 					log "recovered tailscale state; runtime preferences applied"
 				else
 					log "recovered tailscale state; failed to apply runtime preferences"
@@ -569,8 +596,6 @@ main() {
 		log "no auth key available; set $auth_key_file or provision_url"
 		exit 1
 	fi
-
-	hostname="$(build_hostname "$hostname_override" "$hostname_prefix")"
 
 	while [ "$attempt" -lt "$max_attempts" ]; do
 		if run_tailscale_up "$login_server" "$auth_key" "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then

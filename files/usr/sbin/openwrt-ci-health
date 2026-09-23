@@ -1,0 +1,193 @@
+#!/bin/sh
+#
+# openwrt-ci-health -- a read-only, secret-safe readiness report for firmware
+# acceptance checks.  It does not reload services, mutate UCI, or fetch a
+# subscription.  A nonzero status is reserved for an explicit --require gate;
+# plain reports always remain useful during a partial boot.
+
+set -u
+
+DATA_ROOT="${OPENWRT_CI_HEALTH_DATA_ROOT:-/data}"
+MOUNTS_FILE="${OPENWRT_CI_HEALTH_MOUNTS_FILE:-/proc/mounts}"
+DATA_RUNTIME_STATUS_FILE="${OPENWRT_CI_HEALTH_DATA_RUNTIME_STATUS_FILE:-/var/run/data-runtime.status}"
+NIKKI_CONFIG="${OPENWRT_CI_HEALTH_NIKKI_CONFIG:-/etc/config/nikki}"
+NIKKI_SUBSCRIPTION_STATUS_FILE="${OPENWRT_CI_HEALTH_NIKKI_SUBSCRIPTION_STATUS_FILE:-/var/run/nikki-subscription-sync.status}"
+NIKKI_DNS_FAILOPEN="${OPENWRT_CI_HEALTH_NIKKI_DNS_FAILOPEN:-/usr/sbin/nikki-dns-failopen}"
+TAILSCALE_ROUTE_RECONCILE="${OPENWRT_CI_HEALTH_TAILSCALE_ROUTE_RECONCILE:-/usr/sbin/tailscale-route-reconcile}"
+MAGICDNS_RESOLVER="${OPENWRT_CI_HEALTH_MAGICDNS_RESOLVER:-100.100.100.100}"
+
+JSON=0
+REQUIRED=""
+
+usage() {
+  echo 'usage: openwrt-ci-health [--json] [--require data,wan,tailscale,magicdns,nikki]' >&2
+}
+
+is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+safe_token() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_.:-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+bool() { [ "$1" = 1 ] && printf true || printf false; }
+
+status_value() {
+  file="$1"
+  key="$2"
+  [ -r "$file" ] || return 0
+  sed -n "s/^${key}=//p" "$file" 2>/dev/null | head -n 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --json) JSON=1 ;;
+    --require)
+      shift
+      [ "$#" -gt 0 ] || { usage; exit 2; }
+      REQUIRED="$1"
+      ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+  shift
+done
+
+DATA_STATE="$(status_value "$DATA_RUNTIME_STATUS_FILE" state)"
+safe_token "$DATA_STATE" || DATA_STATE=unknown
+DATA_MOUNT=absent
+if awk -v target="$DATA_ROOT" '
+  $2 == target && $1 ~ /^\/dev\// && $3 !~ /^(overlay|tmpfs|ramfs|squashfs)$/ { found = 1 }
+  END { exit !found }
+' "$MOUNTS_FILE" 2>/dev/null; then
+  DATA_MOUNT=block-backed
+elif awk -v target="$DATA_ROOT" '$2 == target { found = 1 } END { exit !found }' "$MOUNTS_FILE" 2>/dev/null; then
+  DATA_MOUNT=non-block
+fi
+DATA_OK=0
+[ "$DATA_MOUNT" = block-backed ] && [ "$DATA_STATE" = persistent ] && DATA_OK=1
+
+WAN_PROTO="$(uci -q get network.wan.proto 2>/dev/null || true)"
+safe_token "$WAN_PROTO" || WAN_PROTO=unknown
+WAN_UP=0
+WAN_ROUTE=0
+ubus call network.interface.wan status 2>/dev/null | grep -Eq '"up"[[:space:]]*:[[:space:]]*true' && WAN_UP=1
+ip route show default 2>/dev/null | grep -q '^default ' && WAN_ROUTE=1
+WAN_OK=0
+[ "$WAN_UP" -eq 1 ] && [ "$WAN_ROUTE" -eq 1 ] && WAN_OK=1
+
+TAILSCALE_JSON="$(tailscale status --json 2>/dev/null || true)"
+TAILSCALE_BACKEND="$(printf '%s\n' "$TAILSCALE_JSON" | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+safe_token "$TAILSCALE_BACKEND" || TAILSCALE_BACKEND=unknown
+TAILSCALE_INTERFACE=0
+ip link show dev tailscale0 >/dev/null 2>&1 && TAILSCALE_INTERFACE=1
+ACCEPT_ROUTES="$(uci -q get tailscale.settings.accept_routes 2>/dev/null || true)"
+case "$ACCEPT_ROUTES" in
+  1|true|yes|on) ACCEPT_ROUTES=1 ;;
+  *) ACCEPT_ROUTES=0 ;;
+esac
+TAILSCALE_OK=0
+TAILSCALE_ROUTE_STATUS=unavailable
+if [ -x "$TAILSCALE_ROUTE_RECONCILE" ]; then
+  TAILSCALE_ROUTE_REPORT="$($TAILSCALE_ROUTE_RECONCILE --status 2>/dev/null || true)"
+  TAILSCALE_ROUTE_STATUS="$(printf '%s\n' "$TAILSCALE_ROUTE_REPORT" | sed -n 's/^health=//p' | head -n 1)"
+  safe_token "$TAILSCALE_ROUTE_STATUS" || TAILSCALE_ROUTE_STATUS=unknown
+fi
+[ "$TAILSCALE_BACKEND" = Running ] && [ "$TAILSCALE_INTERFACE" -eq 1 ] && \
+  [ "$TAILSCALE_ROUTE_STATUS" = healthy ] && TAILSCALE_OK=1
+
+SELF_DNS_NAME=""
+if command -v jsonfilter >/dev/null 2>&1; then
+  SELF_DNS_NAME="$(printf '%s' "$TAILSCALE_JSON" | jsonfilter -e '@.Self.DNSName' 2>/dev/null || true)"
+elif command -v jq >/dev/null 2>&1; then
+  SELF_DNS_NAME="$(printf '%s' "$TAILSCALE_JSON" | jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+fi
+[ -n "$SELF_DNS_NAME" ] || SELF_DNS_NAME="$(printf '%s\n' "$TAILSCALE_JSON" | sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+SELF_DNS_NAME="${SELF_DNS_NAME%.}"
+case "$SELF_DNS_NAME" in
+  ''|*[!A-Za-z0-9_.-]*) SELF_DNS_NAME="" ;;
+esac
+MAGICDNS_OK=0
+if [ -n "$SELF_DNS_NAME" ] && command -v nslookup >/dev/null 2>&1; then
+  nslookup "$SELF_DNS_NAME" "$MAGICDNS_RESOLVER" 2>/dev/null | grep -q 'Name:' && MAGICDNS_OK=1
+fi
+
+NIKKI_STATUS=""
+if [ -x "$NIKKI_DNS_FAILOPEN" ]; then
+  NIKKI_STATUS="$($NIKKI_DNS_FAILOPEN --status 2>/dev/null || true)"
+fi
+NIKKI_MODE=unavailable
+NIKKI_OK=0
+if printf '%s\n' "$NIKKI_STATUS" | grep -q '^health=healthy(via direct)$'; then
+  NIKKI_MODE=direct
+  NIKKI_OK=1
+elif printf '%s\n' "$NIKKI_STATUS" | grep -q '^health=healthy(via mihomo)$'; then
+  NIKKI_MODE=mihomo
+  NIKKI_OK=1
+elif printf '%s\n' "$NIKKI_STATUS" | grep -q '^health=degraded'; then
+  NIKKI_MODE=degraded
+fi
+
+SUBSCRIPTION_CONFIGURED=0
+if [ -f "$NIKKI_CONFIG" ]; then
+  subscription_url="$(uci -q get nikki.subscription.url 2>/dev/null || true)"
+  [ -n "$subscription_url" ] && SUBSCRIPTION_CONFIGURED=1
+  unset subscription_url
+fi
+SUBSCRIPTION_RESULT="$(status_value "$NIKKI_SUBSCRIPTION_STATUS_FILE" last_result)"
+case "$SUBSCRIPTION_RESULT" in
+  success|failed|deferred-wan|unconfigured) ;;
+  *) SUBSCRIPTION_RESULT="" ;;
+esac
+SUBSCRIPTION_ATTEMPT="$(status_value "$NIKKI_SUBSCRIPTION_STATUS_FILE" last_attempt_epoch)"
+SUBSCRIPTION_SUCCESS="$(status_value "$NIKKI_SUBSCRIPTION_STATUS_FILE" last_success_epoch)"
+is_number "$SUBSCRIPTION_ATTEMPT" || SUBSCRIPTION_ATTEMPT=0
+is_number "$SUBSCRIPTION_SUCCESS" || SUBSCRIPTION_SUCCESS=0
+SUBSCRIPTION_OK=0
+if [ "$SUBSCRIPTION_CONFIGURED" -eq 0 ]; then
+  SUBSCRIPTION_RESULT=unconfigured
+  SUBSCRIPTION_OK=1
+elif [ "$SUBSCRIPTION_RESULT" = success ] || [ "$SUBSCRIPTION_RESULT" = deferred-wan ]; then
+  SUBSCRIPTION_OK=1
+elif [ -z "$SUBSCRIPTION_RESULT" ]; then
+  SUBSCRIPTION_RESULT=pending
+fi
+
+if [ "$JSON" -eq 1 ]; then
+  printf '{"data":{"healthy":%s,"state":"%s","mount":"%s"},' "$(bool "$DATA_OK")" "$DATA_STATE" "$DATA_MOUNT"
+  printf '"wan":{"healthy":%s,"protocol":"%s","up":%s,"default_route":%s},' "$(bool "$WAN_OK")" "$WAN_PROTO" "$(bool "$WAN_UP")" "$(bool "$WAN_ROUTE")"
+  printf '"tailscale":{"healthy":%s,"backend_state":"%s","interface":%s,"accept_routes":%s,"route_health":"%s"},' "$(bool "$TAILSCALE_OK")" "$TAILSCALE_BACKEND" "$(bool "$TAILSCALE_INTERFACE")" "$(bool "$ACCEPT_ROUTES")" "$TAILSCALE_ROUTE_STATUS"
+  printf '"magicdns":{"healthy":%s,"resolver":"%s","self_name":"%s"},' "$(bool "$MAGICDNS_OK")" "$MAGICDNS_RESOLVER" "$SELF_DNS_NAME"
+  printf '"nikki":{"healthy":%s,"mode":"%s"},' "$(bool "$NIKKI_OK")" "$NIKKI_MODE"
+  printf '"subscription":{"healthy":%s,"configured":%s,"result":"%s","last_attempt_epoch":%s,"last_success_epoch":%s}}\n' \
+    "$(bool "$SUBSCRIPTION_OK")" "$(bool "$SUBSCRIPTION_CONFIGURED")" "$SUBSCRIPTION_RESULT" "$SUBSCRIPTION_ATTEMPT" "$SUBSCRIPTION_SUCCESS"
+else
+  printf 'data=%s state=%s mount=%s\n' "$(bool "$DATA_OK")" "$DATA_STATE" "$DATA_MOUNT"
+  printf 'wan=%s protocol=%s up=%s default_route=%s\n' "$(bool "$WAN_OK")" "$WAN_PROTO" "$(bool "$WAN_UP")" "$(bool "$WAN_ROUTE")"
+  printf 'tailscale=%s backend_state=%s interface=%s accept_routes=%s route_health=%s\n' "$(bool "$TAILSCALE_OK")" "$TAILSCALE_BACKEND" "$(bool "$TAILSCALE_INTERFACE")" "$(bool "$ACCEPT_ROUTES")" "$TAILSCALE_ROUTE_STATUS"
+  printf 'magicdns=%s resolver=%s\n' "$(bool "$MAGICDNS_OK")" "$MAGICDNS_RESOLVER"
+  printf 'nikki=%s mode=%s\n' "$(bool "$NIKKI_OK")" "$NIKKI_MODE"
+  printf 'subscription=%s configured=%s result=%s last_attempt_epoch=%s last_success_epoch=%s\n' \
+    "$(bool "$SUBSCRIPTION_OK")" "$(bool "$SUBSCRIPTION_CONFIGURED")" "$SUBSCRIPTION_RESULT" "$SUBSCRIPTION_ATTEMPT" "$SUBSCRIPTION_SUCCESS"
+fi
+
+[ -n "$REQUIRED" ] || exit 0
+REQUIRE_OK=1
+OLD_IFS="$IFS"
+IFS=,
+set -- $REQUIRED
+IFS="$OLD_IFS"
+[ "$#" -gt 0 ] || { usage; exit 2; }
+for requirement in "$@"; do
+  case "$requirement" in
+    data) [ "$DATA_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    wan) [ "$WAN_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    tailscale) [ "$TAILSCALE_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    magicdns) [ "$MAGICDNS_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    nikki) [ "$NIKKI_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+[ "$REQUIRE_OK" -eq 1 ]

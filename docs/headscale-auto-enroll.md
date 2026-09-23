@@ -8,12 +8,16 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - Use ordinary SSH to the router over its Tailscale IP for normal management after the router joins Headscale, for example `ssh root@100.64.x.x`.
 - `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
-- The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Its private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
+- `tailscale.settings.accept_routes` is the sole router route-acceptance policy; this overlay defaults it to `1` for the private multi-site Mesh. Auto-enrollment only reads and applies that setting, including after state restore and on already-enrolled routers. The CI runner is separate and explicitly uses `--accept-routes=false`. The private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
 - Keep the optional `tailscale-settings` LuCI reconciler disabled. Its current package service runs `tailscaled --cleanup` during service startup; with an already-running daemon this can remove `tailscale0`'s address and table 52 routes. `headscale-auto-enroll` owns the persistent `tailscale set` preferences instead.
 
 ## Files
 
 - `/etc/config/headscale_auto_enroll` controls enrollment.
+- `/data/tailscale/tailscaled.state` is the persistent Tailnet identity. The
+  `tailscale-state-persist` service migrates an existing legacy state from
+  `/etc/tailscale/` only when `/data` is a real block-backed mount; it never
+  overwrites an existing `/data` state file.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
@@ -32,10 +36,9 @@ config enroll 'main'
 	option login_server 'https://headscale.jmsu.top'
 	option auth_key_file '/etc/tailscale/headscale.authkey'
 	option provision_url ''
-	option hostname_prefix 'openwrt'
+	option hostname_prefix ''
 	option ssh '1'
 	option accept_dns '0'
-	option accept_routes '0'
 	option advertise_routes ''
 ```
 
@@ -80,15 +83,34 @@ Optional non-secret environment variables:
 
 ```text
 HEADSCALE_LOGIN_SERVER=https://headscale.jmsu.top
-HEADSCALE_OPENWRT_HOSTNAME_PREFIX=openwrt
+HEADSCALE_OPENWRT_HOSTNAME_PREFIX=
 HEADSCALE_OPENWRT_ENABLE_SSH=1
-HEADSCALE_OPENWRT_ACCEPT_ROUTES=0
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES=
 ```
 
 For Dropbear-backed ordinary SSH over the Tailscale IP, store one or more public keys in the GitHub Actions secret `OPENWRT_DROPBEAR_AUTHORIZED_KEYS`. The workflow writes those keys to `/etc/dropbear/authorized_keys` in the private build overlay. Do not put private keys in this secret and do not commit private keys to the repository. If Tailscale SSH is enabled and allowed by policy, tailnet port `22` connections use Tailscale SSH authorization instead of Dropbear keys.
 
 The Tailscale firewall overlay intentionally uses `firewall.tailscale.device='tailscale0'` instead of creating `network.tailscale`. Tailscaled owns the TUN address and routes; letting netifd manage `tailscale0` can remove the assigned `100.64.0.0/10` address and make `ssh root@100.64.x.x` time out.
+
+## Stable identity across Factory images
+
+For managed devices, the generated hostname is `<model>-s<third-octet>`, such
+as `re-cs-02-s11` for `192.168.11.1`. A one-shot default migrates only the
+repository's legacy `openwrt-<model>-<octet>` form; operator-chosen names are
+not changed. The name is a label, while `/data/tailscale/tailscaled.state`
+holds the cryptographic device identity that prevents duplicate Headscale
+nodes and stale subnet-route records after a supported Factory flash.
+
+Install one retained-config sysupgrade carrying this migration before relying
+on Factory images. If the independent `/data` partition is missing, raw, or
+reformatted, the service refuses to create a replacement state in the root
+overlay and holds auto-enrollment; restore `/data` or use the physical rescue
+path instead.
+
+Before a Factory flash, verify `findmnt /data` reports the intended block
+device and `ls -l /data/tailscale/tailscaled.state` exists. After the retained
+upgrade has booted once, the same state file reconnects the existing Headscale
+node and only changes its hostname label; it does not register a `-1` node.
 
 When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll script applies `tailscale set --ssh=true` even if the node is already enrolled. This keeps recovered or LuCI-enrolled routers from staying in `RunSSH=false`.
 

@@ -6,10 +6,9 @@ CONFIG_FILE="$TARGET_FILES/etc/config/headscale_auto_enroll"
 AUTH_KEY_FILE="$TARGET_FILES/etc/tailscale/headscale.authkey"
 
 HEADSCALE_LOGIN_SERVER="${HEADSCALE_LOGIN_SERVER:-https://headscale.jmsu.top}"
-HEADSCALE_OPENWRT_HOSTNAME_PREFIX="${HEADSCALE_OPENWRT_HOSTNAME_PREFIX:-openwrt}"
+HEADSCALE_OPENWRT_HOSTNAME_PREFIX="${HEADSCALE_OPENWRT_HOSTNAME_PREFIX:-}"
 HEADSCALE_OPENWRT_HOSTNAME="${HEADSCALE_OPENWRT_HOSTNAME:-}"
 HEADSCALE_OPENWRT_ENABLE_SSH="${HEADSCALE_OPENWRT_ENABLE_SSH:-1}"
-HEADSCALE_OPENWRT_ACCEPT_ROUTES="${HEADSCALE_OPENWRT_ACCEPT_ROUTES:-1}"
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES="${HEADSCALE_OPENWRT_ADVERTISE_ROUTES:-}"
 
 derive_lan_subnet() {
@@ -107,21 +106,9 @@ lan_ip_site_id() {
 	local third
 
 	is_rfc1918_ipv4 "$ip" || return 0
-	case "$ip" in
-		192.168.*.*)
-			third="${ip#192.168.}"
-			printf '%s' "${third%%.*}"
-			;;
-		10.*.*.*)
-			printf '%s' "$ip" | tr '.' '-'
-			;;
-		172.*.*.*)
-			printf '%s' "$ip" | tr '.' '-'
-			;;
-		*)
-			printf ''
-			;;
-	esac
+	third="${ip#*.*.}"
+	third="${third%%.*}"
+	printf 's%s' "$third"
 }
 
 derive_headscale_hostname() {
@@ -174,7 +161,6 @@ set_config_option hostname_prefix "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX"
 set_config_option hostname_override "$(derive_headscale_hostname "$HEADSCALE_OPENWRT_HOSTNAME" "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX" "${WRT_NAME:-router}" "${WRT_IP:-}")"
 set_config_option ssh "$HEADSCALE_OPENWRT_ENABLE_SSH"
 set_config_option accept_dns 0
-set_config_option accept_routes "$HEADSCALE_OPENWRT_ACCEPT_ROUTES"
 # Never bake a route based on WRT_IP.  It is a LuCI/login default, while the
 # router's actual LAN may be restored or changed after a sysupgrade.  The
 # first-boot runtime derives the active RFC1918 prefix and persists it only

@@ -28,7 +28,6 @@
 | **P1** | S-3 | RE-CS-07 未 pin `WRT_COMMIT`，跟踪移动的 `main` 分支，不可复现 | `RE-CS-07-BUILD.yml` |
 | **P2** | M-3 | PAT 永久明文存放（UCI 644 + config.json 600），90 天过期无续期，失败不轮转 | `files/etc/config/multica` |
 | **P2** | N-2 | Headscale `autoApprovers` 放行整个 `192.168.0.0/16` + 可复用 authkey，泄露即路由劫持 | `docs/tailnet-mesh-multi-site.md` |
-| **P2** | S-4 | `viewturbocore` 经 `curl -k` 无校验下载、rc.local 以 root 开机自启 | `Scripts/fetch_viewturbocore.sh:96`、`files/etc/rc.local:6` |
 
 ---
 
@@ -242,7 +241,6 @@ export UV_CACHE_DIR=/data/uv_cache
 - `actions/checkout@main` 跟踪移动分支，若账号被盗可植入恶意 CI 步骤。应 pin 到完整 SHA（其他 action 如 `cache@v5`、`upload-artifact@v6` 同样建议 pin SHA）。
 - `CPE-5G.yml` 顶层 `permissions: write-all` 违反最小权限；WRT-CORE 内部 job 已显式声明 `contents: write, actions: write`，wrapper 不应再放开。
 - RE-CS-07 未设 `WRT_COMMIT`，直接跟踪 `VIKINGYFY/immortalwrt:main` 移动分支，产物不可复现，也违反 AGENTS.md 对 CPE 基线“必须 pin 完整 40 位 SHA”的精神（虽然该条明确针对 CPE，但生产固件同样应 pin）。RE-CS-02/SS-01 已 pin `a4638cd...`，应给 RE-CS-07 同样 pin。
-- `viewturbocore`（S-4，P2）：`curl -fsSL -k https://assets.vtfly.com/...` 跳过 TLS 校验、无 SHA256/签名校验，下载的 ELF 由 `rc.local` 以 root 开机自启。第三方域名被劫持或投毒即全网 RCE。应去掉 `-k`、加版本 pin + checksum 校验，或评估是否必须开机自启。
 
 ### 4.4 其他密钥链路问题
 
@@ -269,7 +267,7 @@ export UV_CACHE_DIR=/data/uv_cache
 3. **让并发限制真正生效**：procd command 追加 `--max-concurrent-tasks "$max_tasks" --poll-interval "$poll_interval" --heartbeat-interval "$heartbeat_interval"`，512MB 机型设 1；并导出 `MULTICA_DAEMON_MAX_CONCURRENT_TASKS` 双保险。设置 `MULTICA_GC_COMPLETED_TASK_TTL` 等 GC 参数防止 /data 膨胀。
 4. **修复 /data 软链接**：构建期移除 overlay 中的 `files/root/.multica`、`files/root/.pi` 真实目录（静态文件改放 `/etc/multica`、`/etc/pi`），或在 uci-defaults 中做“迁移后替换”；修正 `fetch_node_runtime.sh` 不要覆盖提交版 profile 的 /data 导出；`uv-storage` 优先识别 `/data`；pnpm/npm cache 重定向到 `/data/pnpm`。
 5. **统一站点 LAN_IP**：RE-SS-01/RE-CS-07 默认值错开为 10/11/12，CI 增加子网唯一性校验。
-6. **供应链加固**：`actions/checkout` 等第三方 action pin 到完整 SHA；CPE-5G 收回 `write-all`；RE-CS-07 pin `WRT_COMMIT`；viewturbocore 去掉 `-k` 加 checksum。
+6. **供应链加固**：`actions/checkout` 等第三方 action pin 到完整 SHA；CPE-5G 收回 `write-all`；RE-CS-07 pin `WRT_COMMIT`。
 
 ### 中期加固（P2，纵深防御）
 7. **Agent 权限降维**：Multica daemon 及子 Agent 以非 root 用户运行，sudoers 白名单 + cgroup memory limit；Multica 反代启用 mTLS/IP 白名单；PAT 改设备级短期 token，UCI 文件 `chmod 600`，sed 注入改安全转义。
@@ -281,7 +279,7 @@ export UV_CACHE_DIR=/data/uv_cache
 ### 长期演进
 12. 增加实机集成测试门禁：在 QEMU/真机构建中验证 `multica daemon status` 为 running、`multica runtime list` 非空、`df /data` 使用率、`ip route show table 52` 路由数、`nft list chain inet nikki router_dns_hijack` 含 Tailscale return 规则。
 13. 为 Agent 操作建立“断连保护”包装：所有 `uci set network/firewall/dropbear` 操作通过带超时自动回滚的封装执行（角色卡已有要求，但应在脚本层强制）。
-14. 建立固件 SBOM 与构建溯源：metadata.json 已记录 source commit，建议进一步记录所有预下载二进制（node/uv/multica/viewturbocore）的版本与 SHA256。
+14. 建立固件 SBOM 与构建溯源：metadata.json 已记录 source commit，建议进一步记录所有预下载二进制（node/uv/multica）的版本与 SHA256。
 
 ---
 

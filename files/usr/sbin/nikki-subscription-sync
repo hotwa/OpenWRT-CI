@@ -1,0 +1,106 @@
+#!/bin/sh
+set -eu
+
+LOCK_DIR="${NIKKI_SUBSCRIPTION_LOCK_DIR:-/var/run/nikki-subscription-sync.lock}"
+STATUS_FILE="${NIKKI_SUBSCRIPTION_STATUS_FILE:-/var/run/nikki-subscription-sync.status}"
+NIKKI_CONFIG="${NIKKI_SUBSCRIPTION_NIKKI_CONFIG:-/etc/config/nikki}"
+NIKKI_INIT="${NIKKI_SUBSCRIPTION_NIKKI_INIT:-/etc/init.d/nikki}"
+MAX_ATTEMPTS="${NIKKI_SUBSCRIPTION_MAX_ATTEMPTS:-36}"
+SLEEP_SECONDS="${NIKKI_SUBSCRIPTION_SLEEP_SECONDS:-5}"
+SECTION="${NIKKI_SUBSCRIPTION_SECTION:-subscription}"
+
+log() { logger -t nikki-subscription-sync "$*" 2>/dev/null || true; }
+
+is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+previous_success_epoch() {
+  [ -r "$STATUS_FILE" ] || { printf '0\n'; return 0; }
+  value="$(sed -n 's/^last_success_epoch=//p' "$STATUS_FILE" 2>/dev/null | head -n 1)"
+  is_number "$value" && printf '%s\n' "$value" || printf '0\n'
+}
+
+# This is deliberately a metadata-only status record.  In particular, do not
+# put the subscription URL, request headers, or service output here: /var/run
+# is often inspected by diagnostics and the health endpoint.
+write_status() {
+  result="$1"
+  attempt_epoch="$2"
+  success_epoch="$3"
+  configured="$4"
+  parent="${STATUS_FILE%/*}"
+  temporary="$STATUS_FILE.new.$$"
+
+  [ "$parent" != "$STATUS_FILE" ] || return 1
+  [ ! -L "$parent" ] || return 1
+  mkdir -p "$parent" 2>/dev/null || return 1
+  [ -d "$parent" ] && [ ! -L "$parent" ] || return 1
+  [ ! -L "$STATUS_FILE" ] || return 1
+  [ ! -L "$temporary" ] || return 1
+  (
+    umask 077
+    {
+      printf 'configured=%s\n' "$configured"
+      printf 'last_result=%s\n' "$result"
+      printf 'last_attempt_epoch=%s\n' "$attempt_epoch"
+      printf 'last_success_epoch=%s\n' "$success_epoch"
+    } >"$temporary"
+  ) 2>/dev/null || return 1
+  chmod 0600 "$temporary" 2>/dev/null || {
+    rm -f "$temporary" 2>/dev/null || true
+    return 1
+  }
+  mv -f "$temporary" "$STATUS_FILE" 2>/dev/null || {
+    rm -f "$temporary" 2>/dev/null || true
+    return 1
+  }
+}
+
+now_epoch() {
+  now="$(date +%s 2>/dev/null || true)"
+  is_number "$now" && printf '%s\n' "$now" || printf '0\n'
+}
+
+[ -f "$NIKKI_CONFIG" ] || {
+  write_status unconfigured 0 "$(previous_success_epoch)" 0 || true
+  exit 0
+}
+url="$(uci -q get "nikki.$SECTION.url" 2>/dev/null || true)"
+[ -n "$url" ] || {
+  write_status unconfigured 0 "$(previous_success_epoch)" 0 || true
+  exit 0
+}
+# Do not retain the URL after the configuration presence check.
+unset url
+attempt_epoch="$(now_epoch)"
+last_success_epoch="$(previous_success_epoch)"
+mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+
+ready=0
+attempt=0
+while [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
+  if ubus call network.interface.wan status 2>/dev/null | grep -q '"up": true' && ip route show default 2>/dev/null | grep -q '^default '; then
+    ready=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep "$SLEEP_SECONDS"
+done
+[ "$ready" -eq 1 ] || {
+  write_status deferred-wan "$attempt_epoch" "$last_success_epoch" 1 || true
+  log 'WAN was not ready; subscription update deferred'
+  exit 0
+}
+
+if service nikki update_subscription "$SECTION"; then
+  uci set nikki.config.enabled='1'
+  uci commit nikki
+  "$NIKKI_INIT" restart
+  success_epoch="$(now_epoch)"
+  write_status success "$attempt_epoch" "$success_epoch" 1 || true
+  log 'subscription updated and Nikki restarted'
+else
+  write_status failed "$attempt_epoch" "$last_success_epoch" 1 || true
+  log 'subscription update failed; preserving existing profile and service state'
+  exit 1
+fi

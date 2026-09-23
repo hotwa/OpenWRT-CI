@@ -1,62 +1,30 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
-
-source "$(dirname "${BASH_SOURCE[0]}")/lib/workflow-discovery.sh"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERAL="$ROOT_DIR/Config/GENERAL.txt"
+RE_CS_07="$ROOT_DIR/Config/IPQ60XX-RE-CS-07-NOWIFI.txt"
 PACKAGES_SH="$ROOT_DIR/Scripts/Packages.sh"
 WRT_CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
-[ -f "$GENERAL" ] || { echo "missing GENERAL config"; exit 1; }
-[ -f "$PACKAGES_SH" ] || { echo "missing Packages.sh"; exit 1; }
-[ -f "$WRT_CORE" ] || { echo "missing WRT-CORE workflow"; exit 1; }
-
-grep -q '^CONFIG_PACKAGE_luci-app-wrtbak=y$' "$GENERAL" || {
-	echo "GENERAL config does not enable luci-app-wrtbak"
-	exit 1
-}
-
-grep -Fq 'WRTBAK_PACKAGE_BRANCH=main' "$PACKAGES_SH" || {
-	echo "Packages.sh does not use the stable wrtbak main branch as its fetch base"
-	exit 1
-}
-
-grep -Fq 'WRTBAK_PACKAGE_COMMIT=9d0cfb2eb12530d63ba1481e4cf12e04e6ed55a1' "$PACKAGES_SH" || {
-	echo "Packages.sh does not pin the reviewed wrtbak commit"
-	exit 1
-}
-
-grep -Fq 'UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"' "$PACKAGES_SH" || {
-	echo "Packages.sh does not checkout the pinned wrtbak commit"
-	exit 1
-}
-
-grep -q 'CONFIG_PACKAGE_luci-app-wrtbak=y' "$WRT_CORE" || {
-	echo "WRT-CORE does not verify luci-app-wrtbak remains enabled after defconfig"
-	exit 1
-}
-
-grep -Fq 'WRTBAK_R2_PREFIX' "$WRT_CORE"
-grep -Fq 'Scripts/WrtbakR2Config.sh' "$WRT_CORE"
-grep -Fq 'Scripts/PrivateFirmwareGuard.sh' "$WRT_CORE"
-grep -Fq "if: env.WRT_PRIVATE_BUILD != 'true'" "$WRT_CORE"
-
-for workflow in $(discover_device_workflows); do
-	grep -qE '^      WRTBAK_DEVICE_ALIAS:[[:space:]]*$' "$workflow" || continue
-	grep -qE '^      WRTBAK_PROXY_PROFILE:[[:space:]]*$' "$workflow" || continue
-	grep -Fq 'WRTBAK_PROXY_PROFILE:' "$workflow" || {
-		echo "$(basename "$workflow") missing WRTBAK_PROXY_PROFILE input"
-		exit 1
-	}
-	grep -Fq "WRTBAK_DEVICE_ALIAS: \${{ inputs.WRTBAK_DEVICE_ALIAS || '' }}" "$workflow" || {
-		echo "$(basename "$workflow") does not pass WRTBAK_DEVICE_ALIAS into WRT-CORE"
-		exit 1
-	}
-	grep -Fq "WRTBAK_PROXY_PROFILE: \${{ inputs.WRTBAK_PROXY_PROFILE || 'auto' }}" "$workflow" || {
-		echo "$(basename "$workflow") does not pass WRTBAK_PROXY_PROFILE into WRT-CORE"
+for config in "$GENERAL" "$RE_CS_07"; do
+	grep -qx "# CONFIG_PACKAGE_luci-app-wrtbak is not set" "$config" || {
+		echo "$(basename "$config") does not disable luci-app-wrtbak" >&2
 		exit 1
 	}
 done
 
-echo "wrtbak package wiring checks passed"
+! grep -Fq "UPDATE_PACKAGE \"luci-app-wrtbak\"" "$PACKAGES_SH" || {
+	echo "Packages.sh must not fetch luci-app-wrtbak" >&2
+	exit 1
+}
+! grep -Fq "WRTBAK_" "$WRT_CORE" || {
+	echo "WRT-CORE must not accept or inject wrtbak configuration" >&2
+	exit 1
+}
+grep -Fq "luci-app-wrtbak must remain disabled in all firmware builds" "$WRT_CORE" || {
+	echo "WRT-CORE does not assert that wrtbak stays disabled" >&2
+	exit 1
+}
+
+echo "wrtbak is disabled in all firmware builds"

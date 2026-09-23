@@ -35,7 +35,8 @@ if printf '%s\n' "$GLOBAL_ENV" | grep -Fq 'secrets.'; then
 fi
 for secret_name in HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN MULTICA_SERVER_URL \
 	MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS \
-	WRTBAK_R2_ACCESS_KEY_ID WRTBAK_R2_SECRET_ACCESS_KEY CLIPROXYAPI_API_KEY; do
+	OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD \
+	NIKKI_SUBSCRIPTION_URL CLIPROXYAPI_API_KEY; do
 	grep -Fq "$secret_name: \${{secrets.$secret_name}}" "$WORKFLOW" || {
 		echo "private overlay injection step is missing $secret_name"
 		exit 1
@@ -84,6 +85,24 @@ grep -q 'wrtbak-r2-secret-key' "$WORK_DIR/wrtbak.env" || {
 }
 if grep -q 'test-secret' "$WORK_DIR/wrtbak.log"; then
 	echo "guard leaked wrtbak secret to logs"
+	exit 1
+fi
+
+mkdir -p "$WORK_DIR/nikki/etc/uci-defaults"
+printf '%s\n' '#!/bin/sh' \
+  'url="$(printf %s aHR0cHM6Ly9leGFtcGxlLmludmFsaWQvc3Vic2NyaXB0aW9u | base64 -d)"' \
+  >"$WORK_DIR/nikki/etc/uci-defaults/98-nikki-subscription"
+bash "$SCRIPT" "$WORK_DIR/nikki" >"$WORK_DIR/nikki.env" 2>"$WORK_DIR/nikki.log"
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/nikki.env" || {
+	echo "Nikki subscription URL should mark firmware private"
+	exit 1
+}
+grep -q 'nikki-subscription-url' "$WORK_DIR/nikki.env" || {
+	echo "Nikki subscription private reason is missing"
+	exit 1
+}
+if grep -q 'https://example.invalid/subscription' "$WORK_DIR/nikki.env" "$WORK_DIR/nikki.log"; then
+	echo "guard leaked the Nikki subscription URL"
 	exit 1
 fi
 

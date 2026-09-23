@@ -37,8 +37,8 @@ tr -d '\r' < "$AUTOREBOOT_CONFIG" | grep -q "^	option enabled '1'$" || {
   exit 1
 }
 
-tr -d '\r' < "$AUTOREBOOT_CONFIG" | grep -q "^	option week '0'$" || {
-  echo "autoreboot config does not pin Sunday reboot"
+tr -d '\r' < "$AUTOREBOOT_CONFIG" | grep -q "^	option week '3'$" || {
+  echo "autoreboot config does not pin Wednesday reboot"
   exit 1
 }
 

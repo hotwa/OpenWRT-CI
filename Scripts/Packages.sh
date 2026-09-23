@@ -122,10 +122,6 @@ UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
 
 if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
 	UPDATE_PACKAGE "luci-app-tailscale-community" "hotwa/luci-app-tailscale-community" "main" "pkg"
-	# Fetch from the stable branch, then detach at the reviewed commit for reproducible builds.
-	WRTBAK_PACKAGE_BRANCH=main
-	WRTBAK_PACKAGE_COMMIT=9d0cfb2eb12530d63ba1481e4cf12e04e6ed55a1
-	UPDATE_PACKAGE "luci-app-wrtbak" "hotwa/luci-app-wrtbak" "$WRTBAK_PACKAGE_BRANCH" "" "" "$WRTBAK_PACKAGE_COMMIT"
 fi
 # 临时移除 podman，跳过 luci-app-podman 拉取。
 # UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main" "" "" "4a15e161170ba8cdfec0f522b7a80cc54b9dd96b"

@@ -1,0 +1,10 @@
+#!/bin/sh
+CRON_FILE=/etc/crontabs/root
+CRON_LINE='10 4 * * * /usr/sbin/nikki-subscription-sync >/dev/null 2>&1'
+[ -n "$(uci -q get nikki.subscription.url 2>/dev/null || true)" ] || exit 0
+mkdir -p /etc/crontabs
+[ -f "$CRON_FILE" ] || touch "$CRON_FILE"
+sed -i '\|/usr/sbin/nikki-subscription-sync|d' "$CRON_FILE"
+printf '%s\n' "$CRON_LINE" >>"$CRON_FILE"
+crontab "$CRON_FILE"
+exit 0

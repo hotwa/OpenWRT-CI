@@ -22,19 +22,17 @@ for workflow in $(discover_device_workflows); do
 		exit 1
 	fi
 
-	# WLG builds intentionally use explicit secrets to avoid injecting private
-	# secrets into a friend-facing firmware. Verify the required SSH key secret
-	# is passed instead of requiring full secrets: inherit.
-	if echo "$workflow_name" | grep -qi 'wlg'; then
-		grep -q 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' "$workflow" || {
-			echo "$workflow_name does not pass OPENWRT_DROPBEAR_AUTHORIZED_KEYS to WRT-CORE"
-			exit 1
-		}
-	else
-		grep -q "secrets: inherit" "$workflow" || {
-			echo "$workflow_name workflow does not pass secrets into WRT-CORE"
-			exit 1
-		}
+	grep -q '^[[:space:]]*secrets:$' "$workflow" || {
+		echo "$workflow_name workflow does not use an explicit secret allowlist"
+		exit 1
+	}
+	grep -q 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' "$workflow" || {
+		echo "$workflow_name does not pass OPENWRT_DROPBEAR_AUTHORIZED_KEYS to WRT-CORE"
+		exit 1
+	}
+	if grep -q 'secrets: inherit\|HEADSCALE_CD_AUTHKEY' "$workflow"; then
+		echo "$workflow_name still grants an inherited or CD deployment secret"
+		exit 1
 	fi
 done
 
