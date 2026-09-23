@@ -23,6 +23,7 @@ if [ "${1:-}" = -q ] && [ "${2:-}" = get ]; then
   case "${3:-}" in
     network.wan.proto) printf '%s\n' "${UCI_WAN_PROTO:-dhcp}" ;;
     tailscale.settings.accept_routes) printf '%s\n' "${UCI_ACCEPT_ROUTES:-1}" ;;
+    nikki.config.profile) printf '%s\n' "${UCI_NIKKI_PROFILE:-subscription:subscription}" ;;
     nikki.subscription.url) printf '%s\n' "${UCI_SUBSCRIPTION_URL:-}" ;;
   esac
 fi
@@ -115,6 +116,13 @@ fi
 printf 'configured=1\nlast_result=failed\nlast_attempt_epoch=124\nlast_success_epoch=123\n' >"$SUBSCRIPTION_STATUS"
 output="$(UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=must-not-appear' run_health --json)"
 grep -Fq '"subscription":{"healthy":false,"configured":true,"result":"failed"' <<<"$output"
+
+printf 'configured=1\nlast_result=unchanged\nlast_attempt_epoch=125\nlast_success_epoch=125\n' >"$SUBSCRIPTION_STATUS"
+output="$(UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=must-not-appear' run_health --json)"
+grep -Fq '"subscription":{"healthy":true,"configured":true,"result":"unchanged"' <<<"$output"
+
+output="$(UCI_NIKKI_PROFILE='file:final.yaml' UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=must-not-appear' run_health --json)"
+grep -Fq '"subscription":{"healthy":true,"configured":false,"result":"unconfigured"' <<<"$output"
 
 if NIKKI_DNS_STATUS='health=degraded(mihomo DNS unresponsive)' run_health --json --require nikki >/dev/null; then
   echo 'degraded Nikki unexpectedly passed a required health gate' >&2

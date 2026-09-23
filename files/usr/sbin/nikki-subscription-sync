@@ -1,17 +1,19 @@
 #!/bin/sh
 set -eu
 
-LOCK_DIR="${NIKKI_SUBSCRIPTION_LOCK_DIR:-/var/run/nikki-subscription-sync.lock}"
+LOCK_FILE="${NIKKI_SUBSCRIPTION_LOCK_FILE:-/var/run/nikki-subscription-sync.lock}"
 STATUS_FILE="${NIKKI_SUBSCRIPTION_STATUS_FILE:-/var/run/nikki-subscription-sync.status}"
 NIKKI_CONFIG="${NIKKI_SUBSCRIPTION_NIKKI_CONFIG:-/etc/config/nikki}"
 NIKKI_INIT="${NIKKI_SUBSCRIPTION_NIKKI_INIT:-/etc/init.d/nikki}"
+SUBSCRIPTION_FILE="${NIKKI_SUBSCRIPTION_FILE:-}"
 MAX_ATTEMPTS="${NIKKI_SUBSCRIPTION_MAX_ATTEMPTS:-36}"
 SLEEP_SECONDS="${NIKKI_SUBSCRIPTION_SLEEP_SECONDS:-5}"
-SECTION="${NIKKI_SUBSCRIPTION_SECTION:-subscription}"
 
 log() { logger -t nikki-subscription-sync "$*" 2>/dev/null || true; }
 
 is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+is_section_name() { case "$1" in ''|*[!A-Za-z0-9_-]*) return 1 ;; *) return 0 ;; esac; }
 
 previous_success_epoch() {
   [ -r "$STATUS_FILE" ] || { printf '0\n'; return 0; }
@@ -60,7 +62,48 @@ now_epoch() {
   is_number "$now" && printf '%s\n' "$now" || printf '0\n'
 }
 
+content_hash() {
+  file="$1"
+  [ -f "$file" ] || return 0
+  hash="$(sha256sum "$file" 2>/dev/null | awk 'NR == 1 { print $1 }' || true)"
+  if printf '%s\n' "$hash" | grep -Eq '^[0-9a-f]{64}$'; then
+    printf '%s\n' "$hash"
+  fi
+  return 0
+}
+
+acquire_lock() {
+  parent="${LOCK_FILE%/*}"
+  [ "$parent" != "$LOCK_FILE" ] || return 1
+  [ ! -L "$parent" ] || return 1
+  mkdir -p "$parent" 2>/dev/null || return 1
+  [ -d "$parent" ] && [ ! -L "$parent" ] || return 1
+  [ ! -L "$LOCK_FILE" ] || return 1
+  command -v flock >/dev/null 2>&1 || {
+    log 'flock is unavailable; subscription update deferred'
+    return 1
+  }
+  # The kernel releases this advisory lock even after SIGKILL. Unlike a
+  # mkdir-based lock, it cannot block every later subscription refresh.
+  exec 9>"$LOCK_FILE" || return 1
+  flock -n 9 || return 1
+}
+
 [ -f "$NIKKI_CONFIG" ] || {
+  write_status unconfigured 0 "$(previous_success_epoch)" 0 || true
+  exit 0
+}
+profile="$(uci -q get nikki.config.profile 2>/dev/null || true)"
+case "$profile" in
+  subscription:*) SECTION="${profile#subscription:}" ;;
+  *)
+    # A file profile is intentionally independent from the injected secret.
+    # It must never cause a background refresh or Nikki restart.
+    write_status unconfigured 0 "$(previous_success_epoch)" 0 || true
+    exit 0
+    ;;
+esac
+is_section_name "$SECTION" || {
   write_status unconfigured 0 "$(previous_success_epoch)" 0 || true
   exit 0
 }
@@ -71,15 +114,17 @@ url="$(uci -q get "nikki.$SECTION.url" 2>/dev/null || true)"
 }
 # Do not retain the URL after the configuration presence check.
 unset url
+if [ -z "$SUBSCRIPTION_FILE" ]; then
+  SUBSCRIPTION_FILE="/etc/nikki/subscriptions/$SECTION.yaml"
+fi
 attempt_epoch="$(now_epoch)"
 last_success_epoch="$(previous_success_epoch)"
-mkdir "$LOCK_DIR" 2>/dev/null || exit 0
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+acquire_lock || exit 0
 
 ready=0
 attempt=0
 while [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
-  if ubus call network.interface.wan status 2>/dev/null | grep -q '"up": true' && ip route show default 2>/dev/null | grep -q '^default '; then
+  if ip route show table main default 2>/dev/null | grep -q '^default '; then
     ready=1
     break
   fi
@@ -92,13 +137,29 @@ done
   exit 0
 }
 
+enabled_before="$(uci -q get nikki.config.enabled 2>/dev/null || true)"
+case "$enabled_before" in 1|true|yes|on) enabled_before=1 ;; *) enabled_before=0 ;; esac
+before_hash="$(content_hash "$SUBSCRIPTION_FILE")"
+
 if service nikki update_subscription "$SECTION"; then
+  update_success="$(uci -q get "nikki.$SECTION.success" 2>/dev/null || true)"
+  after_hash="$(content_hash "$SUBSCRIPTION_FILE")"
+  if [ "$update_success" != 1 ] || [ -z "$after_hash" ]; then
+    write_status failed "$attempt_epoch" "$last_success_epoch" 1 || true
+    log 'subscription update was not confirmed; preserving existing Nikki service state'
+    exit 1
+  fi
   uci set nikki.config.enabled='1'
   uci commit nikki
-  "$NIKKI_INIT" restart
   success_epoch="$(now_epoch)"
-  write_status success "$attempt_epoch" "$success_epoch" 1 || true
-  log 'subscription updated and Nikki restarted'
+  if [ "$enabled_before" -eq 1 ] && [ -n "$before_hash" ] && [ "$before_hash" = "$after_hash" ]; then
+    write_status unchanged "$attempt_epoch" "$success_epoch" 1 || true
+    log 'subscription content unchanged; Nikki left running'
+  else
+    "$NIKKI_INIT" restart
+    write_status success "$attempt_epoch" "$success_epoch" 1 || true
+    log 'subscription updated and Nikki restarted'
+  fi
 else
   write_status failed "$attempt_epoch" "$last_success_epoch" 1 || true
   log 'subscription update failed; preserving existing profile and service state'

@@ -412,6 +412,7 @@ jobs:
           add_file config/general               "$GITHUB_WORKSPACE/Config/GENERAL.txt"
           add_file "config/device/${WRT_CONFIG}" "$device_config"
           add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
@@ -661,10 +662,14 @@ jobs:
             ./wrt/files/etc/uci-defaults \
             ./wrt/files/root \
             ./wrt/files/usr/sbin
-          nikki_package_init="$(find ./wrt/package -type f -path '*/luci-app-nikki/root/etc/init.d/nikki' -print -quit)"
+          nikki_package_init="$(find ./wrt/package -type f -path '*/nikki/files/nikki.init' -print -quit)"
           if [ -n "$nikki_package_init" ]; then
             grep -q '^START=99$' "$nikki_package_init" || {
               echo "ERROR: Nikki init START must remain 99 for fail-open startup ordering" >&2
+              exit 1
+            }
+            awk '/^update_subscription\(\)/ { found = 1 } found { print } /^}$/ && found { exit }' "$nikki_package_init" | grep -q 'return 1' || {
+              echo "ERROR: Nikki subscription update must return failure when download validation fails" >&2
               exit 1
             }
           else

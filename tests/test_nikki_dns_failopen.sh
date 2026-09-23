@@ -37,7 +37,7 @@ for path in \
 		exit 1
 	}
 done
-grep -Fq "path '*/luci-app-nikki/root/etc/init.d/nikki'" "$CORE"
+grep -Fq "path '*/nikki/files/nikki.init'" "$CORE"
 grep -Fq 'Nikki init START must remain 99 for fail-open startup ordering' "$CORE"
 grep -Fq 'Nikki package init is absent for this target; skipping its startup-order assertion' "$CORE"
 

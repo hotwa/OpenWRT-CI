@@ -115,7 +115,22 @@ UPDATE_PACKAGE "theme-fluent" "LazuliKao/luci-theme-fluent" "main"
 
 #UPDATE_PACKAGE "homeproxy" "VIKINGYFY/homeproxy" "main"
 UPDATE_PACKAGE "momo" "nikkinikki-org/OpenWrt-momo" "main"
-UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
+NIKKI_PACKAGE_COMMIT=7b203f6c4c5e94c6c0026acb301090aa1d310e7f
+UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main" "" "" "$NIKKI_PACKAGE_COMMIT"
+NIKKI_PACKAGE_DIR=./OpenWrt-nikki/nikki
+NIKKI_UPDATE_STATUS_FIX="$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
+test -f "$NIKKI_PACKAGE_DIR/files/nikki.init" || {
+	echo "ERROR: pinned Nikki init script is missing." >&2
+	exit 1
+}
+test -f "$NIKKI_UPDATE_STATUS_FIX" || {
+	echo "ERROR: Nikki subscription status fix is missing." >&2
+	exit 1
+}
+sh "$NIKKI_UPDATE_STATUS_FIX" "$NIKKI_PACKAGE_DIR/files/nikki.init" || {
+	echo "ERROR: failed to apply the reviewed Nikki subscription status fix." >&2
+	exit 1
+}
 #UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
 #UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 #UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
