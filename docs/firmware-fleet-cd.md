@@ -1,11 +1,11 @@
 # OpenWrt Fleet Identity and Future CD Policy
 
-This document is the authoritative **planned** fleet registry and deployment
-contract. It records identifiers and safety boundaries only; it contains no
-Headscale API key, SSH private key, subscription URL, or other secret.
+This document is the authoritative fleet registry and deployment contract. It
+records identifiers and safety boundaries only; it contains no Headscale API
+key, SSH private key, subscription URL, or other secret.
 
-The repository does not currently enable unattended firmware deployment. A
-daily candidate build and a real device deployment are deliberately separate
+The repository provides a manual, default-off deployment gate. A daily
+candidate build and a real device deployment remain deliberately separate
 decisions.
 
 ## 1. Stable device identity
@@ -84,6 +84,13 @@ The router must never carry a Headscale admin API key or gRPC credential. A
 controller-local reconciler may use the local `headscale nodes` CLI and must
 skip CI/debug/ephemeral nodes and fail closed on ambiguity.
 
+`Scripts/ReconcileHeadscaleFleetIdentity.sh` is that controller-side helper.
+Run it first without arguments on the trusted Headscale host to print proposed
+renames; run it again with `--apply` only after reviewing the exact node ID,
+current name, and advertised LAN CIDR. It calls the controller's local
+`headscale nodes rename -i <node-id> <short-id>` command. No OpenWrt gRPC
+listener, callback token, or Headscale admin key in the firmware is needed.
+
 An existing legacy `openwrt-...` or `re-...-s<octet>` name is not CD-eligible
 until the controller has reconciled it to the registry name. Firmware now
 migrates only those generated legacy forms to the LAN-derived short convention;
@@ -109,9 +116,23 @@ The requested maintenance window is local midnight, but GitHub Actions cron
 uses UTC. A timezone must be recorded explicitly before any schedule is
 enabled; until then, this policy does not authorize a cron trigger.
 
-## 5. Future CD gate
+## 5. Guarded CD gate
 
-When explicitly enabled, deployment is sequential and evidence-based:
+`FIRMWARE-FLEET-CD.yml` is `workflow_dispatch` only. Its `DEPLOY` input is
+`false` by default; a real flash also enters the `firmware-cd` GitHub
+Environment. Configure that Environment with main-only deployment and a
+required reviewer before allowing it to hold the deployment secrets.
+
+The manual `PREFLIGHT` route is read-only. It first requires a successful
+main-branch build run and then confirms the remote board, active LAN CIDR,
+local hostname preference, controller-assigned MagicDNS name, `/data`, WAN,
+Tailscale, MagicDNS, and Nikki. A legacy controller name therefore fails
+before any artifact is transferred.
+
+When explicitly enabled after preflight, a run handles one device and is
+evidence-based. A future nightly orchestrator must dispatch devices in the
+approved order rather than trying to combine artifacts from separate build
+workflows:
 
 ```text
 candidate build
@@ -133,7 +154,17 @@ openwrt-ci-health --require data,wan,tailscale,magicdns,nikki
 ```
 
 One failure stops the remainder of the fleet. Devices are never flashed in
-parallel. The deployment path must use a dedicated, scoped runner/credential
-inside the Tailnet, separate from ordinary build permissions, and real CD must
-remain disabled by default until a maintenance window, rollback path, and
-per-device rollout order are approved.
+parallel. The deployment path receives `contents: read` and `actions: read`
+only, uses `HEADSCALE_CD_AUTHKEY` scoped to `tag:ci-deploy`, and has no access
+to the ordinary build job's secret contract. It requires these additional
+Environment secrets, which must use a dedicated deploy key rather than a
+personal key:
+
+- `FIRMWARE_CD_SSH_PRIVATE_KEY` — private half of a key whose public half is
+  installed through `OPENWRT_DROPBEAR_AUTHORIZED_KEYS`.
+- `FIRMWARE_CD_KNOWN_HOSTS` — pinned Dropbear host-key entries for the exact
+  registry FQDNs. The CD workflow rejects an unknown or changed host key.
+
+There is intentionally no daily flash schedule yet. Before enabling one,
+record the maintenance timezone, approved rollout order, rollback/rescue path,
+and a controller-side name reconciliation result for every target.

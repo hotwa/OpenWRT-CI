@@ -1,0 +1,180 @@
+name: Firmware Fleet CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      BUILD_RUN_ID:
+        description: 'Successful main-branch build run ID whose private artifact will be verified'
+        required: false
+        type: string
+        default: ''
+      TARGET:
+        description: 'Registered device to inspect or upgrade; one device is handled per approved run'
+        required: false
+        type: choice
+        options: [none, cs07-10, cs02-11, ss01-12]
+        default: none
+      PREFLIGHT:
+        description: 'Perform read-only Tailnet SSH preflight for the chosen target'
+        required: false
+        type: boolean
+        default: true
+      DEPLOY:
+        description: 'After approval, transfer the verified sysupgrade image and run sysupgrade -c'
+        required: false
+        type: boolean
+        default: false
+
+# This is deliberately separate from compilation: it cannot write repository
+# content, receive normal firmware-build secrets, or run without a dispatch.
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: firmware-fleet-cd
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate fleet and source build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment guards
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Validate approved fleet registry
+        run: bash Scripts/FirmwareFleetDeploy.sh validate-inventory --inventory Config/firmware-fleet.json
+
+      - name: Validate requested source build
+        if: inputs.TARGET != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.BUILD_RUN_ID }}
+        run: |
+          set -euo pipefail
+          [ -n "$BUILD_RUN_ID" ] || { echo 'ERROR: BUILD_RUN_ID is required for a device preflight or deployment' >&2; exit 1; }
+          bash Scripts/FirmwareFleetDeploy.sh validate-run --run-id "$BUILD_RUN_ID"
+
+  preflight:
+    name: Read-only Tailnet preflight
+    needs: validate
+    if: inputs.TARGET != 'none' && (inputs.PREFLIGHT || inputs.DEPLOY)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout deployment guards
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Configure scoped Tailnet and pinned SSH
+        env:
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CD_AUTHKEY }}
+          HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
+          FIRMWARE_CD_SSH_PRIVATE_KEY: ${{ secrets.FIRMWARE_CD_SSH_PRIVATE_KEY }}
+          FIRMWARE_CD_KNOWN_HOSTS: ${{ secrets.FIRMWARE_CD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CD_AUTHKEY is required}"
+          : "${HEADSCALE_LOGIN:?HEADSCALE_URL is required}"
+          : "${FIRMWARE_CD_SSH_PRIVATE_KEY:?FIRMWARE_CD_SSH_PRIVATE_KEY is required}"
+          : "${FIRMWARE_CD_KNOWN_HOSTS:?FIRMWARE_CD_KNOWN_HOSTS is required}"
+          install -d -m 700 "$RUNNER_TEMP/firmware-cd-ssh"
+          umask 077
+          printf '%s\n' "$FIRMWARE_CD_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/firmware-cd-ssh/id_ed25519"
+          printf '%s\n' "$FIRMWARE_CD_KNOWN_HOSTS" > "$RUNNER_TEMP/firmware-cd-ssh/known_hosts"
+          cat > "$RUNNER_TEMP/firmware-cd-ssh/config" <<EOF
+          Host *
+            IdentityFile $RUNNER_TEMP/firmware-cd-ssh/id_ed25519
+            UserKnownHostsFile $RUNNER_TEMP/firmware-cd-ssh/known_hosts
+            StrictHostKeyChecking yes
+            IdentitiesOnly yes
+            ConnectTimeout 20
+            ProxyCommand nc -x 127.0.0.1:1055 -X 5 %h %p
+          EOF
+          CI_TSCALE_HOSTNAME_PREFIX=ci-deploy bash Scripts/setup_ci_tailscale.sh
+
+      - name: Verify device identity and health without mutation
+        run: |
+          set -euo pipefail
+          bash Scripts/FirmwareFleetDeploy.sh preflight \
+            --inventory Config/firmware-fleet.json \
+            --target '${{ inputs.TARGET }}' \
+            --ssh-config "$RUNNER_TEMP/firmware-cd-ssh/config"
+
+      - name: Disconnect temporary Tailnet client
+        if: always()
+        run: bash Scripts/cleanup_ci_tailscale.sh
+
+  deploy:
+    name: Approved sequential sysupgrade
+    needs: [validate, preflight]
+    if: inputs.TARGET != 'none' && inputs.DEPLOY && needs.preflight.result == 'success'
+    runs-on: ubuntu-latest
+    environment: firmware-cd
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout deployment guards
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Configure scoped Tailnet and pinned SSH
+        env:
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CD_AUTHKEY }}
+          HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
+          FIRMWARE_CD_SSH_PRIVATE_KEY: ${{ secrets.FIRMWARE_CD_SSH_PRIVATE_KEY }}
+          FIRMWARE_CD_KNOWN_HOSTS: ${{ secrets.FIRMWARE_CD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CD_AUTHKEY is required}"
+          : "${HEADSCALE_LOGIN:?HEADSCALE_URL is required}"
+          : "${FIRMWARE_CD_SSH_PRIVATE_KEY:?FIRMWARE_CD_SSH_PRIVATE_KEY is required}"
+          : "${FIRMWARE_CD_KNOWN_HOSTS:?FIRMWARE_CD_KNOWN_HOSTS is required}"
+          install -d -m 700 "$RUNNER_TEMP/firmware-cd-ssh"
+          umask 077
+          printf '%s\n' "$FIRMWARE_CD_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/firmware-cd-ssh/id_ed25519"
+          printf '%s\n' "$FIRMWARE_CD_KNOWN_HOSTS" > "$RUNNER_TEMP/firmware-cd-ssh/known_hosts"
+          cat > "$RUNNER_TEMP/firmware-cd-ssh/config" <<EOF
+          Host *
+            IdentityFile $RUNNER_TEMP/firmware-cd-ssh/id_ed25519
+            UserKnownHostsFile $RUNNER_TEMP/firmware-cd-ssh/known_hosts
+            StrictHostKeyChecking yes
+            IdentitiesOnly yes
+            ConnectTimeout 20
+            ProxyCommand nc -x 127.0.0.1:1055 -X 5 %h %p
+          EOF
+          CI_TSCALE_HOSTNAME_PREFIX=ci-deploy bash Scripts/setup_ci_tailscale.sh
+
+      - name: Revalidate device identity and health
+        run: |
+          set -euo pipefail
+          bash Scripts/FirmwareFleetDeploy.sh preflight \
+            --inventory Config/firmware-fleet.json \
+            --target '${{ inputs.TARGET }}' \
+            --ssh-config "$RUNNER_TEMP/firmware-cd-ssh/config"
+
+      - name: Download and verify immutable source artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash Scripts/FirmwareFleetDeploy.sh fetch-verify \
+            --inventory Config/firmware-fleet.json \
+            --target '${{ inputs.TARGET }}' \
+            --run-id '${{ inputs.BUILD_RUN_ID }}' \
+            --output "$RUNNER_TEMP/firmware-cd-artifacts"
+
+      - name: Transfer, validate, upgrade, and accept sequentially
+        run: |
+          set -euo pipefail
+          bash Scripts/FirmwareFleetDeploy.sh upgrade \
+            --inventory Config/firmware-fleet.json \
+            --target '${{ inputs.TARGET }}' \
+            --images-dir "$RUNNER_TEMP/firmware-cd-artifacts" \
+            --ssh-config "$RUNNER_TEMP/firmware-cd-ssh/config"
+
+      - name: Disconnect temporary Tailnet client
+        if: always()
+        run: bash Scripts/cleanup_ci_tailscale.sh

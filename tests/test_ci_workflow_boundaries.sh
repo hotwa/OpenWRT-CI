@@ -4,24 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 RELEASE="$ROOT_DIR/.github/workflows/WRT-RELEASE.yml"
+CD_WORKFLOW="$ROOT_DIR/.github/workflows/FIRMWARE-FLEET-CD.yml"
+CD_SCRIPT="$ROOT_DIR/Scripts/FirmwareFleetDeploy.sh"
+FLEET="$ROOT_DIR/Config/firmware-fleet.json"
 
-for path in \
-  "$ROOT_DIR/Scripts/TailscaleSysupgradeDeploy.sh" \
-  "$ROOT_DIR/docs/headscale-ci-deploy-policy.md" \
-  "$ROOT_DIR/tests/test_tailscale_sysupgrade_deploy.sh"; do
-  [ ! -e "$path" ] || {
-    echo "retired Tailnet CD repository path still exists: $path" >&2
-    exit 1
-  }
-done
-
-if rg -n \
-  -g '*.yml' -g '*.yaml' -g '*.sh' -g '*.md' \
-  'HEADSCALE_CD_AUTHKEY|WRT_CD_TAILSCALE|TAILSCALE_CD|TailscaleSysupgradeDeploy|tag:ci-deploy' \
-  "$ROOT_DIR/.github/workflows" "$ROOT_DIR/Scripts" "$ROOT_DIR/docs" >/dev/null; then
-  echo "workflow, scripts, or docs still expose retired Tailnet CD capability" >&2
-  exit 1
-fi
+[ -f "$CD_WORKFLOW" ] || { echo "firmware CD workflow is missing" >&2; exit 1; }
+[ -x "$CD_SCRIPT" ] || { echo "firmware CD guard script is missing or not executable" >&2; exit 1; }
+[ -f "$FLEET" ] || { echo "firmware fleet inventory is missing" >&2; exit 1; }
 
 if grep -R -n -E 'secrets:[[:space:]]+inherit' "$ROOT_DIR/.github/workflows"; then
   echo "WRT-CORE callers must use explicit secret allowlists" >&2
@@ -88,5 +77,51 @@ if grep -Eq 'id-token:|packages:|attestations:|security-events:' "$RELEASE"; the
   echo "WRT-RELEASE requests permissions outside its release boundary" >&2
   exit 1
 fi
+
+grep -Fq 'workflow_dispatch:' "$CD_WORKFLOW" || {
+  echo "firmware CD must require a manual dispatch" >&2
+  exit 1
+}
+grep -Fq 'default: false' "$CD_WORKFLOW" || {
+  echo "firmware CD deploy input must default to false" >&2
+  exit 1
+}
+grep -Fq 'environment: firmware-cd' "$CD_WORKFLOW" || {
+  echo "firmware CD must use the protected firmware-cd environment" >&2
+  exit 1
+}
+grep -Fq 'HEADSCALE_CD_AUTHKEY' "$CD_WORKFLOW" || {
+  echo "firmware CD must use its dedicated Tailnet credential" >&2
+  exit 1
+}
+grep -Fq 'FIRMWARE_CD_SSH_PRIVATE_KEY' "$CD_WORKFLOW" || {
+  echo "firmware CD must require a dedicated SSH key" >&2
+  exit 1
+}
+grep -Fq 'FIRMWARE_CD_KNOWN_HOSTS' "$CD_WORKFLOW" || {
+  echo "firmware CD must pin router SSH host keys" >&2
+  exit 1
+}
+if grep -Eq 'HEADSCALE_CD_AUTHKEY|FIRMWARE_CD_SSH_PRIVATE_KEY|FIRMWARE_CD_KNOWN_HOSTS' "$CORE"; then
+  echo "build boundary must not receive deployment secrets" >&2
+  exit 1
+fi
+
+grep -Fq 'sysupgrade -T' "$CD_SCRIPT" || {
+  echo "firmware CD must validate a sysupgrade image before flashing" >&2
+  exit 1
+}
+grep -Fq 'sysupgrade -c' "$CD_SCRIPT" || {
+  echo "firmware CD must retain configuration during sysupgrade" >&2
+  exit 1
+}
+grep -Fq 'openwrt-ci-health --require data,wan,tailscale,magicdns,nikki' "$CD_SCRIPT" || {
+  echo "firmware CD must require full pre/post upgrade health" >&2
+  exit 1
+}
+grep -Fq 'StrictHostKeyChecking yes' "$CD_WORKFLOW" || {
+  echo "firmware CD must reject unpinned SSH host keys" >&2
+  exit 1
+}
 
 echo "CI workflow boundary guards passed"
