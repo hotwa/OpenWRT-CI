@@ -20,7 +20,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
   overwrites an existing `/data` state file.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
-- `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
+- `/etc/hotplug.d/iface/95-headscale-auto-enroll` starts enrollment when an interface comes up; it never restarts a live one-shot worker.
 - `/etc/tailscale/headscale.authkey` is the optional one-line auth key file.
 - `/etc/tailscale/auto-enroll.done` marks a successful enrollment.
 - `/etc/uci-defaults/95-tailscale-settings-disable` prevents the optional LuCI reconciler from being enabled at first boot; the auto-enroll script applies the same defensive disable for sysupgrade remnants.
@@ -36,6 +36,8 @@ config enroll 'main'
 	option login_server 'https://headscale.jmsu.top'
 	option auth_key_file '/etc/tailscale/headscale.authkey'
 	option provision_url ''
+	option hostname_mode 'legacy'
+	option hostname_model ''
 	option hostname_prefix ''
 	option ssh '1'
 	option accept_dns '0'
@@ -94,9 +96,14 @@ The Tailscale firewall overlay intentionally uses `firewall.tailscale.device='ta
 
 ## Stable identity across Factory images
 
-For managed devices, the generated hostname is `<model>-s<third-octet>`, such
-as `re-cs-02-s11` for `192.168.11.1`. A one-shot default migrates only the
-repository's legacy `openwrt-<model>-<octet>` form; operator-chosen names are
+For managed devices, `hostname_mode='lan-site'` derives
+`<model-short>-<active-LAN-third-octet>`, such as `cs02-11` for
+`RE-CS-02` on `192.168.11.1`. The model is injected at build time, but the
+numeric suffix comes from the validated live LAN interface, never from
+`WRT_IP`, WAN DHCP, or PPPoE. `hostname_mode='explicit'` is retained only for
+an administrator-selected break-glass label and is not automatically
+CD-eligible. A new one-shot migration recognizes only the repository's legacy
+`openwrt-re-...-<octet>` and `re-...-s<octet>` forms; operator-chosen names are
 not changed. The name is a label, while `/data/tailscale/tailscaled.state`
 holds the cryptographic device identity that prevents duplicate Headscale
 nodes and stale subnet-route records after a supported Factory flash.
@@ -118,7 +125,11 @@ When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll s
 
 When `wrtbak.main.firstboot_auto_enabled=1`, Headscale registration waits for the wrtbak recovery gate. `pending` and `reboot_pending` keep registration closed. `already_done` and `restored` cause tailscaled to reload the recovered state before any auth key is read. `no_backup`, `failed_final`, and `disabled` allow a new registration. The wait is bounded; after the configured timeout, registration proceeds to preserve the Tailnet rescue path.
 
-The init service and WAN hotplug hook can fire close together. A PID-aware runtime lock serializes these attempts, reclaims stale locks after service restart, and prevents two concurrent `tailscale up` calls.
+The init service and WAN hotplug hook can fire close together. A PID-aware
+runtime lock serializes these attempts, reclaims stale locks after service
+restart, and prevents two concurrent `tailscale up` calls. The hotplug hook
+uses `start`, not `restart`: a restart can SIGKILL an in-progress one-shot
+enrollment and leave an otherwise healthy router half configured.
 
 Prefer a one-use, short-expiry, per-device key with only the narrow tags needed
 by the router:

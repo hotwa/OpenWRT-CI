@@ -411,14 +411,70 @@ post_enrollment_guards() {
 		/etc/init.d/tailscale-quad100-health restart >/dev/null 2>&1 || true
 }
 
+sanitize_hostname_label() {
+	printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-' | sed -e 's/^-*//' -e 's/-*$//'
+}
+
+normalize_model_short() {
+	local model
+	model="$(sanitize_hostname_label "$1")"
+	model="${model#re-}"
+	printf '%s' "$model" | tr -cd 'a-z0-9'
+}
+
+model_short_from_board() {
+	local board=""
+	if [ -r /tmp/sysinfo/board_name ]; then
+		board="$(sed -n '1p' /tmp/sysinfo/board_name 2>/dev/null || true)"
+	fi
+	board="${board##*,}"
+	normalize_model_short "$board"
+}
+
+lan_site_id() {
+	local ip="$1" third
+	is_rfc1918_ipv4 "$ip" || return 1
+	third="${ip#*.*.}"
+	third="${third%%.*}"
+	case "$third" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	printf '%s' "$third"
+}
+
 build_hostname() {
-	local override="$1"
-	local prefix="$2"
+	local mode="$1"
+	local override="$2"
+	local prefix="$3"
+	local model="$4"
+	local lan_ip="$5"
 	local board=""
 	local hostname=""
+	local site_id=""
+
+	case "$mode" in
+		lan-site)
+			model="$(normalize_model_short "$model")"
+			[ -n "$model" ] || model="$(model_short_from_board)"
+			site_id="$(lan_site_id "$lan_ip")" || return 1
+			[ -n "$model" ] && [ -n "$site_id" ] || return 1
+			printf '%s-%s' "$model" "$site_id"
+			return 0
+			;;
+		explicit)
+			[ -n "$override" ] || return 1
+			sanitize_hostname_label "$override"
+			return 0
+			;;
+		legacy|'')
+			;;
+		*)
+			return 1
+			;;
+	esac
 
 	if [ -n "$override" ]; then
-		printf '%s' "$override" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
+		sanitize_hostname_label "$override"
 		return 0
 	fi
 
@@ -427,15 +483,15 @@ build_hostname() {
 	[ -n "$hostname" ] || hostname="router"
 
 	if [ -r /tmp/sysinfo/board_name ]; then
-		board="$(sed -n '1p' /tmp/sysinfo/board_name | tr -cs 'A-Za-z0-9_.-' '-')"
+		board="$(sed -n '1p' /tmp/sysinfo/board_name | tr -cs 'A-Za-z0-9-' '-')"
 	fi
 
 	if [ -n "$prefix" ]; then
-		printf '%s-%s' "$prefix" "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
+		printf '%s-%s' "$prefix" "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
 	elif [ -n "$board" ]; then
-		printf '%s-%s' "$hostname" "$board" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
+		printf '%s-%s' "$hostname" "$board" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
 	else
-		printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-'
+		printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
 	fi
 }
 
@@ -493,7 +549,7 @@ apply_runtime_preferences() {
 
 main() {
 	local enabled login_server auth_key_file provision_url provision_token_file
-	local hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes configured_advertise_routes
+	local hostname_mode hostname_model hostname_override hostname_prefix ssh_enabled accept_dns accept_routes advertise_routes configured_advertise_routes
 	local max_attempts retry_interval delete_auth_key_file auth_key hostname
 	local restore_gate_file restore_gate_attempts restore_gate_interval restore_gate_state
 	local lan_state lan_ip lan_prefix derived_route
@@ -519,6 +575,8 @@ main() {
 	auth_key_file="$(cfg auth_key_file /etc/tailscale/headscale.authkey)"
 	provision_url="$(cfg provision_url '')"
 	provision_token_file="$(cfg provision_token_file '')"
+	hostname_mode="$(cfg hostname_mode legacy)"
+	hostname_model="$(cfg hostname_model '')"
 	hostname_override="$(cfg hostname_override '')"
 	hostname_prefix="$(cfg hostname_prefix '')"
 	ssh_enabled="$(cfg ssh 1)"
@@ -551,7 +609,10 @@ main() {
 	restore_gate_attempts="$(cfg restore_gate_attempts 90)"
 	restore_gate_interval="$(cfg restore_gate_interval 10)"
 	delete_auth_key_file="$(cfg delete_auth_key_file 1)"
-	hostname="$(build_hostname "$hostname_override" "$hostname_prefix")"
+	hostname="$(build_hostname "$hostname_mode" "$hostname_override" "$hostname_prefix" "$hostname_model" "$lan_ip")" || {
+		log "invalid hostname configuration mode=$hostname_mode model=$hostname_model"
+		exit 1
+	}
 
 	if is_enrolled; then
 		if apply_runtime_preferences "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then

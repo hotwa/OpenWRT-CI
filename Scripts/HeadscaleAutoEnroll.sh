@@ -101,35 +101,12 @@ sanitize_hostname() {
 		sed -e 's/^-*//' -e 's/-*$//' -e 's/--*/-/g'
 }
 
-lan_ip_site_id() {
-	local ip="$1"
-	local third
+derive_headscale_model() {
+	local model
 
-	is_rfc1918_ipv4 "$ip" || return 0
-	third="${ip#*.*.}"
-	third="${third%%.*}"
-	printf 's%s' "$third"
-}
-
-derive_headscale_hostname() {
-	local explicit="$1"
-	local prefix="$2"
-	local wrt_name="${3:-router}"
-	local wrt_ip="${4:-}"
-	local site_id base
-
-	if [ -n "$explicit" ]; then
-		sanitize_hostname "$explicit"
-		return 0
-	fi
-
-	base="$(sanitize_hostname "${prefix}-${wrt_name}")"
-	site_id="$(lan_ip_site_id "$wrt_ip")"
-	if [ -n "$site_id" ]; then
-		printf '%s-%s' "$base" "$site_id" | sed -e 's/--*/-/g'
-	else
-		printf '%s' "$base"
-	fi
+	model="$(sanitize_hostname "${1:-router}")"
+	model="${model#re-}"
+	printf '%s' "$model" | tr -cd 'a-z0-9'
 }
 
 if [ -z "${HEADSCALE_OPENWRT_AUTHKEY:-}" ]; then
@@ -158,7 +135,18 @@ printf '%s\n' "$HEADSCALE_OPENWRT_AUTHKEY" >"$AUTH_KEY_FILE"
 set_config_option enabled 1
 set_config_option login_server "$HEADSCALE_LOGIN_SERVER"
 set_config_option hostname_prefix "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX"
-set_config_option hostname_override "$(derive_headscale_hostname "$HEADSCALE_OPENWRT_HOSTNAME" "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX" "${WRT_NAME:-router}" "${WRT_IP:-}")"
+if [ -n "$HEADSCALE_OPENWRT_HOSTNAME" ]; then
+	set_config_option hostname_mode explicit
+	set_config_option hostname_model ''
+	set_config_option hostname_override "$(sanitize_hostname "$HEADSCALE_OPENWRT_HOSTNAME")"
+else
+	# The build-time WRT_IP is only a LuCI/login default.  The router derives
+	# the suffix from its validated, active LAN at boot so a retained sysupgrade
+	# and a LAN renumber cannot leave a stale MagicDNS identity behind.
+	set_config_option hostname_mode lan-site
+	set_config_option hostname_model "$(derive_headscale_model "${WRT_NAME:-router}")"
+	set_config_option hostname_override ''
+fi
 set_config_option ssh "$HEADSCALE_OPENWRT_ENABLE_SSH"
 set_config_option accept_dns 0
 # Never bake a route based on WRT_IP.  It is a LuCI/login default, while the

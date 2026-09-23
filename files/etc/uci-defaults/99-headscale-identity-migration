@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# A new filename intentionally makes this migration visible through a
+# sysupgrade-preserved uci-defaults whiteout. Only repository-generated
+# legacy names are changed; arbitrary administrator-selected labels stay put.
+legacy_name="$(uci -q get headscale_auto_enroll.main.hostname_override 2>/dev/null || true)"
+mode="$(uci -q get headscale_auto_enroll.main.hostname_mode 2>/dev/null || true)"
+
+[ -z "$mode" ] || exit 0
+
+case "$legacy_name" in
+	openwrt-re-?*-[0-9]*)
+		model="${legacy_name#openwrt-}"
+		model="$(printf '%s' "$model" | sed -E 's/-[0-9]+$//' | sed -e 's/^re-//' | tr -cd 'a-zA-Z0-9' | tr '[:upper:]' '[:lower:]')"
+		;;
+	re-?*-s[0-9]*)
+		model="$(printf '%s' "$legacy_name" | sed -E 's/-s[0-9]+$//' | sed -e 's/^re-//' | tr -cd 'a-zA-Z0-9' | tr '[:upper:]' '[:lower:]')"
+		;;
+	*)
+		exit 0
+		;;
+esac
+
+[ -n "$model" ] || exit 0
+uci set 'headscale_auto_enroll.main.hostname_mode=lan-site'
+uci set "headscale_auto_enroll.main.hostname_model=$model"
+uci set 'headscale_auto_enroll.main.hostname_override='
+uci set 'headscale_auto_enroll.main.hostname_prefix='
+uci commit headscale_auto_enroll
+exit 0

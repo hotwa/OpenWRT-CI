@@ -4,7 +4,10 @@ config enroll 'main'
 	option auth_key_file '/etc/tailscale/headscale.authkey'
 	option provision_url ''
 	option provision_token_file ''
-	# Hostnames are model-s<LAN third octet>, e.g. re-cs-02-s11.
+	# `lan-site` derives <model-short>-<active LAN third octet>, e.g. cs02-11.
+	# `explicit` is reserved for an administrator-selected break-glass label.
+	option hostname_mode 'legacy'
+	option hostname_model ''
 	option hostname_prefix ''
 	option hostname_override ''
 	option ssh '1'

@@ -84,11 +84,10 @@ The router must never carry a Headscale admin API key or gRPC credential. A
 controller-local reconciler may use the local `headscale nodes` CLI and must
 skip CI/debug/ephemeral nodes and fail closed on ambiguity.
 
-An existing legacy `openwrt-...` name is not CD-eligible until the controller
-has reconciled it to the registry name. The current firmware's historical
-`re-cs-02-s11` convention is also transitional; no automatic deployment may
-assume it equals the short registry convention until this migration is
-implemented and verified.
+An existing legacy `openwrt-...` or `re-...-s<octet>` name is not CD-eligible
+until the controller has reconciled it to the registry name. Firmware now
+migrates only those generated legacy forms to the LAN-derived short convention;
+controller-side rename verification remains a separate required gate.
 
 ## 4. Build policy
 

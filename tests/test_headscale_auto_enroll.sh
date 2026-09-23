@@ -8,6 +8,7 @@ CONFIG="$ROOT_DIR/files/etc/config/headscale_auto_enroll"
 SCRIPT="$ROOT_DIR/files/usr/sbin/headscale-auto-enroll"
 INIT="$ROOT_DIR/files/etc/init.d/headscale-auto-enroll"
 DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/94-headscale-auto-enroll"
+IDENTITY_MIGRATION="$ROOT_DIR/files/etc/uci-defaults/99-headscale-identity-migration"
 HOTPLUG="$ROOT_DIR/files/etc/hotplug.d/iface/95-headscale-auto-enroll"
 CI_INJECTOR="$ROOT_DIR/Scripts/HeadscaleAutoEnroll.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
@@ -18,6 +19,7 @@ AGENTS="$ROOT_DIR/AGENTS.md"
 [ -f "$SCRIPT" ] || { echo "missing headscale auto-enroll script"; exit 1; }
 [ -f "$INIT" ] || { echo "missing headscale auto-enroll init script"; exit 1; }
 [ -f "$DEFAULTS" ] || { echo "missing headscale auto-enroll uci-defaults"; exit 1; }
+[ -f "$IDENTITY_MIGRATION" ] || { echo "missing Headscale identity migration"; exit 1; }
 [ -f "$HOTPLUG" ] || { echo "missing headscale auto-enroll hotplug retry hook"; exit 1; }
 [ -f "$CI_INJECTOR" ] || { echo "missing headscale auto-enroll CI injector"; exit 1; }
 [ -f "$DOC" ] || { echo "missing headscale auto-enroll docs"; exit 1; }
@@ -60,6 +62,16 @@ grep -q "option hostname_override ''" "$CONFIG" || {
 
 grep -q "option hostname_prefix ''" "$CONFIG" || {
 	echo "headscale default hostname prefix must be empty"
+	exit 1
+}
+
+grep -q "option hostname_mode 'legacy'" "$CONFIG" || {
+	echo "headscale hostname mode default is missing"
+	exit 1
+}
+
+grep -q "option hostname_model ''" "$CONFIG" || {
+	echo "headscale hostname model default is missing"
 	exit 1
 }
 
@@ -133,9 +145,24 @@ grep -q 'hostname_override="$(cfg hostname_override' "$SCRIPT" || {
   exit 1
 }
 
-grep -q 'build_hostname "$hostname_override" "$hostname_prefix"' "$SCRIPT" || {
-  echo "script does not prefer hostname_override before hostname_prefix"
-  exit 1
+grep -q 'build_hostname "$hostname_mode" "$hostname_override" "$hostname_prefix" "$hostname_model" "$lan_ip"' "$SCRIPT" || {
+	echo "script does not derive the hostname from the active LAN and model"
+	exit 1
+}
+
+grep -q 'hostname_mode="$(cfg hostname_mode legacy)' "$SCRIPT" || {
+	echo "script does not read the hostname mode"
+	exit 1
+}
+
+grep -q 'hostname_model="$(cfg hostname_model' "$SCRIPT" || {
+	echo "script does not read the hostname model"
+	exit 1
+}
+
+grep -q 'lan-site)' "$SCRIPT" || {
+	echo "script does not implement lan-site identity mode"
+	exit 1
 }
 
 grep -q 'tailscale set' "$SCRIPT" || {
@@ -183,10 +210,15 @@ grep -q '\[ "\$ACTION" = "ifup" \]' "$HOTPLUG" || {
   exit 1
 }
 
-grep -q '/etc/init.d/headscale-auto-enroll restart' "$HOTPLUG" || {
-  echo "hotplug hook does not retry headscale auto-enroll"
-  exit 1
+grep -q '/etc/init.d/headscale-auto-enroll start' "$HOTPLUG" || {
+	echo "hotplug hook does not start headscale auto-enroll"
+	exit 1
 }
+
+if grep -q '/etc/init.d/headscale-auto-enroll restart\|procd_set_param respawn' "$HOTPLUG" "$INIT"; then
+	echo "one-shot Headscale enrollment must not be restarted or respawned by hotplug"
+	exit 1
+fi
 
 grep -q 'HEADSCALE_OPENWRT_AUTHKEY' "$WORKFLOW" || {
   echo "workflow does not expose the optional Headscale OpenWrt auth key secret"
@@ -229,14 +261,19 @@ if grep -q 'HEADSCALE_OPENWRT_ACCEPT_ROUTES\|set_config_option accept_routes' "$
   exit 1
 fi
 
-grep -q 'derive_headscale_hostname' "$CI_INJECTOR" || {
-  echo "CI injector does not derive a stable Headscale hostname"
-  exit 1
+grep -q 'derive_headscale_model' "$CI_INJECTOR" || {
+	echo "CI injector does not derive a stable Headscale model"
+	exit 1
 }
 
-grep -q 'set_config_option hostname_override' "$CI_INJECTOR" || {
-  echo "CI injector does not write hostname_override"
-  exit 1
+grep -q 'set_config_option hostname_mode lan-site' "$CI_INJECTOR" || {
+	echo "CI injector does not enable LAN-derived hostname mode"
+	exit 1
+}
+
+grep -q 'set_config_option hostname_model' "$CI_INJECTOR" || {
+	echo "CI injector does not write hostname_model"
+	exit 1
 }
 
 WORK_DIR="$(mktemp -d)"
@@ -270,9 +307,19 @@ grep -q "option advertise_routes ''" "$WORK_DIR/etc/config/headscale_auto_enroll
 	exit 1
 }
 
-grep -q "option hostname_override 'dae-wrt-s12'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
-  echo "CI injector does not derive hostname_override from WRT_NAME and WRT_IP"
-  exit 1
+grep -q "option hostname_mode 'lan-site'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+	echo "CI injector does not select lan-site hostname mode"
+	exit 1
+}
+
+grep -q "option hostname_model 'daewrt'" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+	echo "CI injector does not derive hostname_model from WRT_NAME"
+	exit 1
+}
+
+grep -q "option hostname_override ''" "$WORK_DIR/etc/config/headscale_auto_enroll" || {
+	echo "CI injector must not bake WRT_IP into hostname_override"
+	exit 1
 }
 
 [ "$(cat "$WORK_DIR/etc/tailscale/headscale.authkey")" = "$TEST_AUTH_KEY" ] || {
@@ -295,6 +342,21 @@ bash "$CI_INJECTOR" "$SECOND_WORK_DIR" >/dev/null
 grep -q "option hostname_override 'lab-router-12'" "$SECOND_WORK_DIR/etc/config/headscale_auto_enroll" || {
   echo "CI injector does not honor and sanitize explicit HEADSCALE_OPENWRT_HOSTNAME"
   exit 1
+}
+
+grep -q "option hostname_mode 'explicit'" "$SECOND_WORK_DIR/etc/config/headscale_auto_enroll" || {
+	echo "CI injector does not mark an explicit hostname as explicit"
+	exit 1
+}
+
+grep -q "headscale_auto_enroll.main.hostname_mode=lan-site" "$IDENTITY_MIGRATION" || {
+	echo "identity migration does not move legacy names to LAN-derived mode"
+	exit 1
+}
+
+grep -q 'openwrt-re-' "$IDENTITY_MIGRATION" || {
+	echo "identity migration does not recognize legacy openwrt names"
+	exit 1
 }
 
 grep -q 'Do not commit an auth key' "$DOC" || {
