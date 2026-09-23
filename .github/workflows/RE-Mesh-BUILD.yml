@@ -35,34 +35,15 @@ permissions:
   actions: read
   contents: read
 
-# One dispatch keeps the two Wi-Fi JDCloud builds together in the Actions UI.
-# They deliberately remain separate matrix jobs: their per-device root filesystems
-# and NSS/Wi-Fi package selections differ, so merging them into one .config would
-# contaminate one device's artifact with the other's packages.
+# One dispatch keeps both Wi-Fi JDCloud builds together in the Actions UI.
+# These are explicit jobs rather than a filtered matrix: GitHub evaluates a
+# reusable-workflow job's `if` before the matrix context exists. Each target
+# remains fully isolated, so a focused RE-CS-02 run never allocates an
+# RE-SS-01 runner or produces a second artifact.
 jobs:
-  build:
-    if: inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == matrix.build_target
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: RE-SS-01
-            build_target: re-ss-01
-            config: IPQ60XX-RE-SS-01
-            device: jdcloud_re-ss-01
-            image_name: RE-SS-01
-            ssid: RE-SS-01
-            ci_name: RE-SS-01-BUILD
-            lan_input: RE_SS_01_LAN_IP
-          - name: RE-CS-02
-            build_target: re-cs-02
-            config: IPQ60XX-RE-CS-02
-            device: jdcloud_re-cs-02
-            image_name: RE-CS-02
-            ssid: RE-CS-02
-            ci_name: RE-CS-02-BUILD
-            lan_input: RE_CS_02_LAN_IP
+  re_ss_01:
+    name: RE-SS-01
+    if: inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == 're-ss-01'
     uses: ./.github/workflows/WRT-CORE.yml
     secrets:
       HEADSCALE_OPENWRT_AUTHKEY: ${{ secrets.HEADSCALE_OPENWRT_AUTHKEY }}
@@ -82,11 +63,11 @@ jobs:
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
-      WRT_CONFIG: ${{ matrix.config }}
+      WRT_CONFIG: IPQ60XX-RE-SS-01
       WRT_THEME: argon
-      WRT_NAME: ${{ matrix.image_name }}
-      WRT_SSID: ${{ matrix.ssid }}
-      WRT_IP: ${{ matrix.lan_input == 'RE_SS_01_LAN_IP' && inputs.RE_SS_01_LAN_IP || inputs.RE_CS_02_LAN_IP }}
+      WRT_NAME: RE-SS-01
+      WRT_SSID: RE-SS-01
+      WRT_IP: ${{ inputs.RE_SS_01_LAN_IP }}
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
@@ -94,13 +75,58 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
       WRT_SPLIT_DEVICE_ARTIFACTS: false
-      WRT_EXPECTED_DEVICE: ${{ matrix.device }}
-      WRT_REQUIRED_DEVICE: ${{ matrix.device }}
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
+      WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
       WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
       WRT_CONTAINER_RUNTIME_TEST: true
-      CI_NAME: ${{ matrix.ci_name }}
+      CI_NAME: RE-SS-01-BUILD
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360
+
+  re_cs_02:
+    name: RE-CS-02
+    if: inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == 're-cs-02'
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets:
+      HEADSCALE_OPENWRT_AUTHKEY: ${{ secrets.HEADSCALE_OPENWRT_AUTHKEY }}
+      HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+      HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+      MULTICA_TOKEN: ${{ secrets.MULTICA_TOKEN }}
+      MULTICA_SERVER_URL: ${{ secrets.MULTICA_SERVER_URL }}
+      MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
+      MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
+      COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+      CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+      SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+    with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      WRT_CONFIG: IPQ60XX-RE-CS-02
+      WRT_THEME: argon
+      WRT_NAME: RE-CS-02
+      WRT_SSID: RE-CS-02
+      WRT_IP: ${{ inputs.RE_CS_02_LAN_IP }}
+      WRT_PW: 无
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_BUILD_ONLY: true
+      WRT_SPLIT_DEVICE_ARTIFACTS: false
+      WRT_EXPECTED_DEVICE: jdcloud_re-cs-02
+      WRT_REQUIRED_DEVICE: jdcloud_re-cs-02
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRT_CONTAINER_RUNTIME_TEST: true
+      CI_NAME: RE-CS-02-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360

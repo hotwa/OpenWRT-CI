@@ -17,11 +17,14 @@ for wf in "RE-Mesh-BUILD.yml" "RE-CS-07-BUILD.yml"; do
 done
 
 MESH="$ROOT_DIR/.github/workflows/RE-Mesh-BUILD.yml"
-grep -Fq 'strategy:' "$MESH"
 grep -Fq 'BUILD_TARGET:' "$MESH"
 grep -Fq 'options: [all, re-ss-01, re-cs-02]' "$MESH"
 grep -Fq 'default: all' "$MESH"
-grep -Fq "inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == matrix.build_target" "$MESH"
+grep -Fq 're_ss_01:' "$MESH"
+grep -Fq 're_cs_02:' "$MESH"
+grep -Fq "inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == 're-ss-01'" "$MESH"
+grep -Fq "inputs.BUILD_TARGET == 'all' || inputs.BUILD_TARGET == 're-cs-02'" "$MESH"
+! grep -Fq 'matrix.build_target' "$MESH"
 grep -Fq 'RE_SS_01_LAN_IP:' "$MESH"
 grep -Fq 'RE_CS_02_LAN_IP:' "$MESH"
 grep -Fq 'IPQ60XX-RE-SS-01' "$MESH"
