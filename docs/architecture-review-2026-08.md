@@ -245,7 +245,7 @@ export UV_CACHE_DIR=/data/uv_cache
 ### 4.4 其他密钥链路问题
 
 - **Headscale authkey**：写入时 `umask 077`、目录 700、注册成功后 `rm -f`，且 guard 能识别并标记 private，链路设计良好。但如 2.2 所述，squashfs 中的 key 仍可提取；注册失败（60 次重试耗尽）时 key 文件不删除，会留在设备上。
-- **wrtbak R2 密钥**：`WrtbakR2Config.sh` 做了换行/单引号校验、`chmod 600`、guard 识别，是仓库里最规范的密钥处理；但 `92-wrtbak-nikki-r2-bypass` 把 R2 endpoint host 加入 Nikki fake_ip_filter，合理。
+- **wrtbak R2 密钥**：Wrtbak 已按当前固件策略完整关闭；不得重新加入 R2 注入脚本、首启绕过规则或任何远程备份凭据。`PrivateFirmwareGuard.sh` 仍保留为防御性扫描，避免遗留私密配置被误发布。
 - **WiFi 密码硬编码**：`WRT_WORD: asdzxc147369` / `12345678` 直接写在 workflow 并写入 Release 说明。虽是默认固件密码、预期用户首改，但弱密码 + 公开发布说明会让未改密设备被秒破。建议首次开机强制改密或随机生成。
 - **Dropbear authorized_keys**：通过 secret 注入，未发现私钥泄露问题。
 

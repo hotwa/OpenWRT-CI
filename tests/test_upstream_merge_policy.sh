@@ -23,7 +23,7 @@ for required in \
 	'jdcloud_re-ss-01' \
 	're-ss02' \
 	'unraveloop/JDC-AX6600-Athena-LED-Controller' \
-	'WrtbakR2Config.sh' \
+	'luci-app-wrtbak' \
 	'PrivateFirmwareGuard.sh' \
 	'CPE-5G.yml'
 do

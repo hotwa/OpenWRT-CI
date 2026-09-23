@@ -23,7 +23,7 @@ hotwa/OpenWRT-CI 不仅是一个 OpenWrt CI 构建脚本库，更是一个定位
 | **京东云设备矩阵** | ❌ 覆盖或删除京东云目标：`jdcloud_re-cs-02` (雅典娜), `jdcloud_re-cs-01` (亚瑟), `jdcloud_re-ss-01` (哪吒), `jdcloud_re-cs-07` (太乙), `re-ss02`。 | 必须长期保留这些关键硬件的编译配置与 DTS 适配。 |
 | **Athena LED 策略** | ❌ 把 AX6600-Athena (`re-cs-02`) 的 LED 控制改回 `NONGFAH` 旧包或改为全局安装。 | 该设备固定使用 `unraveloop/JDC-AX6600-Athena-LED-Controller` `v2.4.0` 双包，且仅在 `re-cs-02` 独立下发，通过 manifest 校验护栏。 |
 | **CPE-5G 生产基线** | ❌ 删除 `.github/workflows/CPE-5G.yml`、将源码从完整 40 字符 SHA 改为移动分支，或破坏 `mwan3` 双网策略。 | 移动分支无法保证生产稳定性，回退源码时不得撤销无关 hotwa 功能。 |
-| **灾备与安全凭据** | ❌ 删除 `Scripts/WrtbakR2Config.sh`、`PrivateFirmwareGuard.sh` 或泄露构建 Secret。 | 防止私有认证凭据泄漏到公开发布固件中。 |
+| **灾备与安全凭据** | ❌ 从上游重新引入 `luci-app-wrtbak`、`WrtbakR2Config.sh` 或远程备份凭据；不得删除 `PrivateFirmwareGuard.sh` 或泄露构建 Secret。 | 本仓库已明确关闭 Wrtbak，仍须防止私有认证凭据泄漏到公开发布固件中。 |
 
 ---
 
@@ -78,7 +78,7 @@ bash tests/test_upstream_merge_policy.sh
 Upstream source: davidtall/DaeWRT-CI <commit-or-range>
 Accepted: <files/hunks>
 Rejected: <files/hunks and reason>
-Protected: AI Agent runtime, Tailscale gateway defaults, Nikki, jdcloud devices, wrtbak, CPE baseline
+Protected: AI Agent runtime, Tailscale gateway defaults, Nikki, jdcloud devices, Wrtbak disabled guard, CPE baseline
 Verified: <local tests and/or Action run>
 Device impact: <RE-CS-02 / RE-CS-01 / RE-SS-01 / RE-CS-07 / ordinary QCA>
 ```
