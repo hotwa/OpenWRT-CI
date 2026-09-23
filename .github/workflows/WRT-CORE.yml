@@ -1311,6 +1311,9 @@ jobs:
 
   release:
     name: Release verified public firmware
+    # Every direct caller permits contents: write as a ceiling because GitHub
+    # validates this nested reusable workflow before it evaluates this guard.
+    # The compiler remains the read-only `build` job above.
     needs: build
     if: needs.build.outputs.release_eligible == 'true'
     uses: ./.github/workflows/WRT-RELEASE.yml

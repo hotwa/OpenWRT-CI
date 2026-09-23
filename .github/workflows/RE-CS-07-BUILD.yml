@@ -21,7 +21,9 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # The called WRT-CORE build job is read-only. GitHub nevertheless validates
+  # its conditional nested release boundary before WRT_BUILD_ONLY is known.
+  contents: write
 
 jobs:
   build:

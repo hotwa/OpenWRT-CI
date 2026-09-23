@@ -33,7 +33,10 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # WRT-CORE lowers its build job to contents: read. This caller must permit
+  # write as the maximum because GitHub validates the nested, conditional
+  # WRT-RELEASE job before it evaluates WRT_BUILD_ONLY.
+  contents: write
 
 # One dispatch keeps both Wi-Fi JDCloud builds together in the Actions UI.
 # These are explicit jobs rather than a filtered matrix: GitHub evaluates a

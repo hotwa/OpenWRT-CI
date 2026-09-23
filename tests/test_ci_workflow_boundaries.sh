@@ -55,6 +55,14 @@ for workflow in "$ROOT_DIR"/.github/workflows/*.yml; do
         ;;
     esac
   done < <(sed -n -E 's/^[[:space:]]{6}([A-Z][A-Z0-9_]*):[[:space:]]*\$\{\{[[:space:]]*secrets\..*$/\1/p' "$workflow")
+
+  # GitHub validates nested reusable-workflow permissions before a conditional
+  # WRT-CORE release job can be skipped. The actual WRT-CORE build job below
+  # must still reduce this ceiling to read-only.
+  grep -Fq 'contents: write' "$workflow" || {
+    echo "$(basename "$workflow") cannot satisfy the nested release permission ceiling" >&2
+    exit 1
+  }
 done
 
 grep -A12 '^  build:' "$CORE" | grep -Fq 'contents: read' || {

@@ -21,7 +21,9 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # WRT-CORE reduces the actual compiler job to contents: read. Keep this
+  # caller's ceiling compatible with its conditional nested release workflow.
+  contents: write
 
 jobs:
   build:

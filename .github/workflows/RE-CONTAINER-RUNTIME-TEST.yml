@@ -49,7 +49,10 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # WRT-CORE's compile job explicitly reduces this to contents: read; the
+  # caller keeps the nested public-release ceiling valid even though this
+  # build-only workflow never reaches that release job.
+  contents: write
 
 jobs:
   re-ss-01:
