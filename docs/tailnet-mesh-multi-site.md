@@ -18,6 +18,11 @@ Every site must have a unique CIDR. Duplicate or overlapping LAN prefixes are a
 deployment error, not a high-availability configuration. Keep a controller-side
 site/CIDR inventory and reject collisions before building firmware.
 
+The planned short router IDs, initial device registry, and future CD gates are
+defined in [Firmware Fleet Identity and Future CD Policy](firmware-fleet-cd.md).
+That registry deliberately maps model and CIDR together: a future `192.168.13.0/24`
+site is not presumed to be any particular router model.
+
 ## 2. Router identities and enrollment keys
 
 The standard tags describe capabilities:
