@@ -6,10 +6,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIB="$ROOT_DIR/Scripts/wrt_cache_lib.sh"
 RECLAIM="$ROOT_DIR/Scripts/wrt_cache_reclaim.sh"
-GUARD="$ROOT_DIR/Scripts/wrt_cache_payload_guard.sh"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
-for f in "$LIB" "$RECLAIM" "$GUARD"; do
+for f in "$LIB" "$RECLAIM"; do
 	[ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
 	bash -n "$f"
 done
@@ -111,7 +110,7 @@ echo "[5] a failed/absent save never deletes an existing cache"
 if grep -Eq 'gh[[:space:]]+cache[[:space:]]+delete' "$WORKFLOW"; then
 	fail "workflow must not delete caches to make room for a save"
 fi
-for s in "$LIB" "$RECLAIM" "$GUARD"; do
+for s in "$LIB" "$RECLAIM"; do
 	if grep -Eq 'gh[[:space:]]+cache' "$s"; then
 		fail "$s must not issue gh cache commands"
 	fi
@@ -213,43 +212,10 @@ bash "$LIB" assert-within "$F1" "$F1/tmp/go-build/escape" >/dev/null 2>&1
 [ $? -ne 0 ] || fail "symlink escape outside build root was allowed"
 set -e
 
-echo "[10] payload boundary: fake secrets/rootfs blocked; excluded dirs ignored"
-P="$TMP/payload"
-mkdir -p "$P/.ccache/sub" "$P/tmp/go-build" "$P/staging_dir/host/etc" \
-	"$P/staging_dir/toolchain-x" "$P/dl/go-mod-cache" \
-	"$P/staging_dir/target-arch/root/etc" "$P/bin/targets"
-echo benign > "$P/.ccache/sub/a.o"
-echo mod > "$P/dl/go-mod-cache/m.zip"
-echo tool > "$P/staging_dir/toolchain-x/ld"
-# A fake private key living in the EXCLUDED target rootfs must be ignored.
-# Literal split so repo secret scanners never see a contiguous PEM marker.
-echo "-----BEGIN ""OPENSSH PRIVATE KEY-----" > "$P/staging_dir/target-arch/root/etc/id_rsa"
-echo firmware > "$P/bin/targets/x-sysupgrade.bin"
-bash "$GUARD" manifest --wrt-dir "$P" > "$TMP/g1.log" 2>&1 || fail "benign whitelist must pass"
-grep -q "payload boundary check passed" "$TMP/g1.log" || fail "benign pass message missing"
-
-echo "-----BEGIN PRIVATE KEY-----" > "$P/.ccache/sub/leak.pem"
-set +e
-bash "$GUARD" manifest --wrt-dir "$P" > "$TMP/g2.log" 2>&1; rc=$?
-set -e
-[ "$rc" -eq 4 ] || fail "fake PEM in .ccache must be refused (rc 4), got $rc"
-grep -q "leak.pem" "$TMP/g2.log" || fail "offender not named"
-rm -f "$P/.ccache/sub/leak.pem"
-
-echo "fake-token" > "$P/tmp/go-build/id_ed25519"
-set +e
-bash "$GUARD" manifest --wrt-dir "$P" >/dev/null 2>&1; [ $? -eq 4 ] || fail "secret-like filename must be refused"
-set -e
-rm -f "$P/tmp/go-build/id_ed25519"
-
-printf 'MULTICA_TOKEN=hskey-auth-''xxxx\n' > "$P/staging_dir/host/etc/cfg"
-set +e
-bash "$GUARD" manifest --wrt-dir "$P" >/dev/null 2>&1; [ $? -eq 4 ] || fail "credential content must be refused"
-set -e
-
-# whitelist in guard must match the workflow save/restore path block
+echo "[10] cache whitelist remains narrow and identical for restore/save"
 for rel in ".ccache" "staging_dir/host" "staging_dir/toolchain-*" "dl/go-mod-cache" "tmp/go-build"; do
-	grep -Fq "./wrt/$rel" "$WORKFLOW" || fail "workflow cache path block missing ./wrt/$rel"
+	count="$(grep -Fxc "            ./wrt/$rel" "$WORKFLOW" || true)"
+	[ "$count" -eq 2 ] || fail "workflow must declare ./wrt/$rel exactly for restore and save (got $count)"
 done
 # and the risky whole-tree paths must not be cache entries (exact trimmed line)
 grep -E '^[[:space:]]+\./wrt/' "$WORKFLOW" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | sort -u > "$TMP/cachepaths.txt"

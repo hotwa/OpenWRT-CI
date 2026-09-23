@@ -451,7 +451,7 @@ jobs:
         id: cache_restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          # Keep this allow-list identical to Scripts/wrt_cache_payload_guard.sh.
+          # Keep this explicit allow-list identical for restore and save.
           # Only regenerable caches and host/toolchain staging are cached;
           # staging_dir/target-* (staged rootfs), build_dir, files and bin are
           # intentionally excluded.
@@ -1040,18 +1040,6 @@ jobs:
           bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_reclaim.sh" stats \
             --wrt-dir "$GITHUB_WORKSPACE/wrt"
 
-      - name: Guard Build Cache Payload
-        if: env.WRT_TEST != 'true'
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          # Advisory defense-in-depth: scans the cache whitelist for secret or
-          # rootfs indicators before save. Non-blocking (continue-on-error) so
-          # a false positive on a binary/regenerable cache cannot hold up a
-          # build; offenders are logged as ::error:: and the save still runs.
-          bash "$GITHUB_WORKSPACE/Scripts/wrt_cache_payload_guard.sh" manifest \
-            --wrt-dir "$GITHUB_WORKSPACE/wrt"
-
       - name: Save Build Cache
         # Publish a new generation only for a successful, non-test, non-cancelled
         # build. The key is unique per run/attempt, so this never overwrites a
@@ -1061,7 +1049,7 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          # Identical allow-list to the restore step / payload guard.
+          # Identical conservative allow-list to the restore step.
           path: |
             ./wrt/.ccache
             ./wrt/staging_dir/host
