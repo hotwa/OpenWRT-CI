@@ -1152,6 +1152,7 @@ jobs:
             fi
 
             jq -n \
+              --arg workflow_commit "$GITHUB_SHA" \
               --arg source_repository "$WRT_REPO" \
               --arg source_branch "$WRT_BRANCH" \
               --arg source_commit "$WRT_HASH" \
@@ -1160,7 +1161,7 @@ jobs:
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
               --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
-              '{source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt

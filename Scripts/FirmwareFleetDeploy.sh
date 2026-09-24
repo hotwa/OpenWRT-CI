@@ -15,7 +15,7 @@ usage() {
 	cat >&2 <<'EOF'
 Usage:
   FirmwareFleetDeploy.sh validate-inventory --inventory PATH
-  FirmwareFleetDeploy.sh validate-run --run-id ID
+  FirmwareFleetDeploy.sh validate-run --run-id ID --target ID
   FirmwareFleetDeploy.sh preflight --inventory PATH --target ID|all --ssh-config PATH
   FirmwareFleetDeploy.sh fetch-verify --inventory PATH --target ID|all --run-id ID --output DIR
   FirmwareFleetDeploy.sh upgrade --inventory PATH --target ID|all --images-dir DIR --ssh-config PATH
@@ -101,16 +101,34 @@ records_for_target() {
 	jq -c --arg id "$target" '.devices[] | select(.id == $id)' "$inventory"
 }
 
+validate_run_payload() {
+	local run_json="$1" target="$2" conclusion branch head_sha repository workflow_path expected_workflow
+	case "$target" in
+		cs07-[0-9]*) expected_workflow='RE-CS-07-BUILD.yml' ;;
+		cs02-[0-9]*|ss01-[0-9]*) expected_workflow='RE-Mesh-BUILD.yml' ;;
+		*) die "source build target is not a registered firmware family: $target" ;;
+	esac
+	conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
+	branch="$(jq -r '.head_branch // empty' <<<"$run_json")"
+	head_sha="$(jq -r '.head_sha // empty' <<<"$run_json")"
+	repository="$(jq -r '.head_repository.full_name // empty' <<<"$run_json")"
+	workflow_path="$(jq -r '.path // empty' <<<"$run_json")"
+	workflow_path="${workflow_path%%@*}"
+	[ "$conclusion" = success ] || die "source workflow run is not successful"
+	[ "$branch" = main ] || die "source workflow run is not from main: $branch"
+	[ "$repository" = "$REPOSITORY" ] || die "source workflow run repository does not match $REPOSITORY"
+	[[ "$head_sha" =~ ^[a-f0-9]{40}$ ]] || die "source workflow run has an invalid head SHA"
+	[ "${workflow_path##*/}" = "$expected_workflow" ] || die "source workflow does not match $target (expected $expected_workflow, got ${workflow_path##*/})"
+	printf '%s' "$head_sha"
+}
+
 validate_run() {
-	local run_id="$1" run_json conclusion branch
+	local run_id="$1" target="$2" run_json source_commit
 	[[ "$run_id" =~ ^[1-9][0-9]*$ ]] || die "run id must be numeric"
 	need_command gh
 	run_json="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")" || die "cannot read workflow run $run_id"
-	conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
-	branch="$(jq -r '.head_branch // empty' <<<"$run_json")"
-	[ "$conclusion" = success ] || die "source workflow run is not successful: $run_id"
-	[ "$branch" = main ] || die "source workflow run is not from main: $branch"
-	echo "source run validated: $run_id"
+	source_commit="$(validate_run_payload "$run_json" "$target")"
+	echo "source run validated: $run_id ($source_commit)"
 }
 
 remote_exec() {
@@ -120,7 +138,7 @@ remote_exec() {
 }
 
 preflight_record() {
-	local record="$1" ssh_config="$2" id board cidr fqdn output remote_board remote_cidr remote_pref remote_dns
+	local record="$1" ssh_config="$2" id board cidr fqdn output remote_board remote_ip remote_mask remote_cidr remote_pref remote_dns remote_prefix
 	id="$(jq -r '.id' <<<"$record")"
 	board="$(jq -r '.board' <<<"$record")"
 	cidr="$(jq -r '.lan_cidr' <<<"$record")"
@@ -136,8 +154,15 @@ pref="$(tailscale debug prefs | jsonfilter -e "@.Hostname")"
 dns="$(tailscale status --json | jsonfilter -e "@.Self.DNSName")"
 dns="${dns%.}"
 /usr/sbin/openwrt-ci-health --require data,wan,tailscale,magicdns,nikki >/dev/null
-printf "%s\t%s/%s\t%s\t%s\n" "$board" "$lan_ip" "$lan_mask" "$pref" "$dns"')" || die "cannot complete read-only preflight for $id ($fqdn)"
-	IFS=$'\t' read -r remote_board remote_cidr remote_pref remote_dns <<<"$output"
+	printf "%s\t%s\t%s\t%s\t%s\n" "$board" "$lan_ip" "$lan_mask" "$pref" "$dns"')" || die "cannot complete read-only preflight for $id ($fqdn)"
+	IFS=$'\t' read -r remote_board remote_ip remote_mask remote_pref remote_dns <<<"$output"
+	case "$remote_mask" in
+		24|255.255.255.0) remote_prefix=24 ;;
+		*) die "$id active LAN mask is not the registered /24: $remote_mask" ;;
+	esac
+	[[ "$remote_ip" =~ ^192\.168\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || die "$id active LAN address is invalid: $remote_ip"
+	(( 10#${BASH_REMATCH[1]} <= 255 && 10#${BASH_REMATCH[2]} <= 255 )) || die "$id active LAN address has an invalid octet"
+	remote_cidr="${remote_ip%.*}.0/$remote_prefix"
 	[ "$remote_board" = "$board" ] || die "$id board mismatch: expected $board, got $remote_board"
 	[ "$remote_cidr" = "$cidr" ] || die "$id active LAN mismatch: expected $cidr, got $remote_cidr"
 	[ "$remote_pref" = "$id" ] || die "$id local Tailscale preference mismatch: got $remote_pref"
@@ -163,7 +188,7 @@ safe_artifact_members() {
 }
 
 verify_extracted_artifact() {
-	local artifact_dir="$1" config="$2" device="$3"
+	local artifact_dir="$1" config="$2" device="$3" expected_commit="$4"
 	local expected listed sorted_listed line digest filename image_count image
 	[ -d "$artifact_dir" ] || die "artifact extraction directory is missing"
 	[ -f "$artifact_dir/SHA256SUMS" ] || die "artifact SHA256SUMS is missing"
@@ -187,8 +212,9 @@ verify_extracted_artifact() {
 	LC_ALL=C sort "$listed" > "$sorted_listed"
 	cmp -s "$expected" "$sorted_listed" || die "SHA256SUMS does not cover exactly the artifact payload"
 	(cd "$artifact_dir" && sha256sum --check --strict -- SHA256SUMS >/dev/null) || die "artifact checksum verification failed"
-	jq -e --arg config "$config" --arg device "$device" '
+	jq -e --arg config "$config" --arg device "$device" --arg commit "$expected_commit" '
 		(.config == $config) and (.required_device == $device) and
+		(.workflow_commit == $commit) and
 		(.source_commit | type == "string" and test("^[0-9a-f]{40}$"))
 	' "$artifact_dir/metadata.json" >/dev/null || die "artifact metadata does not match registry"
 	image_count="$(find "$artifact_dir" -maxdepth 1 -type f -name "*${device}*sysupgrade*.bin" | wc -l | tr -d ' ')"
@@ -199,8 +225,7 @@ verify_extracted_artifact() {
 
 fetch_verify() {
 	local inventory="$1" target="$2" run_id="$3" output_dir="$4"
-	local record id config device artifact_json artifact_count artifact_id archive extracted image
-	validate_run "$run_id" >/dev/null
+	local record id config device artifact_json artifact_count artifact_id archive extracted image run_json source_commit
 	need_command unzip
 	mkdir -p "$output_dir"
 	: > "$output_dir/images.tsv"
@@ -208,6 +233,8 @@ fetch_verify() {
 		id="$(jq -r '.id' <<<"$record")"
 		config="$(jq -r '.artifact_config' <<<"$record")"
 		device="$(jq -r '.artifact_device' <<<"$record")"
+		run_json="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")" || die "cannot read workflow run $run_id"
+		source_commit="$(validate_run_payload "$run_json" "$id")"
 		artifact_json="$(gh api --paginate "repos/$REPOSITORY/actions/runs/$run_id/artifacts")"
 		artifact_count="$(jq --arg config "$config" '[.artifacts[] | select(.expired == false and (.name | contains($config)))] | length' <<<"$artifact_json")"
 		[ "$artifact_count" = 1 ] || die "$id requires exactly one unexpired artifact for $config, found $artifact_count"
@@ -219,18 +246,19 @@ fetch_verify() {
 		extracted="$output_dir/$id"
 		mkdir -p "$extracted"
 		unzip -q "$archive" -d "$extracted"
-		image="$(verify_extracted_artifact "$extracted" "$config" "$device")"
-		printf '%s\t%s\n' "$id" "$image" >> "$output_dir/images.tsv"
+		image="$(verify_extracted_artifact "$extracted" "$config" "$device" "$source_commit")"
+		printf '%s\t%s\t%s\n' "$id" "$image" "$source_commit" >> "$output_dir/images.tsv"
 		echo "artifact verified: $id"
 	done < <(records_for_target "$inventory" "$target")
 }
 
 upgrade_record() {
-	local record="$1" ssh_config="$2" image="$3"
-	local id fqdn image_name remote_path local_sha remote_sha guard_local guard_remote local_guard_sha remote_guard_sha boot_before boot_after attempt=0
+	local record="$1" ssh_config="$2" image="$3" expected_commit="$4"
+	local id fqdn image_name remote_path local_sha remote_sha guard_local guard_remote local_guard_sha remote_guard_sha boot_before boot_after boot_commit attempt=0
 	id="$(jq -r '.id' <<<"$record")"
 	fqdn="$(jq -r '.magicdns' <<<"$record")"
 	[ -f "$image" ] || die "verified image is missing for $id"
+	[[ "$expected_commit" =~ ^[a-f0-9]{40}$ ]] || die "verified workflow commit is missing or invalid for $id"
 	image_name="$(basename "$image")"
 	[[ "$image_name" =~ ^[A-Za-z0-9._-]+$ ]] || die "unsafe image filename"
 	remote_path="/data/firmware-cd/incoming/$image_name"
@@ -259,7 +287,10 @@ upgrade_record() {
 
 	while [ "$attempt" -lt 60 ]; do
 		if boot_after="$(remote_exec "$ssh_config" "$fqdn" cat /proc/sys/kernel/random/boot_id 2>/dev/null)"; then
-			if [ "$boot_after" != "$boot_before" ] && preflight_record "$record" "$ssh_config" >/dev/null; then
+			if [ "$boot_after" != "$boot_before" ] &&
+				boot_commit="$(remote_exec "$ssh_config" "$fqdn" cat /etc/openwrt-ci/firmware-commit 2>/dev/null)" &&
+				[ "$boot_commit" = "$expected_commit" ] &&
+				preflight_record "$record" "$ssh_config" >/dev/null; then
 				echo "post-boot acceptance passed: $id"
 				return 0
 			fi
@@ -271,13 +302,14 @@ upgrade_record() {
 }
 
 upgrade() {
-	local inventory="$1" target="$2" images_dir="$3" ssh_config="$4" record id image
+	local inventory="$1" target="$2" images_dir="$3" ssh_config="$4" record id image expected_commit
 	[ -f "$images_dir/images.tsv" ] || die "verified image manifest is missing"
 	while IFS= read -r record; do
 		id="$(jq -r '.id' <<<"$record")"
 		image="$(awk -F '\t' -v id="$id" '$1 == id { print $2 }' "$images_dir/images.tsv")"
+		expected_commit="$(awk -F '\t' -v id="$id" '$1 == id { print $3 }' "$images_dir/images.tsv")"
 		[ -n "$image" ] || die "verified image is missing from manifest for $id"
-		upgrade_record "$record" "$ssh_config" "$image"
+		upgrade_record "$record" "$ssh_config" "$image" "$expected_commit"
 	done < <(records_for_target "$inventory" "$target")
 }
 
@@ -290,8 +322,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 			validate_inventory "$2"
 			;;
 		validate-run)
-			[ "${1:-}" = --run-id ] && [ -n "${2:-}" ] || usage
-			validate_run "$2"
+			[ "${1:-}" = --run-id ] && [ -n "${2:-}" ] && [ "${3:-}" = --target ] && [ -n "${4:-}" ] || usage
+			validate_run "$2" "$4"
 			;;
 		preflight)
 			[ "${1:-}" = --inventory ] && inventory="${2:-}" && [ "${3:-}" = --target ] && target="${4:-}" && [ "${5:-}" = --ssh-config ] && ssh_config="${6:-}" || usage

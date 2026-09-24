@@ -145,6 +145,14 @@ candidate build
   -> new boot ID + post-boot acceptance
 ```
 
+Every build artifact also carries `workflow_commit`, which identifies the
+GitHub Actions caller-workflow revision independently from `source_commit`
+(the pinned upstream OpenWrt source revision). CD requires the artifact's
+`workflow_commit` to equal the successful build run's `head_sha`, and accepts
+only the per-device build workflow registered for that target. This prevents
+an unrelated successful main-branch run or stale artifact metadata from being
+treated as the requested candidate.
+
 The RE-SS-01 sysupgrade image is about 447 MiB, close to that 1 GiB device's
 default `/tmp` tmpfs limit. Every firmware therefore includes a small startup
 hook, but it raises the tmpfs limit to 512 MiB **only** on board

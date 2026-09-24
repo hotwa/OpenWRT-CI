@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "$BUILD_RUN_ID" ] || { echo 'ERROR: BUILD_RUN_ID is required for a device preflight or deployment' >&2; exit 1; }
-          bash Scripts/FirmwareFleetDeploy.sh validate-run --run-id "$BUILD_RUN_ID"
+          bash Scripts/FirmwareFleetDeploy.sh validate-run --run-id "$BUILD_RUN_ID" --target '${{ inputs.TARGET }}'
 
   preflight:
     name: Read-only Tailnet preflight
