@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+RC_LOCAL="${LEGACY_RC_LOCAL_PATH:-/etc/rc.local}"
+[ -f "$RC_LOCAL" ] && [ ! -L "$RC_LOCAL" ] || exit 0
+
+legacy_name="view""turbo"
+legacy_binary="${legacy_name}core"
+tmp="${RC_LOCAL}.cleanup.$$"
+
+cleanup() {
+	rm -f "$tmp"
+}
+trap cleanup EXIT HUP INT TERM
+
+if ! awk -v needle="$legacy_binary" '
+	index(tolower($0), tolower(needle)) == 0 { print }
+' "$RC_LOCAL" >"$tmp"; then
+	exit 1
+fi
+
+if cmp -s "$RC_LOCAL" "$tmp"; then
+	exit 0
+fi
+
+mode="$(stat -c '%a' "$RC_LOCAL")"
+chmod "$mode" "$tmp"
+mv -f "$tmp" "$RC_LOCAL"
+logger -t firmware-migration -- 'removed a retired startup command from /etc/rc.local' 2>/dev/null || true

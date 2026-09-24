@@ -5,11 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_JSON="$ROOT_DIR/Scripts/node-agent-runtime/package.json"
 FETCH_SCRIPT="$ROOT_DIR/Scripts/fetch_node_runtime.sh"
 PI_SETTINGS="$ROOT_DIR/files/etc/pi/agent/settings.json"
+PI_MODES_CONFIG="$ROOT_DIR/files/etc/pi/agent/modes.config.json"
 AGENT_RUNTIME="$ROOT_DIR/files/usr/sbin/agent-runtime"
 
 fail() { echo "pi-agent-modes: $*" >&2; exit 1; }
 
-for path in "$PACKAGE_JSON" "$FETCH_SCRIPT" "$PI_SETTINGS" "$AGENT_RUNTIME"; do
+for path in "$PACKAGE_JSON" "$FETCH_SCRIPT" "$PI_SETTINGS" "$PI_MODES_CONFIG" "$AGENT_RUNTIME"; do
   [ -f "$path" ] || fail "missing $path"
 done
 
@@ -35,6 +36,19 @@ grep -Fq 'install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/se
   fail "fetch_node_runtime.sh must install the canonical Pi settings template"
 grep -Fq '"npm:pi-agent-modes"' "$PI_SETTINGS" ||
   fail "canonical Pi settings template must include npm:pi-agent-modes"
+
+node - "$PI_MODES_CONFIG" <<'NODE' || fail "Pi modes config must be valid JSON with defaultMode=yolo"
+const config = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+if (config.defaultMode !== 'yolo') process.exit(1);
+NODE
+grep -Fq 'PI_MODES_CONFIG_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/modes.config.json"' "$FETCH_SCRIPT" ||
+  fail "fetch_node_runtime.sh must declare the canonical Pi modes config template"
+grep -Fq 'install -Dm0644 "$PI_MODES_CONFIG_TEMPLATE" "$TARGET_FILES/etc/pi/agent/modes.config.json"' "$FETCH_SCRIPT" ||
+  fail "fetch_node_runtime.sh must install the default modes config into the firmware"
+grep -Fq 'cp -f "$PI_MODES_CONFIG_TEMPLATE" "$PI_CONFIG_DIR/modes.config.json"' "$FETCH_SCRIPT" ||
+  fail "fetch_node_runtime.sh must stage the default modes config for /root/.pi"
+grep -Fq 'lazy-extensions.json modes.config.json' "$ROOT_DIR/files/etc/init.d/agent-data-prep" ||
+  fail "agent-data-prep must seed the modes config on persistent /data only when absent"
 
 # The retired plan-mode vendored extension link must not be staged.
 if grep -Fq '/tmp/agent-runtime-pi-plan-mode.ts' "$FETCH_SCRIPT"; then

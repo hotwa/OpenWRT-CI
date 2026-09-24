@@ -145,6 +145,38 @@ candidate build
   -> new boot ID + post-boot acceptance
 ```
 
+The RE-SS-01 sysupgrade image is about 447 MiB, close to that 1 GiB device's
+default `/tmp` tmpfs limit. Every firmware therefore includes a small startup
+hook, but it raises the tmpfs limit to 512 MiB **only** on board
+`jdcloud,re-ss-01`; tmpfs allocates RAM on demand, so this is a ceiling rather
+than 512 MiB reserved at boot. Before calling `sysupgrade`, the CD helper runs
+`openwrt-upgrade-space check` against the image staged under `/data`. It
+requires enough current `/tmp` space for the image plus a 48 MiB reserve and at
+least 64 MiB of available RAM plus free zram, then requires `sysupgrade -T` to
+pass. The space/memory check runs both before and after that image test. Any
+missing helper, board mismatch, non-tmpfs `/tmp`, or insufficient capacity
+aborts before flashing. The
+workflow does not create disk-backed swap; existing zram remains the only
+swap layer.
+
+The JSON inventory is the source of truth for each machine's board, LAN CIDR,
+MagicDNS FQDN, and matching artifact. Do not copy the full deployment logic
+into one workflow per router: that would let safety checks drift. If nightly
+per-device schedules are approved later, add thin per-device scheduled
+wrappers that call a shared reusable build/deploy workflow with a fixed
+inventory ID. Each wrapper must remain opt-in until the maintenance timezone,
+staggered rollout order, reviewer approval, and rescue path are recorded.
+Today there is no `schedule` trigger and no automatic deployment.
+
+Tailscale identity state is stored at `/data/tailscale/tailscaled.state`, not
+`/etc/tailscale/tailscaled.state`. Normal sysupgrade preserves `/data` because
+the deployment uses `sysupgrade -c`, while a clean `-n` upgrade or factory
+operation may discard configuration or repartition storage. Never infer that
+factory installation preserved the old identity: confirm `/data` and its
+state file before and after that operation, or explicitly back up the state
+through an approved recovery path first. Losing `/data` means a new Tailscale
+identity may be enrolled.
+
 The resolver result is a locator, not authority to flash. Before every upgrade,
 the deployment job must compare the remote board name and advertised LAN CIDR
 against the inventory row and require:

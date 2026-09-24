@@ -27,6 +27,7 @@ mkdir -p "$DATA" "$ROOT"
 
 cp "$ROOT_DIR/files/etc/pi/agent/settings.json" "$FW/pi/agent/settings.json"
 cp "$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json" "$FW/pi/agent/lazy-extensions.json"
+cp "$ROOT_DIR/files/etc/pi/agent/modes.config.json" "$FW/pi/agent/modes.config.json"
 cat > "$FW/pi/agent/auth.json" <<'JSON'
 {"apiKey":"firmware-key-123"}
 JSON
@@ -205,6 +206,7 @@ start
 check "wait_data_mount sees /data mount" wait_data_mount
 check "/data/pi/agent/settings.json copied from firmware" test -f "$DATA/pi/agent/settings.json"
 check "/data/pi/agent/lazy-extensions.json copied from firmware" test -f "$DATA/pi/agent/lazy-extensions.json"
+check "/data/pi/agent/modes.config.json defaults to yolo" grep -Fq '"defaultMode": "yolo"' "$DATA/pi/agent/modes.config.json"
 check "/data/pi/agent/auth.json copied from firmware" test -f "$DATA/pi/agent/auth.json"
 check "/data/commandcode/auth.json matches firmware key" cmp -s "$FW/commandcode/auth.json" "$DATA/commandcode/auth.json"
 check "/root/.pi is symlink to /data/pi" test -L "$ROOT/.pi"
@@ -233,6 +235,7 @@ check "stale Pi extension is retained as a recovery backup" \
 # ---------------------------------------------------------------------------
 # 2. Second run is idempotent (no symlink churn, no extra backups)
 # ---------------------------------------------------------------------------
+printf '%s\n' '{"defaultMode":"build"}' > "$DATA/pi/agent/modes.config.json"
 pi_link_before="$(readlink "$ROOT/.pi")"
 npm_link_before="$(readlink "$ROOT/.npm")"
 backups_before="$(find "$DATA" -name '*.bak.*' | wc -l)"
@@ -247,6 +250,7 @@ check "second run adds no new Pi extension backups" \
 check "second run does not duplicate auth files" test "$(find "$DATA/commandcode" -name 'auth.json*' | wc -l)" -ge 1
 check "second run does not rewrite already-merged Pi settings" test "$(stat -c '%i' "$DATA/pi/agent/settings.json")" = "$settings_inode_before"
 check "second run does not duplicate Pi packages" pi_settings_preserved_and_merged
+check "existing Pi mode preference is not overwritten" grep -Fq '"defaultMode":"build"' "$DATA/pi/agent/modes.config.json"
 
 # ---------------------------------------------------------------------------
 # 3. Stale CommandCode key is replaced (with backup)

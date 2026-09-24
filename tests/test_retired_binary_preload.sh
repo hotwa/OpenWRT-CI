@@ -6,6 +6,8 @@ legacy_name="view""turbo"
 legacy_binary="${legacy_name}core"
 vendor_name="vt""fly"
 rc_local="$ROOT_DIR/files/etc/rc.local"
+migration="$ROOT_DIR/files/etc/uci-defaults/98-clean-legacy-startup"
+workflow="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
 for removed_path in \
   "$ROOT_DIR/Scripts/fetch_${legacy_binary}.sh" \
@@ -15,6 +17,45 @@ for removed_path in \
     exit 1
   }
 done
+
+[ -x "$migration" ] || {
+	echo "missing executable legacy startup migration" >&2
+	exit 1
+}
+grep -Fq 'cp -f ./files/etc/uci-defaults/98-clean-legacy-startup ./wrt/files/etc/uci-defaults/98-clean-legacy-startup' "$workflow" || {
+	echo "WRT-CORE does not inject the legacy startup migration" >&2
+	exit 1
+}
+
+legacy_binary="view""turbo""core"
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "$fixture_dir"' EXIT
+fixture_rc_local="$fixture_dir/rc.local"
+cat >"$fixture_rc_local" <<EOF
+#!/bin/sh
+keep-this-command
+/usr/local/bin/$legacy_binary --start
+exit 0
+EOF
+chmod 0751 "$fixture_rc_local"
+LEGACY_RC_LOCAL_PATH="$fixture_rc_local" "$migration"
+! grep -Fqi "$legacy_binary" "$fixture_rc_local" || {
+	echo "legacy startup command was not removed" >&2
+	exit 1
+}
+grep -Fxq 'keep-this-command' "$fixture_rc_local" || {
+	echo "legacy startup migration removed an unrelated command" >&2
+	exit 1
+}
+grep -Fxq 'exit 0' "$fixture_rc_local" || {
+	echo "legacy startup migration removed the exit line" >&2
+	exit 1
+}
+[ "$(stat -c '%a' "$fixture_rc_local")" = 751 ] || {
+	echo "legacy startup migration did not preserve file mode" >&2
+	exit 1
+}
+LEGACY_RC_LOCAL_PATH="$fixture_rc_local" "$migration"
 
 [ -f "$rc_local" ] || {
   echo "missing rc.local overlay" >&2

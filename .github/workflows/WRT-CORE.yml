@@ -615,6 +615,13 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
           fi
 
+          # Retained sysupgrade configs can restore a legacy rc.local that
+          # still invokes a binary retired from this firmware. Remove only
+          # that stale command during first boot; preserve other commands.
+          mkdir -p ./wrt/files/etc/uci-defaults
+          cp -f ./files/etc/uci-defaults/98-clean-legacy-startup ./wrt/files/etc/uci-defaults/98-clean-legacy-startup
+          chmod 0755 ./wrt/files/etc/uci-defaults/98-clean-legacy-startup
+
           # This small overlay is independent from the larger private feature
           # set. It keeps every Tailscale-enabled firmware covered, including
           # builds that intentionally disable CPE/Lucky/wrtbak extras.
@@ -654,6 +661,7 @@ jobs:
           mkdir -p \
             ./wrt/files/etc/config \
             ./wrt/files/etc/init.d \
+            ./wrt/files/etc/rc.d \
             ./wrt/files/etc/hotplug.d/iface \
             ./wrt/files/etc/multica \
             ./wrt/files/etc/profile.d \
@@ -693,6 +701,7 @@ jobs:
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/init.d/nikki-dns-failopen ./wrt/files/etc/init.d/nikki-dns-failopen
+          cp -f ./files/etc/init.d/upgrade-tmp-capacity ./wrt/files/etc/init.d/upgrade-tmp-capacity
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
           cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
@@ -738,12 +747,14 @@ jobs:
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
           cp -f ./files/usr/sbin/openwrt-ci-health ./wrt/files/usr/sbin/openwrt-ci-health
+          cp -f ./files/usr/sbin/openwrt-upgrade-space ./wrt/files/usr/sbin/openwrt-upgrade-space
           chmod 0755 \
             ./wrt/files/etc/init.d/agent-data-prep \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
             ./wrt/files/etc/init.d/nikki-dns-failopen \
+            ./wrt/files/etc/init.d/upgrade-tmp-capacity \
             ./wrt/files/etc/init.d/nikki-subscription-bootstrap \
             ./wrt/files/etc/init.d/nikki-subscription-sync \
             ./wrt/files/etc/hotplug.d/iface/99-nikki-subscription \
@@ -774,7 +785,9 @@ jobs:
             ./wrt/files/usr/sbin/multica-log-hygiene \
             ./wrt/files/usr/sbin/multica-runtime-guard \
             ./wrt/files/usr/sbin/nikki-dns-failopen \
-            ./wrt/files/usr/sbin/openwrt-ci-health
+            ./wrt/files/usr/sbin/openwrt-ci-health \
+            ./wrt/files/usr/sbin/openwrt-upgrade-space
+          ln -sf ../init.d/upgrade-tmp-capacity ./wrt/files/etc/rc.d/S08upgrade-tmp-capacity
           grep -q '^START=99$' ./wrt/files/etc/init.d/nikki-dns-failopen || {
             echo "ERROR: nikki-dns-failopen must use START=99" >&2
             exit 1
@@ -863,6 +876,14 @@ jobs:
           set -euo pipefail
           test -x ./wrt/files/usr/sbin/openwrt-ci-health || {
             echo "ERROR: openwrt-ci-health must be staged in every firmware overlay" >&2
+            exit 1
+          }
+          test -x ./wrt/files/usr/sbin/openwrt-upgrade-space || {
+            echo "ERROR: guarded sysupgrade space helper must be staged in every firmware overlay" >&2
+            exit 1
+          }
+          test -L ./wrt/files/etc/rc.d/S08upgrade-tmp-capacity || {
+            echo "ERROR: RE-SS-01 /tmp capacity boot hook is not enabled in the firmware overlay" >&2
             exit 1
           }
           retired_binary_prefix='view''turbo'

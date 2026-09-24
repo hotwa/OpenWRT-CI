@@ -4,6 +4,7 @@
 set -euo pipefail
 
 REPOSITORY="${GITHUB_REPOSITORY:-hotwa/OpenWRT-CI}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() {
 	echo "ERROR: firmware fleet deploy: $*" >&2
@@ -226,7 +227,7 @@ fetch_verify() {
 
 upgrade_record() {
 	local record="$1" ssh_config="$2" image="$3"
-	local id fqdn image_name remote_path local_sha remote_sha boot_before boot_after attempt=0
+	local id fqdn image_name remote_path local_sha remote_sha guard_local guard_remote local_guard_sha remote_guard_sha boot_before boot_after attempt=0
 	id="$(jq -r '.id' <<<"$record")"
 	fqdn="$(jq -r '.magicdns' <<<"$record")"
 	[ -f "$image" ] || die "verified image is missing for $id"
@@ -237,10 +238,19 @@ upgrade_record() {
 	preflight_record "$record" "$ssh_config"
 	remote_exec "$ssh_config" "$fqdn" 'install -d -m 700 /data/firmware-cd/incoming'
 	RSYNC_RSH="ssh -F $ssh_config -o BatchMode=yes" rsync --partial --checksum --protect-args "$image" "root@$fqdn:$remote_path"
+	guard_local="$SCRIPT_DIR/../files/usr/sbin/openwrt-upgrade-space"
+	[ -x "$guard_local" ] || die "local upgrade-space guard is missing"
+	guard_remote="$remote_path.space-check"
+	RSYNC_RSH="ssh -F $ssh_config -o BatchMode=yes" rsync --checksum --protect-args "$guard_local" "root@$fqdn:$guard_remote"
 	local_sha="$(sha256sum "$image" | awk '{print $1}')"
 	remote_sha="$(remote_exec "$ssh_config" "$fqdn" "sha256sum '$remote_path' | awk '{print \$1}'")"
 	[ "$local_sha" = "$remote_sha" ] || die "$id remote image checksum mismatch"
+	local_guard_sha="$(sha256sum "$guard_local" | awk '{print $1}')"
+	remote_guard_sha="$(remote_exec "$ssh_config" "$fqdn" "sha256sum '$guard_remote' | cut -d ' ' -f1")"
+	[ "$local_guard_sha" = "$remote_guard_sha" ] || die "$id remote upgrade-space guard checksum mismatch"
+	remote_exec "$ssh_config" "$fqdn" "chmod 0755 '$guard_remote' && '$guard_remote' check '$remote_path'"
 	remote_exec "$ssh_config" "$fqdn" "sysupgrade -T '$remote_path'"
+	remote_exec "$ssh_config" "$fqdn" "'$guard_remote' check '$remote_path'"
 	boot_before="$(remote_exec "$ssh_config" "$fqdn" cat /proc/sys/kernel/random/boot_id)"
 	echo "sysupgrade starting: $id"
 	set +e

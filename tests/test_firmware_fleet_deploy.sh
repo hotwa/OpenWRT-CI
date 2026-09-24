@@ -4,11 +4,40 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT_DIR/Scripts/FirmwareFleetDeploy.sh"
 INVENTORY="$ROOT_DIR/Config/firmware-fleet.json"
+CD_WORKFLOW="$ROOT_DIR/.github/workflows/FIRMWARE-FLEET-CD.yml"
+SPACE_GUARD="$ROOT_DIR/files/usr/sbin/openwrt-upgrade-space"
+SPACE_INIT="$ROOT_DIR/files/etc/init.d/upgrade-tmp-capacity"
 
 [ -x "$SCRIPT" ] || { echo "firmware fleet deploy script is not executable" >&2; exit 1; }
 [ -f "$INVENTORY" ] || { echo "firmware fleet inventory is missing" >&2; exit 1; }
+[ -f "$CD_WORKFLOW" ] || { echo "default-off fleet CD workflow is missing" >&2; exit 1; }
+[ -x "$SPACE_GUARD" ] || { echo "firmware upgrade-space guard is missing or not executable" >&2; exit 1; }
+[ -x "$SPACE_INIT" ] || { echo "firmware upgrade tmpfs init service is missing or not executable" >&2; exit 1; }
+sh -n "$SPACE_GUARD"
+sh -n "$SPACE_INIT"
+grep -Fq 'jdcloud,re-ss-01)' "$SPACE_GUARD"
+grep -Fq 'size=512m /tmp' "$SPACE_GUARD"
+grep -Fq 'image_kib + 49152' "$SPACE_GUARD"
+grep -Fq 'memory-plus-swap' "$SPACE_GUARD"
+grep -Fq 'openwrt-upgrade-space prepare' "$SPACE_INIT"
+grep -Fq 'guard_remote="$remote_path.space-check"' "$SCRIPT"
+grep -Fq 'remote upgrade-space guard checksum mismatch' "$SCRIPT"
+
+# The remote space guard must run after checksum verification but before either
+# sysupgrade's image test or the mutating upgrade command.
+space_first_line="$(grep -nF "\$guard_remote' check '\$remote_path" "$SCRIPT" | head -n 1 | cut -d: -f1)"
+test_line="$(grep -nF 'sysupgrade -T' "$SCRIPT" | cut -d: -f1)"
+space_last_line="$(grep -nF "\$guard_remote' check '\$remote_path" "$SCRIPT" | tail -n 1 | cut -d: -f1)"
+upgrade_line="$(grep -nF 'sysupgrade -c' "$SCRIPT" | cut -d: -f1)"
+[ "$space_first_line" -lt "$test_line" ] && [ "$test_line" -lt "$space_last_line" ] && [ "$space_last_line" -lt "$upgrade_line" ]
+[ "$(grep -Fc "\$guard_remote' check '\$remote_path" "$SCRIPT")" -eq 2 ]
 
 bash "$SCRIPT" validate-inventory --inventory "$INVENTORY" >/dev/null
+grep -A8 '^      DEPLOY:' "$CD_WORKFLOW" | grep -Fq 'default: false'
+if grep -Eq '^[[:space:]]*schedule:' "$CD_WORKFLOW"; then
+	echo "fleet CD must remain unscheduled until explicitly approved" >&2
+	exit 1
+fi
 
 WORK_DIR="$(mktemp -d)"
 trap 'find "$WORK_DIR" -depth -delete' EXIT

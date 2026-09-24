@@ -1,0 +1,7 @@
+#!/bin/sh /etc/rc.common
+
+START=08
+
+start() {
+	/usr/sbin/openwrt-upgrade-space prepare || logger -t upgrade-tmp-capacity "upgrade /tmp preparation failed; guarded CD will refuse to flash"
+}

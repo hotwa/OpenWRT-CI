@@ -15,6 +15,7 @@ SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"
 PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"
+PI_MODES_CONFIG_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/modes.config.json"
 PI_LAZY_EXTENSIONS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json"
 PI_EXTENSION_PEER_SCRIPT="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
 PI_EXTENSION_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extensions.js"
@@ -490,6 +491,17 @@ configure_pi_extensions() {
 		echo "ERROR: default Pi settings template is missing" >&2
 		return 1
 	}
+	[ -s "$PI_MODES_CONFIG_TEMPLATE" ] || {
+		echo "ERROR: default Pi modes config template is missing" >&2
+		return 1
+	}
+	node - "$PI_MODES_CONFIG_TEMPLATE" <<'NODE' || {
+const config = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+if (config.defaultMode !== 'yolo') process.exit(1);
+NODE
+		echo "ERROR: Pi modes config must set defaultMode to yolo" >&2
+		return 1
+	}
 	[ -s "$PI_LAZY_EXTENSIONS_TEMPLATE" ] || {
 		echo "ERROR: default Pi lazy-extension manifest is missing" >&2
 		return 1
@@ -498,6 +510,8 @@ configure_pi_extensions() {
 	cp -f "$PI_MODEL_CATALOG" "$PI_CONFIG_DIR/models.json"
 	install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"
 	cp -f "$PI_SETTINGS_TEMPLATE" "$PI_CONFIG_DIR/settings.json"
+	install -Dm0644 "$PI_MODES_CONFIG_TEMPLATE" "$TARGET_FILES/etc/pi/agent/modes.config.json"
+	cp -f "$PI_MODES_CONFIG_TEMPLATE" "$PI_CONFIG_DIR/modes.config.json"
 	install -Dm0644 "$PI_LAZY_EXTENSIONS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/lazy-extensions.json"
 	cp -f "$PI_LAZY_EXTENSIONS_TEMPLATE" "$PI_CONFIG_DIR/lazy-extensions.json"
 }

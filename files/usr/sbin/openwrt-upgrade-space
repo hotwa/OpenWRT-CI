@@ -1,0 +1,67 @@
+#!/bin/sh
+
+# Prepare and validate /tmp for a firmware image that sysupgrade will stage
+# there.  RE-SS-01 is the only current 1 GiB device whose sysupgrade image is
+# too close to its default tmpfs ceiling.
+
+set -eu
+
+die() {
+	echo "openwrt-upgrade-space: ERROR: $*" >&2
+	exit 1
+}
+
+board="$(cat /tmp/sysinfo/board_name 2>/dev/null || true)"
+[ -n "$board" ] || die "cannot determine board name"
+
+is_tmpfs() {
+
+	awk '$2 == "/tmp" && $3 == "tmpfs" { found = 1 } END { exit !found }' /proc/mounts
+}
+
+prepare() {
+	is_tmpfs || die "/tmp is not a tmpfs mount"
+	case "$board" in
+		jdcloud,re-ss-01)
+			mount -o remount,size=512m /tmp || die "could not raise RE-SS-01 /tmp tmpfs limit to 512 MiB"
+			;;
+		jdcloud,re-cs-02|jdcloud,re-cs-07)
+			;;
+		*)
+			die "unregistered board: $board"
+			;;
+	esac
+	is_tmpfs || die "/tmp stopped being a tmpfs mount after preparation"
+}
+
+case "${1:-}" in
+	prepare)
+		[ "$#" -eq 1 ] || die "usage: $0 prepare | check IMAGE"
+		prepare
+		echo "upgrade /tmp prepared for $board"
+		;;
+	check)
+		[ "$#" -eq 2 ] || die "usage: $0 prepare | check IMAGE"
+		image="$2"
+		[ -f "$image" ] && [ -r "$image" ] || die "firmware image is missing or unreadable: $image"
+		prepare
+		image_bytes="$(wc -c < "$image" | tr -d '[:space:]')"
+		case "$image_bytes" in ''|*[!0-9]*) die "cannot determine image size" ;; esac
+		image_kib=$(( (image_bytes + 1023) / 1024 ))
+		available_kib="$(df -Pk /tmp | awk 'NR == 2 { print $4 }')"
+		case "$available_kib" in ''|*[!0-9]*) die "cannot determine free space on /tmp" ;; esac
+		# Keep 48 MiB free beyond the image for the sysupgrade backup archive,
+		# temporary metadata and filesystem overhead.  The image stays in /data
+		# until sysupgrade itself stages it under /tmp.
+		required_kib=$(( image_kib + 49152 ))
+		if [ "$available_kib" -lt "$required_kib" ]; then
+			die "/tmp has ${available_kib} KiB free; ${required_kib} KiB required for image plus 48 MiB reserve"
+		fi
+		memory_kib="$(awk '/^MemAvailable:/ { available = $2 } /^SwapFree:/ { swap = $2 } END { if (available == "") exit 1; print available + (swap ? swap : 0) }' /proc/meminfo)" || die "cannot determine available memory and swap"
+		[ "$memory_kib" -ge 65536 ] || die "only ${memory_kib} KiB of memory plus zram swap is available; at least 65536 KiB is required"
+		echo "upgrade space passed: board=$board image=${image_kib}KiB /tmp-free=${available_kib}KiB required=${required_kib}KiB memory-plus-swap=${memory_kib}KiB"
+		;;
+	*)
+		die "usage: $0 prepare | check IMAGE"
+		;;
+esac

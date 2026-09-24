@@ -391,7 +391,7 @@ start() {
 
 	# Firmware-default Pi configs land on /data only when absent.
 	local config_file
-	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json; do
+	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json modes.config.json; do
 		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ -e "$DATA_ROOT/pi/agent/$config_file" ] && continue
 		if cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" 2>/dev/null; then

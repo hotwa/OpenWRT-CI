@@ -40,7 +40,7 @@
 - **存储与远程备份** (`rclone`, `f2fs-tools`, `e2fsprogs`)：支持对接 S3/WebDAV/Cloudflare R2 进行配置备份与还原。
 
 ### (2) AI Agent 协同与执行环境
-- **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装 `pi-agent-modes`（支持 `--modes yolo` 无人值守模式，Multica agent 通过 `--custom-args` 启用）、联网搜索 (`pi-web-search`)、CommandCode provider、MCP adapter、受限 subagents、todo/review/hindsight/interactive-shell 以及 WeChat 助手。每次固件构建解析 catalog 中的 latest Pi/扩展，随后把扩展声明的 `@earendil-works/*` peer（含 `pi-tui`）对齐至本次 Pi 版本，并用 Pi 的 Jiti loader 逐一 import；任一失败即中止构建。不要在设备上执行 `npm install` 或 `pi update` 改写不可变 runtime。交互式 pi（SSH 手动运行）保持正常模式，只有 Multica agent 使用 yolo 模式。
+- **Pi Coding Agent** (`pi` CLI)：多模态极速终端智能体，预装 `pi-agent-modes`（支持 `--modes yolo` 无人值守模式；固件会将全局新会话默认设为 yolo，Multica agent 仍通过 `--custom-args` 显式启用）、联网搜索 (`pi-web-search`)、CommandCode provider、MCP adapter、受限 subagents、todo/review/hindsight/interactive-shell 以及 WeChat 助手。全局默认落盘于 `/data/pi/agent/modes.config.json`，只在目标文件不存在时种入；已保存模式的会话、CLI `--modes` 和可信项目级配置按 Pi/扩展自身优先级处理，不被该默认值覆盖。每次固件构建解析 catalog 中的 latest Pi/扩展，随后把扩展声明的 `@earendil-works/*` peer（含 `pi-tui`）对齐至本次 Pi 版本，并用 Pi 的 Jiti loader 逐一 import；任一失败即中止构建。不要在设备上执行 `npm install` 或 `pi update` 改写不可变 runtime。
 - **Pi 扩展运行约束**：`pi-subagents` 默认最多并发 1–2 个；`pi-interactive-shell` 只在明确需要 SSH/REPL 时使用；`@luxusai/pi-hindsight` 只有配置 `HINDSIGHT_BASE_URL` 与 root-only 的 `HINDSIGHT_API_TOKEN`（或受控 env 引用）后才启用记忆服务；真实 MCP 服务调用仍需按服务单独验证。`btw-pi` 与 `@narumitw/pi-statusline` 都触及 footer，若出现视觉重叠应在 Pi 设置中停用其中一个。
 - **CommandCode** (`cmdc` CLI)：Node.js 终端编码智能体；其登录状态在首次认证后持久化在 `/data/commandcode`。
 - **OpenCode** (`opencode` CLI)：仅在构建能力允许且运行时已准备好时使用；RE-SS-01 低内存构建默认不启用，不能因为 `/usr/bin/opencode` 包装器存在就认为可运行。它也加载下面约定的同一份 OpenWrt 角色卡。
