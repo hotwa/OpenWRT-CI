@@ -90,6 +90,11 @@ grep -Fq 'environment: firmware-cd' "$CD_WORKFLOW" || {
   echo "firmware CD must use the protected firmware-cd environment" >&2
   exit 1
 }
+preflight_block="$(sed -n '/^  preflight:/,/^  deploy:/p' "$CD_WORKFLOW")"
+grep -Fxq '    environment: firmware-cd' <<<"$preflight_block" || {
+  echo "firmware CD preflight must use the environment that stores its Tailnet and SSH secrets" >&2
+  exit 1
+}
 grep -Fq 'HEADSCALE_CD_AUTHKEY' "$CD_WORKFLOW" || {
   echo "firmware CD must use its dedicated Tailnet credential" >&2
   exit 1

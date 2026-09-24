@@ -61,6 +61,7 @@ jobs:
     needs: validate
     if: inputs.TARGET != 'none' && (inputs.PREFLIGHT || inputs.DEPLOY)
     runs-on: ubuntu-latest
+    environment: firmware-cd
     permissions:
       actions: read
       contents: read
