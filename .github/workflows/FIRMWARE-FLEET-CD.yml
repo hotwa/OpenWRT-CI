@@ -71,13 +71,13 @@ jobs:
 
       - name: Configure scoped Tailnet and pinned SSH
         env:
-          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CD_AUTHKEY }}
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
           HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
           FIRMWARE_CD_SSH_PRIVATE_KEY: ${{ secrets.FIRMWARE_CD_SSH_PRIVATE_KEY }}
           FIRMWARE_CD_KNOWN_HOSTS: ${{ secrets.FIRMWARE_CD_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CD_AUTHKEY is required}"
+          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CI_AUTHKEY is required}"
           : "${HEADSCALE_LOGIN:?HEADSCALE_URL is required}"
           : "${FIRMWARE_CD_SSH_PRIVATE_KEY:?FIRMWARE_CD_SSH_PRIVATE_KEY is required}"
           : "${FIRMWARE_CD_KNOWN_HOSTS:?FIRMWARE_CD_KNOWN_HOSTS is required}"
@@ -123,13 +123,13 @@ jobs:
 
       - name: Configure scoped Tailnet and pinned SSH
         env:
-          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CD_AUTHKEY }}
+          HEADSCALE_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
           HEADSCALE_LOGIN: ${{ secrets.HEADSCALE_URL }}
           FIRMWARE_CD_SSH_PRIVATE_KEY: ${{ secrets.FIRMWARE_CD_SSH_PRIVATE_KEY }}
           FIRMWARE_CD_KNOWN_HOSTS: ${{ secrets.FIRMWARE_CD_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CD_AUTHKEY is required}"
+          : "${HEADSCALE_AUTHKEY:?HEADSCALE_CI_AUTHKEY is required}"
           : "${HEADSCALE_LOGIN:?HEADSCALE_URL is required}"
           : "${FIRMWARE_CD_SSH_PRIVATE_KEY:?FIRMWARE_CD_SSH_PRIVATE_KEY is required}"
           : "${FIRMWARE_CD_KNOWN_HOSTS:?FIRMWARE_CD_KNOWN_HOSTS is required}"

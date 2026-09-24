@@ -195,10 +195,15 @@ openwrt-ci-health --require data,wan,tailscale,magicdns,nikki
 
 One failure stops the remainder of the fleet. Devices are never flashed in
 parallel. The deployment path receives `contents: read` and `actions: read`
-only, uses `HEADSCALE_CD_AUTHKEY` scoped to `tag:ci-deploy`, and has no access
-to the ordinary build job's secret contract. It requires these additional
-Environment secrets, which must use a dedicated deploy key rather than a
-personal key:
+only. It uses the shared repository secret `HEADSCALE_CI_AUTHKEY` for both
+debug runners and the deployment runner; this single reusable, ephemeral
+Headscale preauth key must carry both `tag:ci-debug` and `tag:ci-deploy`.
+Headscale applies the key's tag set to every enrolled node, so this deliberately
+combines both Tailnet roles: a debug workflow runner also receives the deploy
+tag. Keep the `firmware-cd` Environment approval gate, pinned router host keys,
+and dedicated Dropbear SSH key as separate deployment safeguards. The workflow
+requires these Environment secrets, which must use a dedicated key rather than
+a personal key:
 
 - `FIRMWARE_CD_SSH_PRIVATE_KEY` — private half of a key whose public half is
   installed through `OPENWRT_DROPBEAR_AUTHORIZED_KEYS`.

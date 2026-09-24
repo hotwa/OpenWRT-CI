@@ -9,9 +9,12 @@ the hold; timeout also releases it. Cleanup stops the locally started
 `tailscaled` process and removes its temporary state.
 
 The gate uses `tailscale up --auth-key`, not `--ephemeral`: Tailscale 1.94.2
-does not document the latter. Short-lived node lifecycle and the debug tag are
-supplied by the Headscale preauth key policy (the CI key must be scoped for
-`tag:ci-debug` and configured as ephemeral). Passing a redundant
+does not document the latter. Short-lived node lifecycle and tags are supplied
+by the shared Headscale preauth key policy. `HEADSCALE_CI_AUTHKEY` is also used
+by Firmware Fleet CD, so it must be reusable, ephemeral, and scoped for both
+`tag:ci-debug` and `tag:ci-deploy`. Headscale applies both tags to every node
+enrolled with this key; this means debug runners also receive the deploy tag.
+Passing a redundant
 `--advertise-tags=tag:ci-debug` can make Headscale reject registration with
 `requested tags ... are invalid or not permitted`, so that flag must stay out
 of the client command. The key is injected only through GitHub Actions secrets

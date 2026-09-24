@@ -95,10 +95,18 @@ grep -Fxq '    environment: firmware-cd' <<<"$preflight_block" || {
   echo "firmware CD preflight must use the environment that stores its Tailnet and SSH secrets" >&2
   exit 1
 }
-grep -Fq 'HEADSCALE_CD_AUTHKEY' "$CD_WORKFLOW" || {
-  echo "firmware CD must use its dedicated Tailnet credential" >&2
+grep -Fq 'HEADSCALE_CI_AUTHKEY' "$CD_WORKFLOW" || {
+  echo "firmware CD must use the unified CI Tailnet credential" >&2
   exit 1
 }
+if [ "$(grep -Fc 'secrets.HEADSCALE_CI_AUTHKEY' "$CD_WORKFLOW")" -ne 2 ]; then
+  echo "both protected CD jobs must use the unified CI Tailnet credential" >&2
+  exit 1
+fi
+if grep -Fq 'HEADSCALE_CD_AUTHKEY' "$CD_WORKFLOW"; then
+  echo "firmware CD must not depend on a second Headscale auth-key secret" >&2
+  exit 1
+fi
 grep -Fq 'FIRMWARE_CD_SSH_PRIVATE_KEY' "$CD_WORKFLOW" || {
   echo "firmware CD must require a dedicated SSH key" >&2
   exit 1
