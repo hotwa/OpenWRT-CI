@@ -1,0 +1,4 @@
+#!/bin/sh
+
+[ -x /etc/init.d/nikki-subscription-bootstrap ] && /etc/init.d/nikki-subscription-bootstrap enable
+exit 0

@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+
+# A retained /etc/config/nikki from sysupgrade -c is restored after the ROM
+# UCI defaults have run.  Re-apply this build's private subscription default
+# during normal service startup so a prior file: profile cannot silently win
+# over the explicitly injected subscription configuration.
+START=98
+
+DEFAULTS="${NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS:-/rom/etc/uci-defaults/98-nikki-subscription}"
+
+start() {
+	[ -r "$DEFAULTS" ] || return 0
+
+	if /bin/sh "$DEFAULTS" >/dev/null 2>&1; then
+		logger -t nikki-subscription-bootstrap 'private subscription configuration re-applied' 2>/dev/null || true
+		return 0
+	fi
+
+	logger -t nikki-subscription-bootstrap 'private subscription configuration could not be re-applied' 2>/dev/null || true
+	return 1
+}

@@ -386,4 +386,99 @@ if git -C "$ROOT_DIR" grep -n -E 'hskey-auth-[A-Za-z0-9_-]+' -- . >/dev/null; th
   exit 1
 fi
 
+# `tailscale set` may leave control-plane status Running while tailscale0 has
+# lost its IPv4 address.  The enrollment helper must repair that kernel state
+# once, but must not restart a healthy daemon.
+KERNEL_BIN="$WORK_DIR/kernel-bin"
+KERNEL_ACTIONS="$WORK_DIR/kernel-actions"
+KERNEL_ADDR="$WORK_DIR/kernel-addr"
+mkdir -p "$KERNEL_BIN"
+
+cat >"$KERNEL_BIN/tailscale" <<'EOF'
+#!/bin/sh
+case "$1:$2" in
+  ip:-4) printf '%s\n' '100.64.0.2' ;;
+  *) exit 1 ;;
+esac
+EOF
+
+cat >"$KERNEL_BIN/ip" <<'EOF'
+#!/bin/sh
+if [ "$*" = '-4 addr show dev tailscale0' ] && [ -f "$KERNEL_ADDR" ]; then
+  printf '%s\n' '    inet 100.64.0.2/32 scope global tailscale0'
+fi
+EOF
+
+cat >"$KERNEL_BIN/tailscale-init" <<'EOF'
+#!/bin/sh
+printf '%s\n' restart >>"$KERNEL_ACTIONS"
+[ -f "$KERNEL_INIT_FAIL" ] && exit 1
+[ -f "$KERNEL_NEVER_RECOVER" ] || touch "$KERNEL_ADDR"
+EOF
+
+cat >"$KERNEL_BIN/logger" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$KERNEL_ACTIONS"
+EOF
+
+cat >"$KERNEL_BIN/sleep" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+chmod +x "$KERNEL_BIN"/*
+export KERNEL_ACTIONS KERNEL_ADDR
+KERNEL_INIT_FAIL="$WORK_DIR/kernel-init-fail"
+KERNEL_NEVER_RECOVER="$WORK_DIR/kernel-never-recover"
+export KERNEL_INIT_FAIL KERNEL_NEVER_RECOVER
+run_kernel_guard() {
+  HEADSCALE_AUTO_ENROLL_LIBRARY_ONLY=1 \
+  HEADSCALE_AUTO_ENROLL_TAILSCALE_INIT="$KERNEL_BIN/tailscale-init" \
+  HEADSCALE_AUTO_ENROLL_KERNEL_READY_ATTEMPTS=2 \
+  HEADSCALE_AUTO_ENROLL_KERNEL_READY_INTERVAL=0 \
+  PATH="$KERNEL_BIN:$PATH" \
+  sh -c '. "$1"; ensure_tailscale_kernel_state' sh "$SCRIPT"
+}
+
+rm -f "$KERNEL_ADDR" "$KERNEL_ACTIONS"
+run_kernel_guard
+[ "$(grep -c '^restart$' "$KERNEL_ACTIONS")" -eq 1 ] || {
+  echo "kernel-state loss did not trigger exactly one Tailscale restart"
+  exit 1
+}
+
+: >"$KERNEL_ACTIONS"
+run_kernel_guard
+[ ! -s "$KERNEL_ACTIONS" ] || {
+  echo "healthy Tailscale kernel state triggered a restart"
+  exit 1
+}
+
+rm -f "$KERNEL_ADDR" "$KERNEL_ACTIONS"
+touch "$KERNEL_NEVER_RECOVER"
+if run_kernel_guard; then
+  echo "kernel-state guard accepted an address that never recovered"
+  exit 1
+fi
+[ "$(grep -c '^restart$' "$KERNEL_ACTIONS")" -eq 1 ] || {
+  echo "unrecovered kernel state did not attempt one restart"
+  exit 1
+}
+rm -f "$KERNEL_NEVER_RECOVER" "$KERNEL_ADDR" "$KERNEL_ACTIONS"
+touch "$KERNEL_INIT_FAIL"
+if run_kernel_guard; then
+  echo "kernel-state guard accepted a failed Tailscale restart"
+  exit 1
+fi
+rm -f "$KERNEL_INIT_FAIL"
+
+if grep -q 'ensure_tailscale_kernel_state || true' "$SCRIPT"; then
+  echo "failed kernel-state recovery must not be silently accepted"
+  exit 1
+fi
+[ "$(grep -c 'completion deferred' "$SCRIPT")" -eq 3 ] || {
+  echo "every enrollment completion path must defer on kernel-state failure"
+  exit 1
+}
+
 echo "headscale auto-enroll test passed"

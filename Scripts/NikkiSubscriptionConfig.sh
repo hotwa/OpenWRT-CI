@@ -17,7 +17,8 @@ cat >"$DEFAULTS" <<EOF2
 #!/bin/sh
 set -eu
 
-[ -f /etc/config/nikki ] || exit 0
+nikki_config="\${NIKKI_SUBSCRIPTION_NIKKI_CONFIG:-/etc/config/nikki}"
+[ -f "\$nikki_config" ] || exit 0
 url="\$(printf '%s' '$URL_B64' | base64 -d)"
 [ -n "\$url" ] || exit 1
 uci set "nikki.subscription.url=\$url"
@@ -25,8 +26,9 @@ uci set 'nikki.subscription.prefer=local'
 uci set 'nikki.config.profile=subscription:subscription'
 uci set 'nikki.config.enabled=0'
 uci commit nikki
-[ -x /etc/init.d/nikki-subscription-sync ] && /etc/init.d/nikki-subscription-sync enable
-[ -x /etc/init.d/nikki-subscription-sync ] && /etc/init.d/nikki-subscription-sync start >/dev/null 2>&1 || true
+sync_init="\${NIKKI_SUBSCRIPTION_SYNC_INIT:-/etc/init.d/nikki-subscription-sync}"
+[ -x "\$sync_init" ] && "\$sync_init" enable
+[ -x "\$sync_init" ] && "\$sync_init" start >/dev/null 2>&1 || true
 exit 0
 EOF2
 chmod 700 "$DEFAULTS"

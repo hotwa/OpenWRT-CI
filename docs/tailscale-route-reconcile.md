@@ -37,6 +37,10 @@ RE-CS-02、RE-CS-07 或某个固定 LAN 网段。只有明确构建无 Tailscale
 - `BackendState` 非 Running、status/netmap 读取失败、没有 self IPv4，或
   `headscale-auto-enroll` 的活动锁存在时，本轮只记录并跳过修复。
 
+`headscale-auto-enroll` 在自身执行 `tailscale set/up` 后先做一次内核地址
+验收；若 `tailscale0` 丢失本机 Tailnet IPv4，它会进行一次受限重启。这里的
+常驻 reconciler 仍是独立的长期漂移兜底，不应成为新启动后首个数据面恢复的等待点。
+
 启动顺序由 init 脚本保持为：`tailscale` → `headscale-auto-enroll` (98) →
 `tailscale-route-reconcile` (99)。`headscale-auto-enroll` 已禁用旧的
 `tailscale-settings` reconciler，避免其 `--cleanup` 与运行中的 daemon 竞争。

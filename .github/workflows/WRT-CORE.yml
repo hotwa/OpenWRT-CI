@@ -698,6 +698,8 @@ jobs:
           cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
           cp -f ./files/etc/uci-defaults/96-samba-default-user ./wrt/files/etc/uci-defaults/96-samba-default-user
           cp -f ./files/etc/uci-defaults/99-nikki-subscription-cron ./wrt/files/etc/uci-defaults/99-nikki-subscription-cron
+          cp -f ./files/etc/uci-defaults/99-enable-nikki-subscription-bootstrap ./wrt/files/etc/uci-defaults/99-enable-nikki-subscription-bootstrap
+          cp -f ./files/etc/init.d/nikki-subscription-bootstrap ./wrt/files/etc/init.d/nikki-subscription-bootstrap
           cp -f ./files/etc/init.d/nikki-subscription-sync ./wrt/files/etc/init.d/nikki-subscription-sync
           cp -f ./files/etc/hotplug.d/iface/99-nikki-subscription ./wrt/files/etc/hotplug.d/iface/99-nikki-subscription
           cp -f ./files/usr/sbin/nikki-subscription-sync ./wrt/files/usr/sbin/nikki-subscription-sync
@@ -742,9 +744,11 @@ jobs:
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
             ./wrt/files/etc/init.d/nikki-dns-failopen \
+            ./wrt/files/etc/init.d/nikki-subscription-bootstrap \
             ./wrt/files/etc/init.d/nikki-subscription-sync \
             ./wrt/files/etc/hotplug.d/iface/99-nikki-subscription \
             ./wrt/files/etc/uci-defaults/99-nikki-subscription-cron \
+            ./wrt/files/etc/uci-defaults/99-enable-nikki-subscription-bootstrap \
             ./wrt/files/usr/sbin/nikki-subscription-sync \
             ./wrt/files/etc/uci-defaults/93-logd-ring-size \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \

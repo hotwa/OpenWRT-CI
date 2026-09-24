@@ -52,8 +52,12 @@ case "$command" in
 			printf '{"BackendState":"Stopped"}\n'
 		fi
 		;;
+	ip)
+		[ "${1:-}" = -4 ] && printf '%s\n' '100.64.0.2'
+		;;
 	up|set)
 		printf '%s %s\n' "$command" "$*" >>"$TEST_LOG"
+		touch "$TEST_ROOT/kernel-ready"
 		;;
 esac
 EOF
@@ -62,7 +66,7 @@ cat >"$BIN_DIR/tailscale-init" <<'EOF'
 #!/bin/sh
 printf 'init %s\n' "$*" >>"$TEST_LOG"
 if [ "${1:-}" = restart ]; then
-	touch "$TEST_ROOT/state-running"
+	touch "$TEST_ROOT/state-running" "$TEST_ROOT/kernel-ready"
 fi
 EOF
 
@@ -76,6 +80,9 @@ EOF
 
 cat >"$BIN_DIR/ip" <<'EOF'
 #!/bin/sh
+if [ "$*" = '-4 addr show dev tailscale0' ] && [ -f "$TEST_ROOT/kernel-ready" ]; then
+	printf '%s\n' '    inet 100.64.0.2/32 scope global tailscale0'
+fi
 exit 0
 EOF
 

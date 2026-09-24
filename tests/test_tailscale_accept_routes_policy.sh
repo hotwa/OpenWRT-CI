@@ -68,7 +68,13 @@ case "$command" in
 			printf '{"BackendState":"Stopped"}\n'
 		fi
 		;;
-	up|set) printf '%s %s\n' "$command" "$*" >>"$TEST_LOG" ;;
+	ip)
+		[ "${1:-}" = -4 ] && printf '%s\n' '100.64.0.2'
+		;;
+	up|set)
+		printf '%s %s\n' "$command" "$*" >>"$TEST_LOG"
+		touch "$TEST_ROOT/kernel-ready"
+		;;
 esac
 EOF
 
@@ -76,11 +82,18 @@ cat >"$BIN_DIR/tailscale-init" <<'EOF'
 #!/bin/sh
 printf 'init %s\n' "$*" >>"$TEST_LOG"
 if [ "${1:-}" = restart ]; then
-	touch "$TEST_ROOT/state-running"
+	touch "$TEST_ROOT/state-running" "$TEST_ROOT/kernel-ready"
 fi
 EOF
 
-for utility in ip logger sleep ubus; do
+cat >"$BIN_DIR/ip" <<'EOF'
+#!/bin/sh
+if [ "$*" = '-4 addr show dev tailscale0' ] && [ -f "$TEST_ROOT/kernel-ready" ]; then
+	printf '%s\n' '    inet 100.64.0.2/32 scope global tailscale0'
+fi
+EOF
+
+for utility in logger sleep ubus; do
 	cat >"$BIN_DIR/$utility" <<'EOF'
 #!/bin/sh
 exit 0
@@ -102,11 +115,11 @@ run_case() {
 	local scenario="$1" policy="$2" expected="$3" expected_command="$4"
 
 	: >"$LOG_FILE"
-	rm -f "$WORK_DIR/state-running" "$WORK_DIR/auto-enroll.done"
+	rm -f "$WORK_DIR/state-running" "$WORK_DIR/kernel-ready" "$WORK_DIR/auto-enroll.done"
 	case "$scenario" in
 		first) printf '{"state":"no_backup"}\n' >"$GATE_FILE" ;;
 		existing)
-			touch "$WORK_DIR/state-running"
+			touch "$WORK_DIR/state-running" "$WORK_DIR/kernel-ready"
 			printf '{"state":"no_backup"}\n' >"$GATE_FILE"
 			;;
 		restored) printf '{"state":"restored"}\n' >"$GATE_FILE" ;;

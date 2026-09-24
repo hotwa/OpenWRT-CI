@@ -5,19 +5,23 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INJECTOR="$ROOT_DIR/Scripts/NikkiSubscriptionConfig.sh"
 SYNC="$ROOT_DIR/files/usr/sbin/nikki-subscription-sync"
 INIT="$ROOT_DIR/files/etc/init.d/nikki-subscription-sync"
+BOOTSTRAP="$ROOT_DIR/files/etc/init.d/nikki-subscription-bootstrap"
 HOTPLUG="$ROOT_DIR/files/etc/hotplug.d/iface/99-nikki-subscription"
 CRON="$ROOT_DIR/files/etc/uci-defaults/99-nikki-subscription-cron"
+BOOTSTRAP_ENABLE="$ROOT_DIR/files/etc/uci-defaults/99-enable-nikki-subscription-bootstrap"
 WORKFLOW="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
-for path in "$INJECTOR" "$SYNC" "$INIT" "$HOTPLUG" "$CRON"; do
+for path in "$INJECTOR" "$SYNC" "$INIT" "$BOOTSTRAP" "$HOTPLUG" "$CRON" "$BOOTSTRAP_ENABLE"; do
   [ -f "$path" ] || { echo "missing $path"; exit 1; }
 done
 
 bash -n "$INJECTOR"
 sh -n "$SYNC"
 sh -n "$INIT"
+sh -n "$BOOTSTRAP"
 sh -n "$HOTPLUG"
 sh -n "$CRON"
+sh -n "$BOOTSTRAP_ENABLE"
 
 grep -Fq 'NIKKI_SUBSCRIPTION_URL' "$INJECTOR"
 grep -Fq 'NIKKI_SUBSCRIPTION_URL' "$WORKFLOW"
@@ -39,7 +43,7 @@ grep -Fq 'last_success_epoch' "$SYNC"
 grep -Fq '10 4 * * *' "$CRON"
 grep -Fq 'ACTION:-' "$HOTPLUG"
 grep -Fq 'INTERFACE:-' "$HOTPLUG"
-for path in '99-nikki-subscription-cron' 'nikki-subscription-sync' '99-nikki-subscription'; do
+for path in '99-nikki-subscription-cron' '99-enable-nikki-subscription-bootstrap' 'nikki-subscription-bootstrap' 'nikki-subscription-sync' '99-nikki-subscription'; do
   grep -Fq "$path" "$WORKFLOW" || { echo "workflow does not install $path"; exit 1; }
 done
 
@@ -53,10 +57,37 @@ grep -Fq 'nikki.subscription.url' "$DEFAULTS"
 grep -Fq 'nikki.subscription.prefer=local' "$DEFAULTS"
 grep -Fq 'nikki.config.profile=subscription:subscription' "$DEFAULTS"
 grep -Fq 'nikki.config.enabled=0' "$DEFAULTS"
-grep -Fq '/etc/init.d/nikki-subscription-sync start' "$DEFAULTS"
+grep -Fq 'NIKKI_SUBSCRIPTION_SYNC_INIT' "$DEFAULTS"
+grep -Fq '/rom/etc/uci-defaults/98-nikki-subscription' "$BOOTSTRAP"
+grep -Fq '/etc/init.d/nikki-subscription-bootstrap enable' "$BOOTSTRAP_ENABLE"
+if grep -Eq 'https?://|subscription\.url' "$BOOTSTRAP" "$BOOTSTRAP_ENABLE"; then
+  echo 'subscription bootstrap must not contain a URL or subscription value' >&2
+  exit 1
+fi
 grep -Fq 'nikki-subscription-url' "$ROOT_DIR/Scripts/PrivateFirmwareGuard.sh"
 if grep -Fq 'https://example.invalid/sub?token=test' "$DEFAULTS" "$WORK_DIR/injector.log"; then
   echo 'subscription URL was written or logged in plaintext'
+  exit 1
+fi
+
+BOOTSTRAP_DEFAULTS="$WORK_DIR/bootstrap-defaults"
+BOOTSTRAP_LOG="$WORK_DIR/bootstrap.log"
+cat >"$BOOTSTRAP_DEFAULTS" <<EOF
+#!/bin/sh
+printf '%s\\n' applied >"$BOOTSTRAP_LOG"
+EOF
+chmod 0700 "$BOOTSTRAP_DEFAULTS"
+NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS="$BOOTSTRAP_DEFAULTS" \
+  sh -c '. "$1"; start' sh "$BOOTSTRAP"
+grep -Fxq applied "$BOOTSTRAP_LOG"
+rm -f "$BOOTSTRAP_LOG"
+NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS="$WORK_DIR/missing-bootstrap-defaults" \
+  sh -c '. "$1"; start' sh "$BOOTSTRAP"
+[ ! -e "$BOOTSTRAP_LOG" ] || { echo 'missing bootstrap default unexpectedly ran'; exit 1; }
+printf '%s\n' 'exit 1' >"$BOOTSTRAP_DEFAULTS"
+if NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS="$BOOTSTRAP_DEFAULTS" \
+  sh -c '. "$1"; start' sh "$BOOTSTRAP"; then
+  echo 'failed bootstrap default unexpectedly succeeded' >&2
   exit 1
 fi
 
@@ -64,14 +95,26 @@ BIN_DIR="$WORK_DIR/bin"
 mkdir -p "$BIN_DIR"
 cat >"$BIN_DIR/uci" <<'EOF'
 #!/bin/sh
-if [ "${1:-}" = -q ] && [ "${2:-}" = get ]; then
-  case "${3:-}" in
-    nikki.subscription.url) printf '%s\n' "${UCI_SUBSCRIPTION_URL:-}" ;;
-    nikki.config.profile) printf '%s\n' "${UCI_NIKKI_PROFILE:-subscription:subscription}" ;;
-    nikki.subscription.success) printf '%s\n' "${UCI_SUBSCRIPTION_SUCCESS:-1}" ;;
-    nikki.config.enabled) printf '%s\n' "${UCI_NIKKI_ENABLED:-0}" ;;
-  esac
-fi
+case "${1:-}" in
+  -q)
+    if [ "${2:-}" = get ]; then
+      case "${3:-}" in
+        nikki.subscription.url) printf '%s\n' "${UCI_SUBSCRIPTION_URL:-}" ;;
+        nikki.config.profile) printf '%s\n' "${UCI_NIKKI_PROFILE:-subscription:subscription}" ;;
+        nikki.subscription.success) printf '%s\n' "${UCI_SUBSCRIPTION_SUCCESS:-1}" ;;
+        nikki.config.enabled) printf '%s\n' "${UCI_NIKKI_ENABLED:-0}" ;;
+      esac
+    fi
+    ;;
+  set)
+    value="${2:-}"
+    case "$value" in nikki.subscription.url=*) value='nikki.subscription.url=<redacted>' ;; esac
+    [ -z "${UCI_SET_LOG:-}" ] || printf '%s\n' "$value" >>"$UCI_SET_LOG"
+    ;;
+  commit)
+    [ -z "${UCI_COMMIT_LOG:-}" ] || printf '%s\n' "${2:-}" >>"$UCI_COMMIT_LOG"
+    ;;
+esac
 exit 0
 EOF
 cat >"$BIN_DIR/ubus" <<'EOF'
@@ -101,6 +144,54 @@ cat >"$BIN_DIR/nikki-init" <<'EOF'
 printf '%s\n' "${1:-}" >>"${NIKKI_INIT_LOG:?}"
 EOF
 chmod 0755 "$BIN_DIR"/*
+
+# Model `sysupgrade -c`: the ROM default first ran, retained configuration
+# later restored a legacy file: profile, then the enabled S98 bootstrap must
+# run the exact same private default again.  The fake UCI only records keys,
+# never the decoded subscription URL.
+BOOTSTRAP_SYNC_INIT="$BIN_DIR/bootstrap-sync-init"
+cat >"$BOOTSTRAP_SYNC_INIT" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${NIKKI_BOOTSTRAP_SYNC_LOG:?}"
+EOF
+chmod 0755 "$BOOTSTRAP_SYNC_INIT"
+UCI_SET_LOG="$WORK_DIR/bootstrap-uci-set.log"
+UCI_COMMIT_LOG="$WORK_DIR/bootstrap-uci-commit.log"
+NIKKI_BOOTSTRAP_SYNC_LOG="$WORK_DIR/bootstrap-sync-init.log"
+BOOTSTRAP_NIKKI_CONFIG="$WORK_DIR/bootstrap-nikki-config"
+touch "$BOOTSTRAP_NIKKI_CONFIG"
+PATH="$BIN_DIR:$PATH" \
+  NIKKI_SUBSCRIPTION_NIKKI_CONFIG="$BOOTSTRAP_NIKKI_CONFIG" \
+  NIKKI_SUBSCRIPTION_SYNC_INIT="$BOOTSTRAP_SYNC_INIT" \
+  UCI_SET_LOG="$UCI_SET_LOG" \
+  UCI_COMMIT_LOG="$UCI_COMMIT_LOG" \
+  NIKKI_BOOTSTRAP_SYNC_LOG="$NIKKI_BOOTSTRAP_SYNC_LOG" \
+  sh "$DEFAULTS"
+grep -Fxq 'nikki.subscription.url=<redacted>' "$UCI_SET_LOG"
+grep -Fxq 'nikki.subscription.prefer=local' "$UCI_SET_LOG"
+grep -Fxq 'nikki.config.profile=subscription:subscription' "$UCI_SET_LOG"
+grep -Fxq 'nikki.config.enabled=0' "$UCI_SET_LOG"
+grep -Fxq nikki "$UCI_COMMIT_LOG"
+grep -Fxq enable "$NIKKI_BOOTSTRAP_SYNC_LOG"
+grep -Fxq start "$NIKKI_BOOTSTRAP_SYNC_LOG"
+if grep -Fq 'https://example.invalid/sub?token=test' "$UCI_SET_LOG" "$UCI_COMMIT_LOG" "$NIKKI_BOOTSTRAP_SYNC_LOG"; then
+  echo 'bootstrap lifecycle fixture logged the subscription URL' >&2
+  exit 1
+fi
+: >"$UCI_SET_LOG"
+: >"$UCI_COMMIT_LOG"
+: >"$NIKKI_BOOTSTRAP_SYNC_LOG"
+PATH="$BIN_DIR:$PATH" \
+  NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS="$DEFAULTS" \
+  NIKKI_SUBSCRIPTION_NIKKI_CONFIG="$BOOTSTRAP_NIKKI_CONFIG" \
+  NIKKI_SUBSCRIPTION_SYNC_INIT="$BOOTSTRAP_SYNC_INIT" \
+  UCI_SET_LOG="$UCI_SET_LOG" \
+  UCI_COMMIT_LOG="$UCI_COMMIT_LOG" \
+  NIKKI_BOOTSTRAP_SYNC_LOG="$NIKKI_BOOTSTRAP_SYNC_LOG" \
+  sh -c '. "$1"; start' sh "$BOOTSTRAP"
+grep -Fxq 'nikki.config.profile=subscription:subscription' "$UCI_SET_LOG"
+grep -Fxq enable "$NIKKI_BOOTSTRAP_SYNC_LOG"
+grep -Fxq start "$NIKKI_BOOTSTRAP_SYNC_LOG"
 
 SYNC_CONFIG="$WORK_DIR/nikki"
 SYNC_STATUS="$WORK_DIR/subscription.status"

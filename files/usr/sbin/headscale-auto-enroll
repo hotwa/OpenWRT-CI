@@ -7,6 +7,8 @@ TAG="headscale-auto-enroll"
 LOCK_DIR="${HEADSCALE_AUTO_ENROLL_LOCK_DIR:-/var/run/headscale-auto-enroll.lock}"
 TAILSCALE_INIT="${HEADSCALE_AUTO_ENROLL_TAILSCALE_INIT:-/etc/init.d/tailscale}"
 TAILSCALE_STATE_READY_FILE="${HEADSCALE_AUTO_ENROLL_STATE_READY_FILE:-/var/run/tailscale-state-persist.ready}"
+KERNEL_READY_ATTEMPTS="${HEADSCALE_AUTO_ENROLL_KERNEL_READY_ATTEMPTS:-15}"
+KERNEL_READY_INTERVAL="${HEADSCALE_AUTO_ENROLL_KERNEL_READY_INTERVAL:-2}"
 
 log() {
 	logger -t "$TAG" "$*"
@@ -77,6 +79,55 @@ is_ipv4() {
 			*) return 1 ;;
 		esac
 	done
+}
+
+# `tailscale set` persists preferences without a second login.  On affected
+# OpenWrt/Tailscale combinations it can nevertheless leave the daemon's
+# userspace control state Running while tailscale0 has lost its IPv4 address
+# and policy routes.  Check the kernel-side address independently; status JSON
+# alone is not sufficient evidence that the router can carry Tailnet traffic.
+tailscale_kernel_ready() {
+	local self4
+
+	self4="$(tailscale ip -4 2>/dev/null | sed -n '1p' || true)"
+	is_ipv4 "$self4" || return 1
+	ip -4 addr show dev tailscale0 2>/dev/null | grep -q "inet $self4/"
+}
+
+wait_for_tailscale_kernel() {
+	local attempts="$KERNEL_READY_ATTEMPTS" interval="$KERNEL_READY_INTERVAL" attempt=0
+
+	case "$attempts" in ''|*[!0-9]*) attempts=15 ;; esac
+	case "$interval" in ''|*[!0-9]*) interval=2 ;; esac
+	[ "$attempts" -gt 0 ] || attempts=15
+
+	while [ "$attempt" -lt "$attempts" ]; do
+		tailscale_kernel_ready && return 0
+		attempt=$((attempt + 1))
+		[ "$attempt" -lt "$attempts" ] || break
+		sleep "$interval"
+	done
+	return 1
+}
+
+ensure_tailscale_kernel_state() {
+	if wait_for_tailscale_kernel; then
+		return 0
+	fi
+
+	log "tailscale kernel state missing after preference update; restarting once"
+	if ! "$TAILSCALE_INIT" restart >/dev/null 2>&1; then
+		log "tailscale restart failed while recovering kernel state"
+		return 1
+	fi
+
+	if wait_for_tailscale_kernel; then
+		log "tailscale kernel state restored after preference update"
+		return 0
+	fi
+
+	log "tailscale kernel state is still unavailable after bounded restart"
+	return 1
 }
 
 ipv4_to_u32() {
@@ -617,6 +668,10 @@ main() {
 	if is_enrolled; then
 		if apply_runtime_preferences "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
 			log "tailscale already enrolled; runtime preferences applied"
+			ensure_tailscale_kernel_state || {
+				log "tailscale already enrolled but kernel state recovery failed; completion deferred"
+				exit 1
+			}
 		else
 			log "tailscale already enrolled; failed to apply runtime preferences"
 		fi
@@ -632,6 +687,10 @@ main() {
 			if reload_recovered_state; then
 				if apply_runtime_preferences "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
 					log "recovered tailscale state; runtime preferences applied"
+					ensure_tailscale_kernel_state || {
+						log "recovered tailscale kernel state recovery failed; completion deferred"
+						exit 1
+					}
 				else
 					log "recovered tailscale state; failed to apply runtime preferences"
 				fi
@@ -660,6 +719,10 @@ main() {
 
 	while [ "$attempt" -lt "$max_attempts" ]; do
 		if run_tailscale_up "$login_server" "$auth_key" "$hostname" "$ssh_enabled" "$accept_dns" "$accept_routes" "$advertise_routes" >/dev/null 2>&1; then
+			ensure_tailscale_kernel_state || {
+				log "new enrollment kernel state recovery failed; completion deferred"
+				exit 1
+			}
 			touch "$DONE_FILE" 2>/dev/null || true
 			cleanup_auth_key_file "$auth_key_file" "$delete_auth_key_file" || true
 			post_enrollment_guards

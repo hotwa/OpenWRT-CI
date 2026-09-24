@@ -10,6 +10,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
 - `tailscale.settings.accept_routes` is the sole router route-acceptance policy; this overlay defaults it to `1` for the private multi-site Mesh. Auto-enrollment only reads and applies that setting, including after state restore and on already-enrolled routers. The CI runner is separate and explicitly uses `--accept-routes=false`. The private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
 - Keep the optional `tailscale-settings` LuCI reconciler disabled. Its current package service runs `tailscaled --cleanup` during service startup; with an already-running daemon this can remove `tailscale0`'s address and table 52 routes. `headscale-auto-enroll` owns the persistent `tailscale set` preferences instead.
+- After `tailscale set` or `tailscale up`, auto-enrollment verifies that the control-plane IPv4 is also present on `tailscale0`. If that kernel state is missing, it makes one bounded Tailscale restart and waits for recovery; this avoids a boot that reports `Running` while Tailnet traffic is unavailable.
 
 ## Files
 
