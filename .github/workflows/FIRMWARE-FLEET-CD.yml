@@ -12,7 +12,7 @@ on:
         description: 'Registered device to inspect or upgrade; one device is handled per approved run'
         required: false
         type: choice
-        options: [none, cs07-10, cs02-11, ss01-12]
+        options: [none, cs07-10, cs02-11, ss01-12, ss01-13]
         default: none
       PREFLIGHT:
         description: 'Perform read-only Tailnet SSH preflight for the chosen target'
@@ -54,7 +54,10 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "$BUILD_RUN_ID" ] || { echo 'ERROR: BUILD_RUN_ID is required for a device preflight or deployment' >&2; exit 1; }
-          bash Scripts/FirmwareFleetDeploy.sh validate-run --run-id "$BUILD_RUN_ID" --target '${{ inputs.TARGET }}'
+          bash Scripts/FirmwareFleetDeploy.sh validate-run \
+            --inventory Config/firmware-fleet.json \
+            --run-id "$BUILD_RUN_ID" \
+            --target '${{ inputs.TARGET }}'
 
   preflight:
     name: Read-only Tailnet preflight

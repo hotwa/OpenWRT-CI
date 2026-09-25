@@ -34,6 +34,7 @@ Examples:
 | RE-CS-07 | `192.168.10.1` | `cs07-10` | `cs07-10.hs.jmsu.top` |
 | RE-CS-02 | `192.168.11.1` | `cs02-11` | `cs02-11.hs.jmsu.top` |
 | RE-SS-01 | `192.168.12.1` | `ss01-12` | `ss01-12.hs.jmsu.top` |
+| RE-SS-01 CPE-5G B | `192.168.13.1` | `ss01-13` | `ss01-13.hs.jmsu.top` |
 
 The model is **not** inferred from the subnet. For example, either
 `cs07-13.hs.jmsu.top` or `ss01-13.hs.jmsu.top` is valid, but only after the
@@ -54,6 +55,7 @@ board, advertised CIDR, and FQDN from this table.
 | `cs07-10` | RE-CS-07 | `jdcloud,re-cs-07` | `192.168.10.0/24` | `cs07-10.hs.jmsu.top` |
 | `cs02-11` | RE-CS-02 | `jdcloud,re-cs-02` | `192.168.11.0/24` | `cs02-11.hs.jmsu.top` |
 | `ss01-12` | RE-SS-01 | `jdcloud,re-ss-01` | `192.168.12.0/24` | `ss01-12.hs.jmsu.top` |
+| `ss01-13` | RE-SS-01 CPE-5G B | `jdcloud,re-ss-01` | `192.168.13.0/24` | `ss01-13.hs.jmsu.top` |
 
 When adding a router, add a complete row first. The inventory validator must
 reject duplicate IDs, duplicate FQDNs, overlapping CIDRs, unknown boards, and
@@ -175,6 +177,39 @@ wrappers that call a shared reusable build/deploy workflow with a fixed
 inventory ID. Each wrapper must remain opt-in until the maintenance timezone,
 staggered rollout order, reviewer approval, and rescue path are recorded.
 Today there is no `schedule` trigger and no automatic deployment.
+
+### CPE-5G B build and Wi-Fi profile
+
+`CPE-5G.yml` remains the dedicated source workflow. Its production B artifact
+keeps the known-bootable `NOWIFI` profile. A separate, default-off
+`BUILD_WIFI_CANDIDATE` input builds the immutable 7.06 source pin with the
+single-device `IPQ60XX-706-WIFI-YES` profile; optional baseline A also remains
+`NOWIFI` and is never a deployment candidate. Fleet ID `ss01-13` maps specifically to
+`CPE-5G.yml`, not to `RE-Mesh-BUILD.yml`, and artifact verification requires
+the pinned upstream source, `feature_overlay=true`, and `cpe_wifi=true` in
+metadata. CD selects the unique private B artifact and only the
+`jdcloud_re-ss-01` sysupgrade image; the factory image is never used for a
+routine CD upgrade.
+
+The Wi-Fi candidate image provisions three secured LAN access points from the
+`CPE5G_WIFI_PASSWORD` Actions secret: `CPE-loT` on 2.4 GHz using WPA2-PSK/CCMP
+and 20 MHz for broad legacy IoT compatibility, plus `CPE-WiFi6-2.4G` and
+`CPE-WiFi6-5G`. The 2.4 GHz radio is shared by the first two APs; the radio
+must therefore use one common channel width. Wi-Fi 5 (802.11ac) is a 5 GHz
+standard, not a separate 2.4 GHz mode; legacy 2.4 GHz clients instead use
+backward-compatible 802.11b/g/n rates while the 2.4 GHz AP advertises HE/Wi-Fi
+6. WPA2 is used instead of WPA3-only to maximize IoT interoperability. The
+key is injected only in a private-repository build and is recoverable from the
+image. The build has an explicit repository-visibility guard because Actions
+artifacts are readable by anyone who can read the repository. All three SSIDs currently bridge to LAN;
+IoT isolation/VLAN is not part of this change.
+
+This Wi-Fi-enabled image is a candidate until it passes the existing separate
+RE-SS-01 Wi-Fi real-device gate: verify generated 2.4/5 GHz radios and
+calibration, all three BSSs, IoT association, Wi-Fi 6 clients on both bands,
+reboot persistence, and CPE 5G/Lucky/Tailnet behavior. Do not enable a
+scheduled or unattended CPE deployment before that hardware acceptance and
+the `ss01-13` pinned host key have been verified.
 
 Tailscale identity state is stored at `/data/tailscale/tailscaled.state`, not
 `/etc/tailscale/tailscaled.state`. Normal sysupgrade preserves `/data` because

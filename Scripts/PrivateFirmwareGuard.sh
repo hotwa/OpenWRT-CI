@@ -78,6 +78,12 @@ if [ -s "$pppoe_defaults" ] && grep -q 'network.wan.password' "$pppoe_defaults";
 	add_reason wan-pppoe-credential
 fi
 
+# CPE-5G Wi-Fi keys are embedded into a root-only firstboot script and remain
+# recoverable from the image, so any such firmware must be private-only.
+if [ -s "$TARGET_FILES/etc/uci-defaults/96-cpe5g-wifi" ]; then
+	add_reason cpe5g-wifi-credential
+fi
+
 # Build-time Samba credentials are paired binary databases. Their contents
 # are secret even though no plaintext password is present in the overlay.
 if [ -s "$TARGET_FILES/etc/samba/passdb.tdb" ] || [ -s "$TARGET_FILES/etc/samba/secrets.tdb" ]; then

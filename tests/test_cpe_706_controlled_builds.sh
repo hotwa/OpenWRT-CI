@@ -17,8 +17,9 @@ grep -A3 '^  baseline_a:' "$WORKFLOW" | grep -q 'if:.*inputs.BUILD_BASELINE_A' |
   exit 1
 }
 
-[ "$(grep -c 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW")" -eq 2 ] || {
-  echo 'CPE A/B controls must both use the 7.06 IPQ60XX-NOWIFI config'
+[ "$(grep -c 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW")" -eq 2 ] &&
+	[ "$(grep -c 'WRT_CONFIG: IPQ60XX-706-WIFI-YES' "$WORKFLOW")" -eq 1 ] || {
+	echo 'CPE A/B must preserve NOWIFI and Wi-Fi must remain a separate candidate'
   exit 1
 }
 
@@ -40,8 +41,8 @@ for job in baseline_a cpe_overlay_b; do
   }
 done
 
-[ "$(grep -c "WRT_COMMIT: $SHA" "$WORKFLOW")" -eq 2 ] || {
-  echo 'A and B must use the same immutable 7.06 source SHA'
+[ "$(grep -c "WRT_COMMIT: $SHA" "$WORKFLOW")" -eq 3 ] || {
+	echo 'A, B, and Wi-Fi candidate must use the same immutable 7.06 source SHA'
   exit 1
 }
 
@@ -50,9 +51,37 @@ grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: false' || {
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: true' || {
+grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_CPE_WIFI: false' || {
+	echo 'A baseline must keep CPE Wi-Fi configuration disabled'
+	exit 1
+}
+
+grep -A50 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: true' || {
   echo 'B must include the CPE network overlay'
   exit 1
+}
+
+grep -A50 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CPE_WIFI: false' || {
+	echo 'production B baseline must remain Wi-Fi-default-free until real-device acceptance'
+	exit 1
+}
+
+grep -A4 '^      BUILD_WIFI_CANDIDATE:' "$WORKFLOW" | grep -Eq 'default: (false|\x27false\x27)' || {
+	echo 'Wi-Fi candidate build must be opt-in by default'
+	exit 1
+}
+grep -A50 '^  cpe_wifi_candidate:' "$WORKFLOW" | grep -q 'WRT_CPE_WIFI: true' || {
+	echo 'CPE Wi-Fi candidate must enable the dedicated Wi-Fi defaults'
+	exit 1
+}
+grep -A50 '^  cpe_wifi_candidate:' "$WORKFLOW" | grep -q 'CPE5G_WIFI_PASSWORD:' || {
+	echo 'CPE Wi-Fi candidate must receive its key through a GitHub secret'
+	exit 1
+}
+
+grep -q '^CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y$' "$ROOT_DIR/Config/IPQ60XX-706-WIFI-YES.txt" || {
+	echo 'CPE Wi-Fi profile does not select only RE-SS-01'
+	exit 1
 }
 
 grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: false' || {
@@ -60,7 +89,7 @@ grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: false' ||
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: true' || {
+grep -A50 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: true' || {
   echo 'B must enable Lucky/Tailscale/Headscale/wrtbak feature overlays'
   exit 1
 }

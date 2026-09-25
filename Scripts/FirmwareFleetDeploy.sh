@@ -15,7 +15,7 @@ usage() {
 	cat >&2 <<'EOF'
 Usage:
   FirmwareFleetDeploy.sh validate-inventory --inventory PATH
-  FirmwareFleetDeploy.sh validate-run --run-id ID --target ID
+  FirmwareFleetDeploy.sh validate-run --inventory PATH --run-id ID --target ID
   FirmwareFleetDeploy.sh preflight --inventory PATH --target ID|all --ssh-config PATH
   FirmwareFleetDeploy.sh fetch-verify --inventory PATH --target ID|all --run-id ID --output DIR
   FirmwareFleetDeploy.sh upgrade --inventory PATH --target ID|all --images-dir DIR --ssh-config PATH
@@ -43,7 +43,7 @@ valid_board() {
 }
 
 validate_inventory() {
-	local inventory="$1" suffix count record id short board cidr fqdn config device third
+	local inventory="$1" suffix count record id short board cidr fqdn config device workflow third
 	local -A seen_ids=() seen_fqdns=() seen_cidrs=()
 
 	need_command jq
@@ -65,6 +65,7 @@ validate_inventory() {
 		fqdn="$(jq -r '.magicdns // empty' <<<"$record")"
 		config="$(jq -r '.artifact_config // empty' <<<"$record")"
 		device="$(jq -r '.artifact_device // empty' <<<"$record")"
+		workflow="$(jq -r '.source_workflow // empty' <<<"$record")"
 		valid_target_id "$id" || die "invalid device id: $id"
 		[[ "$short" =~ ^[a-z0-9]+$ ]] || die "invalid model_short for $id"
 		valid_board "$board" || die "unapproved board for $id: $board"
@@ -74,8 +75,14 @@ validate_inventory() {
 		[ "$id" = "$short-$third" ] || die "device id must equal model-short plus LAN third octet: $id"
 		valid_fqdn "$fqdn" || die "invalid MagicDNS name for $id: $fqdn"
 		[ "$fqdn" = "$id.$suffix" ] || die "MagicDNS name does not match id for $id"
-		[[ "$config" =~ ^IPQ60XX-RE-(CS-07-NOWIFI|CS-02|SS-01)$ ]] || die "invalid artifact config for $id"
+		[[ "$config" =~ ^(IPQ60XX-RE-(CS-07-NOWIFI|CS-02|SS-01)|IPQ60XX-706-WIFI-YES)$ ]] || die "invalid artifact config for $id"
 		[[ "$device" =~ ^jdcloud_re-(cs-07|cs-02|ss-01)$ ]] || die "invalid artifact device for $id"
+		case "$workflow" in RE-Mesh-BUILD.yml|RE-CS-07-BUILD.yml|CPE-5G.yml) ;; *) die "invalid source workflow for $id" ;; esac
+		if [ "$id" = ss01-13 ]; then
+			[ "$workflow" = CPE-5G.yml ] && [ "$config" = IPQ60XX-706-WIFI-YES ] && \
+				[ "$(jq -r '.source_commit // empty' <<<"$record")" = 0bad892975fe49fd180f99b414a7f168bb694dd7 ] ||
+				die "CPE-5G registry identity or pinned source is invalid"
+		fi
 		[ -z "${seen_ids[$id]:-}" ] || die "duplicate device id: $id"
 		[ -z "${seen_fqdns[$fqdn]:-}" ] || die "duplicate MagicDNS name: $fqdn"
 		[ -z "${seen_cidrs[$cidr]:-}" ] || die "overlapping LAN CIDR: $cidr"
@@ -102,12 +109,7 @@ records_for_target() {
 }
 
 validate_run_payload() {
-	local run_json="$1" target="$2" conclusion branch head_sha repository workflow_path expected_workflow
-	case "$target" in
-		cs07-[0-9]*) expected_workflow='RE-CS-07-BUILD.yml' ;;
-		cs02-[0-9]*|ss01-[0-9]*) expected_workflow='RE-Mesh-BUILD.yml' ;;
-		*) die "source build target is not a registered firmware family: $target" ;;
-	esac
+	local run_json="$1" target="$2" expected_workflow="$3" conclusion branch head_sha repository workflow_path
 	conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
 	branch="$(jq -r '.head_branch // empty' <<<"$run_json")"
 	head_sha="$(jq -r '.head_sha // empty' <<<"$run_json")"
@@ -123,11 +125,13 @@ validate_run_payload() {
 }
 
 validate_run() {
-	local run_id="$1" target="$2" run_json source_commit
+	local inventory="$1" run_id="$2" target="$3" run_json source_commit record expected_workflow
 	[[ "$run_id" =~ ^[1-9][0-9]*$ ]] || die "run id must be numeric"
+	record="$(records_for_target "$inventory" "$target")"
+	expected_workflow="$(jq -r '.source_workflow' <<<"$record")"
 	need_command gh
 	run_json="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")" || die "cannot read workflow run $run_id"
-	source_commit="$(validate_run_payload "$run_json" "$target")"
+	source_commit="$(validate_run_payload "$run_json" "$target" "$expected_workflow")"
 	echo "source run validated: $run_id ($source_commit)"
 }
 
@@ -189,6 +193,7 @@ safe_artifact_members() {
 
 verify_extracted_artifact() {
 	local artifact_dir="$1" config="$2" device="$3" expected_commit="$4"
+	local expected_source="${5:-}" expected_repository="${6:-}" expected_feature_overlay="${7:-}" expected_cpe_wifi="${8:-}"
 	local expected listed sorted_listed line digest filename image_count image
 	[ -d "$artifact_dir" ] || die "artifact extraction directory is missing"
 	[ -f "$artifact_dir/SHA256SUMS" ] || die "artifact SHA256SUMS is missing"
@@ -212,10 +217,16 @@ verify_extracted_artifact() {
 	LC_ALL=C sort "$listed" > "$sorted_listed"
 	cmp -s "$expected" "$sorted_listed" || die "SHA256SUMS does not cover exactly the artifact payload"
 	(cd "$artifact_dir" && sha256sum --check --strict -- SHA256SUMS >/dev/null) || die "artifact checksum verification failed"
-	jq -e --arg config "$config" --arg device "$device" --arg commit "$expected_commit" '
+	jq -e --arg config "$config" --arg device "$device" --arg commit "$expected_commit" \
+		--arg source "${expected_source:-}" --arg repository "${expected_repository:-}" \
+		--arg feature_overlay "${expected_feature_overlay:-}" --arg cpe_wifi "${expected_cpe_wifi:-}" '
 		(.config == $config) and (.required_device == $device) and
 		(.workflow_commit == $commit) and
-		(.source_commit | type == "string" and test("^[0-9a-f]{40}$"))
+		(.source_commit | type == "string" and test("^[0-9a-f]{40}$")) and
+		($source == "" or .source_commit == $source) and
+		($repository == "" or .source_repository == $repository) and
+		($feature_overlay == "" or .feature_overlay == $feature_overlay) and
+		($cpe_wifi == "" or .cpe_wifi == $cpe_wifi)
 	' "$artifact_dir/metadata.json" >/dev/null || die "artifact metadata does not match registry"
 	image_count="$(find "$artifact_dir" -maxdepth 1 -type f -name "*${device}*sysupgrade*.bin" | wc -l | tr -d ' ')"
 	[ "$image_count" = 1 ] || die "artifact must contain exactly one $device sysupgrade image"
@@ -226,6 +237,7 @@ verify_extracted_artifact() {
 fetch_verify() {
 	local inventory="$1" target="$2" run_id="$3" output_dir="$4"
 	local record id config device artifact_json artifact_count artifact_id archive extracted image run_json source_commit
+	local expected_source expected_repository expected_feature_overlay expected_cpe_wifi expected_workflow
 	need_command unzip
 	mkdir -p "$output_dir"
 	: > "$output_dir/images.tsv"
@@ -233,8 +245,13 @@ fetch_verify() {
 		id="$(jq -r '.id' <<<"$record")"
 		config="$(jq -r '.artifact_config' <<<"$record")"
 		device="$(jq -r '.artifact_device' <<<"$record")"
+		expected_source="$(jq -r '.source_commit // empty' <<<"$record")"
+		expected_repository="$(jq -r '.source_repository // empty' <<<"$record")"
+		expected_feature_overlay="$(jq -r '.feature_overlay // empty' <<<"$record")"
+		expected_cpe_wifi="$(jq -r '.cpe_wifi // empty' <<<"$record")"
+		expected_workflow="$(jq -r '.source_workflow' <<<"$record")"
 		run_json="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")" || die "cannot read workflow run $run_id"
-		source_commit="$(validate_run_payload "$run_json" "$id")"
+		source_commit="$(validate_run_payload "$run_json" "$id" "$expected_workflow")"
 		artifact_json="$(gh api --paginate "repos/$REPOSITORY/actions/runs/$run_id/artifacts")"
 		artifact_count="$(jq --arg config "$config" '[.artifacts[] | select(.expired == false and (.name | contains($config)))] | length' <<<"$artifact_json")"
 		[ "$artifact_count" = 1 ] || die "$id requires exactly one unexpired artifact for $config, found $artifact_count"
@@ -246,7 +263,8 @@ fetch_verify() {
 		extracted="$output_dir/$id"
 		mkdir -p "$extracted"
 		unzip -q "$archive" -d "$extracted"
-		image="$(verify_extracted_artifact "$extracted" "$config" "$device" "$source_commit")"
+		image="$(verify_extracted_artifact "$extracted" "$config" "$device" "$source_commit" \
+			"$expected_source" "$expected_repository" "$expected_feature_overlay" "$expected_cpe_wifi")"
 		printf '%s\t%s\t%s\n' "$id" "$image" "$source_commit" >> "$output_dir/images.tsv"
 		echo "artifact verified: $id"
 	done < <(records_for_target "$inventory" "$target")
@@ -322,8 +340,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 			validate_inventory "$2"
 			;;
 		validate-run)
-			[ "${1:-}" = --run-id ] && [ -n "${2:-}" ] && [ "${3:-}" = --target ] && [ -n "${4:-}" ] || usage
-			validate_run "$2" "$4"
+			[ "${1:-}" = --inventory ] && [ -n "${2:-}" ] && [ "${3:-}" = --run-id ] && [ -n "${4:-}" ] && [ "${5:-}" = --target ] && [ -n "${6:-}" ] || usage
+			validate_run "$2" "$4" "$6"
 			;;
 		preflight)
 			[ "${1:-}" = --inventory ] && inventory="${2:-}" && [ "${3:-}" = --target ] && target="${4:-}" && [ "${5:-}" = --ssh-config ] && ssh_config="${6:-}" || usage

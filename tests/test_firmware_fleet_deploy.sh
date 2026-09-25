@@ -42,15 +42,27 @@ GOOD_RUN_JSON="$(jq -n \
 	--arg sha "$SOURCE_SHA" \
 	--arg repo hotwa/OpenWRT-CI \
 	'{conclusion:"success",head_branch:"main",head_sha:$sha,head_repository:{full_name:$repo},path:".github/workflows/RE-Mesh-BUILD.yml@refs/heads/main"}')"
-[ "$(validate_run_payload "$GOOD_RUN_JSON" cs02-11)" = "$SOURCE_SHA" ] || {
+[ "$(validate_run_payload "$GOOD_RUN_JSON" cs02-11 RE-Mesh-BUILD.yml)" = "$SOURCE_SHA" ] || {
 	echo "source build validation did not return the run head SHA" >&2
 	exit 1
 }
-if bash -c 'set -euo pipefail; . "$1"; validate_run_payload "$2" cs02-11 >/dev/null' _ "$SCRIPT" "$(jq -n --argjson run "$GOOD_RUN_JSON" '$run | .path = ".github/workflows/RE-CS-07-BUILD.yml@refs/heads/main"')" >/dev/null 2>&1; then
+CPE_RUN_JSON="$(jq -n \
+	--arg sha "$SOURCE_SHA" \
+	--arg repo hotwa/OpenWRT-CI \
+	'{conclusion:"success",head_branch:"main",head_sha:$sha,head_repository:{full_name:$repo},path:".github/workflows/CPE-5G.yml@refs/heads/main"}')"
+[ "$(validate_run_payload "$CPE_RUN_JSON" ss01-13 CPE-5G.yml)" = "$SOURCE_SHA" ] || {
+	echo "CPE source workflow was not accepted for ss01-13" >&2
+	exit 1
+}
+if bash -c 'set -euo pipefail; . "$1"; validate_run_payload "$2" ss01-13 CPE-5G.yml >/dev/null' _ "$SCRIPT" "$GOOD_RUN_JSON" >/dev/null 2>&1; then
+	echo "CPE target accepted a RE-Mesh source run" >&2
+	exit 1
+fi
+if bash -c 'set -euo pipefail; . "$1"; validate_run_payload "$2" cs02-11 RE-Mesh-BUILD.yml >/dev/null' _ "$SCRIPT" "$(jq -n --argjson run "$GOOD_RUN_JSON" '$run | .path = ".github/workflows/RE-CS-07-BUILD.yml@refs/heads/main"')" >/dev/null 2>&1; then
 	echo "source build validator accepted the wrong device workflow" >&2
 	exit 1
 fi
-if bash -c 'set -euo pipefail; . "$1"; validate_run_payload "$2" cs02-11 >/dev/null' _ "$SCRIPT" "$(jq -n --argjson run "$GOOD_RUN_JSON" '$run | .head_sha = "not-a-sha"')" >/dev/null 2>&1; then
+if bash -c 'set -euo pipefail; . "$1"; validate_run_payload "$2" cs02-11 RE-Mesh-BUILD.yml >/dev/null' _ "$SCRIPT" "$(jq -n --argjson run "$GOOD_RUN_JSON" '$run | .head_sha = "not-a-sha"')" >/dev/null 2>&1; then
 	echo "source build validator accepted a malformed SHA" >&2
 	exit 1
 fi
@@ -105,6 +117,32 @@ if bash -c '
   verify_extracted_artifact "$2" IPQ60XX-RE-CS-02 jdcloud_re-cs-02 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null
 ' _ "$SCRIPT" "$ARTIFACT_DIR" >/dev/null 2>&1; then
 	echo "artifact verifier accepted metadata from a different source commit" >&2
+	exit 1
+fi
+
+CPE_ARTIFACT_DIR="$WORK_DIR/cpe-artifact"
+mkdir -p "$CPE_ARTIFACT_DIR"
+printf 'cpe firmware\n' > "$CPE_ARTIFACT_DIR/openwrt-jdcloud_re-ss-01-squashfs-sysupgrade.bin"
+jq -n \
+	--arg config IPQ60XX-706-WIFI-YES \
+	--arg device jdcloud_re-ss-01 \
+	--arg workflow_commit "$SOURCE_SHA" \
+	--arg source_commit 0bad892975fe49fd180f99b414a7f168bb694dd7 \
+	--arg repository https://github.com/VIKINGYFY/immortalwrt.git \
+	'{config:$config,required_device:$device,workflow_commit:$workflow_commit,source_commit:$source_commit,source_repository:$repository,feature_overlay:"true",cpe_wifi:"true"}' > "$CPE_ARTIFACT_DIR/metadata.json"
+(
+	cd "$CPE_ARTIFACT_DIR"
+	find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+)
+[ "$(verify_extracted_artifact "$CPE_ARTIFACT_DIR" IPQ60XX-706-WIFI-YES jdcloud_re-ss-01 "$SOURCE_SHA" \
+	0bad892975fe49fd180f99b414a7f168bb694dd7 https://github.com/VIKINGYFY/immortalwrt.git true true)" = \
+	"$CPE_ARTIFACT_DIR/openwrt-jdcloud_re-ss-01-squashfs-sysupgrade.bin" ] || {
+	echo "CPE artifact verifier did not select the Wi-Fi B sysupgrade image" >&2
+	exit 1
+}
+if bash -c 'set -euo pipefail; . "$1"; verify_extracted_artifact "$2" IPQ60XX-706-WIFI-YES jdcloud_re-ss-01 "$3" 1111111111111111111111111111111111111111 https://github.com/VIKINGYFY/immortalwrt.git true true >/dev/null' \
+	_ "$SCRIPT" "$CPE_ARTIFACT_DIR" "$SOURCE_SHA" >/dev/null 2>&1; then
+	echo "CPE artifact verifier accepted an unapproved source pin" >&2
 	exit 1
 fi
 printf 'tampered\n' >> "$ARTIFACT_DIR/openwrt-jdcloud_re-cs-02-squashfs-sysupgrade.bin"

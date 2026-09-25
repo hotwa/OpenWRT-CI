@@ -85,6 +85,18 @@ Lucky 监听 `192.168.66.2` 或 `0.0.0.0` 即可接收 CPE relay；不是让每�
 
 GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
 
+### 独立 Wi-Fi 候选构建（默认关闭）
+
+`BUILD_WIFI_CANDIDATE` 默认 `false`。只有显式启用时才额外构建 `IPQ60XX-706-WIFI-YES` 候选；普通 B 基线仍是 NOWIFI，不会因为候选选项而改变。候选私有构建通过 GitHub Actions Secret `CPE5G_WIFI_PASSWORD` 注入 Wi-Fi 密码，不得把密钥写进配置文件、日志或公开 Release。候选工件应留在私有 Actions artifact 中。
+
+首次启动只对 `jdcloud,re-ss-01` 生效，并按 UCI 的 radio band 动态识别 2.4 GHz 与 5 GHz，不假设 radio 编号：
+
+- `CPE-loT`：2.4 GHz、20 MHz、WPA2-PSK/CCMP、legacy rates 开启、PMF 关闭，面向旧款 IoT 客户端兼容。
+- `CPE-WiFi6-2.4G`：2.4 GHz 802.11ax（HE20）。
+- `CPE-WiFi6-5G`：5 GHz 802.11ax（HE80）。
+
+三个 SSID 暂时接入同一个 LAN、共用 Secret 中的密码；这不是访客隔离网络。未在 RE-SS-01 实机确认射频、关联、吞吐、重启后持续性及 CPE 管理链路前，不得把候选登记为可自动定时升级的生产产物，也不应触发 CD。设备的 Dropbear host key 必须仍按受信任指纹校验。
+
 固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问、以及 `tailscale status` 已加入 Headscale。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。
 
 真实拔线/断 WAN 测试可能切断远程维护路径，只有现场 LAN、串口或 U-Boot 救援可用且已设置定时回滚时才能执行。上线前先备份 network/firewall/mwan3/Nikki/Tailscale 状态；再验证 WAN 正常出口、5G 探测流量、WAN 故障后的新连接出口、WAN 恢复自动切回、Lucky 正确/错误 SNI、Tailnet 与 Nikki。未满足现场救援条件时只完成固件和非破坏性验证，不远程模拟断网。

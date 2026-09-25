@@ -27,8 +27,13 @@ grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_IP: 192.168.13.1' || {
   exit 1
 }
 
-grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
-  echo "CPE-5G A/B controls must build the IPQ60XX no-WiFi profile"
+grep -A40 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' || {
+	echo "CPE-5G B production baseline must retain the known-bootable NOWIFI profile"
+	exit 1
+}
+
+grep -A40 '^  cpe_wifi_candidate:' "$WORKFLOW" | grep -q 'WRT_CONFIG: IPQ60XX-706-WIFI-YES' || {
+	echo "CPE-5G Wi-Fi candidate must use its dedicated Wi-Fi profile"
   exit 1
 }
 

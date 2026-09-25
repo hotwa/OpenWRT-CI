@@ -16,6 +16,11 @@ on:
         default: false
         required: false
         type: boolean
+      BUILD_WIFI_CANDIDATE:
+        description: '单独构建 Wi-Fi-YES 实机验证候选；通过硬件验收前不得用于自动 CD。'
+        default: false
+        required: false
+        type: boolean
       TEST:
         description: '仅输出配置文件，不编译固件。'
         default: 'false'
@@ -67,6 +72,7 @@ jobs:
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: false
+      WRT_CPE_WIFI: false
       WRT_FEATURE_OVERLAY: false
       WRT_TAILSCALE_ROUTE_RECONCILE: false
       WRT_LAN_TAILNET: false
@@ -112,6 +118,7 @@ jobs:
         CONFIG_PACKAGE_luci-app-mwan3=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
+      WRT_CPE_WIFI: false
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_LAN_TAILNET: true
@@ -121,5 +128,55 @@ jobs:
       WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
       WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
       CI_NAME: CPE-706-B-6.18-MANUAL
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360
+
+  cpe_wifi_candidate:
+    if: ${{ inputs.BUILD_WIFI_CANDIDATE }}
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets:
+      HEADSCALE_OPENWRT_AUTHKEY: ${{ secrets.HEADSCALE_OPENWRT_AUTHKEY }}
+      HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+      HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+      MULTICA_TOKEN: ${{ secrets.MULTICA_TOKEN }}
+      MULTICA_SERVER_URL: ${{ secrets.MULTICA_SERVER_URL }}
+      MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
+      MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
+      COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+      CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+      SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+      CPE5G_WIFI_PASSWORD: ${{ secrets.CPE5G_WIFI_PASSWORD }}
+    with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      WRT_CONFIG: IPQ60XX-706-WIFI-YES
+      WRT_THEME: argon
+      WRT_NAME: CPE-5G-WIFI
+      WRT_SSID: CPE-5G
+      WRT_IP: 192.168.13.1
+      WRT_PW: 无
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_COMMIT: 0bad892975fe49fd180f99b414a7f168bb694dd7
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_PACKAGE: |
+        CONFIG_PACKAGE_mwan3=y
+        CONFIG_PACKAGE_luci-app-mwan3=y
+      WRT_TEST: ${{ inputs.TEST }}
+      WRT_CPE_5G: true
+      WRT_CPE_WIFI: true
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
+      WRT_LAN_TAILNET: true
+      WRT_WAN_SSH: false
+      WRT_WAN_SSH_PORT: '22'
+      WRT_WAN_SSH_SOURCE: ''
+      WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
+      CI_NAME: CPE-706-WIFI-CANDIDATE-6.18
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360

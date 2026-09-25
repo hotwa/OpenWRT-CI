@@ -80,6 +80,10 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_CPE_WIFI:
+        required: false
+        type: boolean
+        default: false
       WRT_FEATURE_OVERLAY:
         required: false
         type: boolean
@@ -154,6 +158,8 @@ on:
         required: false
       SAMBA_DEFAULT_PASSWORD:
         required: false
+      CPE5G_WIFI_PASSWORD:
+        required: false
       CLIPROXYAPI_BASE_URL:
         required: false
 env:
@@ -179,6 +185,7 @@ env:
   WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
+  WRT_CPE_WIFI: ${{inputs.WRT_CPE_WIFI}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_TAILSCALE_ROUTE_RECONCILE: ${{inputs.WRT_TAILSCALE_ROUTE_RECONCILE}}
   WRT_REQUIRED_DEVICE: ${{inputs.WRT_REQUIRED_DEVICE}}
@@ -820,6 +827,17 @@ jobs:
             rm -f ./wrt/files/etc/uci-defaults/96-samba-default-user
           fi
 
+      - name: Require private repository for embedded Wi-Fi credentials
+        if: inputs.WRT_CPE_WIFI == true
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.repository_visibility }}
+        run: |
+          set -euo pipefail
+          if [ "$REPOSITORY_VISIBILITY" != private ]; then
+            echo 'ERROR: Wi-Fi credentials would be embedded in a downloadable firmware artifact; CPE Wi-Fi candidate builds require a private repository.' >&2
+            exit 1
+          fi
+
       - name: Inject Private Firmware Configuration
         if: inputs.WRT_FEATURE_OVERLAY == true
         env:
@@ -835,6 +853,7 @@ jobs:
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
+          CPE5G_WIFI_PASSWORD: ${{secrets.CPE5G_WIFI_PASSWORD}}
         run: |
             guard_env="$(mktemp)"
             trap 'rm -f "$guard_env"' EXIT
@@ -853,6 +872,11 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
+            if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+              CPE5G_WIFI_PASSWORD="$CPE5G_WIFI_PASSWORD" \
+                "$GITHUB_WORKSPACE/Scripts/ConfigureCpe5GWifi.sh" "$GITHUB_WORKSPACE/wrt/files"
+              credential_supplied=true
+            fi
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
             [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
             [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]
@@ -1159,9 +1183,10 @@ jobs:
               --arg config "$WRT_CONFIG" \
               --arg required_device "$WRT_REQUIRED_DEVICE" \
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
+              --arg cpe_wifi "${WRT_CPE_WIFI:-false}" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
               --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
-              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,cpe_wifi:$cpe_wifi,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt

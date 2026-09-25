@@ -36,7 +36,7 @@ fi
 for secret_name in HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN MULTICA_SERVER_URL \
 	MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS \
 	OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD \
-	NIKKI_SUBSCRIPTION_URL CLIPROXYAPI_API_KEY; do
+	NIKKI_SUBSCRIPTION_URL CLIPROXYAPI_API_KEY CPE5G_WIFI_PASSWORD; do
 	grep -Fq "$secret_name: \${{secrets.$secret_name}}" "$WORKFLOW" || {
 		echo "private overlay injection step is missing $secret_name"
 		exit 1
@@ -174,6 +174,24 @@ grep -q 'cliproxyapi-api-key' "$WORK_DIR/cliproxyapi.env" || {
 }
 if grep -q 'cliproxyapi-test-token' "$WORK_DIR/cliproxyapi.env" "$WORK_DIR/cliproxyapi.log"; then
 	echo "guard leaked the CliProxyAPI API key"
+	exit 1
+fi
+
+# A firstboot Wi-Fi provisioner embeds a recoverable key in the firmware, so
+# the artifact must always be classified private and the key never logged.
+mkdir -p "$WORK_DIR/cpe-wifi/etc/uci-defaults"
+printf '%s\n' '#!/bin/sh' 'wifi_key="fixture-cpe-wifi-key"' >"$WORK_DIR/cpe-wifi/etc/uci-defaults/96-cpe5g-wifi"
+bash "$SCRIPT" "$WORK_DIR/cpe-wifi" >"$WORK_DIR/cpe-wifi.env" 2>"$WORK_DIR/cpe-wifi.log"
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/cpe-wifi.env" || {
+	echo "CPE Wi-Fi key must mark firmware private"
+	exit 1
+}
+grep -q 'cpe5g-wifi-credential' "$WORK_DIR/cpe-wifi.env" || {
+	echo "CPE Wi-Fi private reason is missing"
+	exit 1
+}
+if grep -q 'fixture-cpe-wifi-key' "$WORK_DIR/cpe-wifi.env" "$WORK_DIR/cpe-wifi.log"; then
+	echo "guard leaked the CPE Wi-Fi key"
 	exit 1
 fi
 

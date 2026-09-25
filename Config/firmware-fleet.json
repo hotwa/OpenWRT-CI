@@ -10,7 +10,8 @@
       "lan_cidr": "192.168.10.0/24",
       "magicdns": "cs07-10.hs.jmsu.top",
       "artifact_config": "IPQ60XX-RE-CS-07-NOWIFI",
-      "artifact_device": "jdcloud_re-cs-07"
+      "artifact_device": "jdcloud_re-cs-07",
+      "source_workflow": "RE-CS-07-BUILD.yml"
     },
     {
       "id": "cs02-11",
@@ -20,7 +21,8 @@
       "lan_cidr": "192.168.11.0/24",
       "magicdns": "cs02-11.hs.jmsu.top",
       "artifact_config": "IPQ60XX-RE-CS-02",
-      "artifact_device": "jdcloud_re-cs-02"
+      "artifact_device": "jdcloud_re-cs-02",
+      "source_workflow": "RE-Mesh-BUILD.yml"
     },
     {
       "id": "ss01-12",
@@ -30,7 +32,23 @@
       "lan_cidr": "192.168.12.0/24",
       "magicdns": "ss01-12.hs.jmsu.top",
       "artifact_config": "IPQ60XX-RE-SS-01",
-      "artifact_device": "jdcloud_re-ss-01"
+      "artifact_device": "jdcloud_re-ss-01",
+      "source_workflow": "RE-Mesh-BUILD.yml"
+    },
+    {
+      "id": "ss01-13",
+      "model": "RE-SS-01 CPE-5G",
+      "model_short": "ss01",
+      "board": "jdcloud,re-ss-01",
+      "lan_cidr": "192.168.13.0/24",
+      "magicdns": "ss01-13.hs.jmsu.top",
+      "artifact_config": "IPQ60XX-706-WIFI-YES",
+      "artifact_device": "jdcloud_re-ss-01",
+      "source_workflow": "CPE-5G.yml",
+      "source_repository": "https://github.com/VIKINGYFY/immortalwrt.git",
+      "source_commit": "0bad892975fe49fd180f99b414a7f168bb694dd7",
+      "feature_overlay": "true",
+      "cpe_wifi": "true"
     }
   ]
 }
