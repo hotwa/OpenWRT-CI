@@ -3,83 +3,15 @@
 START=99
 STOP=10
 
-PROBE_HOST="100.100.100.100"
-PROBE_PORT="53"
-PROBE_TAG="tailscale-quad100-health"
-STATE_FILE="/var/run/quad100-health.ok"
+USE_PROCD=1
 
-tailnet_ready() {
-	ip link show dev tailscale0 >/dev/null 2>&1 || return 1
-	tailscale status --json 2>/dev/null |
-		grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'
-}
-
-probe_quad100() {
-	local fqdn lookup_output
-
-	# Quad100 is a MagicDNS resolver, not a public recursive resolver. Resolve
-	# the node's current MagicDNS name so renames do not require a new image.
-	if command -v jq >/dev/null 2>&1; then
-		fqdn="$(tailscale status --json 2>/dev/null |
-			jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
-	elif command -v jsonfilter >/dev/null 2>&1; then
-		fqdn="$(tailscale status --json 2>/dev/null |
-			jsonfilter -e '@.Self.DNSName' 2>/dev/null || true)"
-	else
-		fqdn=""
-	fi
-	fqdn="${fqdn%.}"
-	case "$fqdn" in
-		''|*[!A-Za-z0-9_.-]*)
-			return 1
-		;;
-	esac
-
-	if command -v nslookup >/dev/null 2>&1; then
-		lookup_output="$(nslookup "$fqdn" "$PROBE_HOST" 2>/dev/null || true)"
-		# Matching Name: avoids accepting the resolver's own Address: line when
-		# the query returns SERVFAIL.
-		echo "$lookup_output" | grep -q 'Name:'
-		return $?
-	fi
-
-	return 0
-}
-
-record_probe_state() {
-	local state="$1" previous
-	previous="$(cat "$STATE_FILE" 2>/dev/null || true)"
-	[ "$previous" = "$state" ] && return 0
-	printf '%s\n' "$state" >"$STATE_FILE.tmp.$$" && mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
-	case "$state" in
-		ok) logger -t "$PROBE_TAG" "Quad100 MagicDNS probe succeeded (state changed)" ;;
-		failed) logger -t "$PROBE_TAG" "Quad100 MagicDNS probe failed (state changed)" ;;
-	esac
-}
-
-start() {
-	local attempt=0
-
-	pgrep -x tailscaled >/dev/null 2>&1 || return 0
-	if ! tailnet_ready; then
-		logger -t "$PROBE_TAG" "skip Quad100 probe until tailscale0 is ready"
-		return 0
-	fi
-
-	while [ "$attempt" -lt 5 ]; do
-		if probe_quad100; then
-			record_probe_state ok
-			return 0
-		fi
-
-		attempt=$((attempt + 1))
-		sleep 2
-	done
-
-	record_probe_state failed
-	return 0
-}
-
-restart() {
-	start
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/sbin/tailscale-quad100-health-monitor
+	# This is a real long-running monitor loop, not a one-shot worker. Its
+	# bounded respawn protects against a crashed monitor without a tight loop.
+	procd_set_param respawn 3600 5 0
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
 }

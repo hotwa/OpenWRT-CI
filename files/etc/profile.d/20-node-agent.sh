@@ -2,6 +2,11 @@
 # generated contract here too because this profile must make its choice first.
 [ -r /var/run/data-runtime.env ] && [ ! -L /var/run/data-runtime.env ] && . /var/run/data-runtime.env
 
+# CommandCode must not mutate the signed firmware/runtime tree through its
+# upstream self-updater. Application updates are delivered only as complete,
+# signed agent-runtime generations.
+export COMMANDCODE_SKIP_UPDATES=1
+
 # Only a verified /data mount shadows the read-only baked runtime in /opt.
 if [ "${DATA_RUNTIME_STATE:-}" = persistent ] && [ "${DATA_RUNTIME_ROOT:-}" = /data ]; then
 	export PATH=/data/node/bin:/opt/node/bin:$PATH

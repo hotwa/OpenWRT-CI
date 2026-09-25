@@ -21,17 +21,20 @@
 #
 # POSIX sh / BusyBox ash compatible.
 
-MULTICA_DATA_DIR="/data/multica"
+MULTICA_DATA_DIR="${MULTICA_DATA_DIR:-/data/multica}"
 FAIL_COUNT_FILE="$MULTICA_DATA_DIR/.opencode_fail_count"
 SUCCESS_COUNT_FILE="$MULTICA_DATA_DIR/.opencode_ok_count"
 FALLBACK_MARKER="$MULTICA_DATA_DIR/.runtime_fallback_to_pi"
 THRESHOLD=3
 TEST_TIMEOUT=15
-OC_WRAPPER="/usr/bin/opencode"
-OC_REAL_BIN="/data/opt/opencode/current/bin/opencode"
-OC_LOCK_DIR="/data/opencode/state/opencode/locks"
-OC_DB_DIR="/data/opencode/data/opencode"
-LOCK_DIR="/var/run/multica-maintenance.lock"
+OC_WRAPPER="${OC_WRAPPER:-/usr/bin/opencode}"
+OC_REAL_BIN="${OC_REAL_BIN:-/data/opt/opencode/current/bin/opencode}"
+OC_LOCK_DIR="${OC_LOCK_DIR:-/data/opencode/state/opencode/locks}"
+OC_DB_DIR="${OC_DB_DIR:-/data/opencode/data/opencode}"
+OC_RELEASE_FILE="${OC_RELEASE_FILE:-/etc/opencode/release-url}"
+MULTICA_INIT="${MULTICA_INIT:-/etc/init.d/multica}"
+GUARD_LOCK_FILE="${GUARD_LOCK_FILE:-/var/lock/multica-runtime-guard.lock}"
+MAINTENANCE_LOCK_FILE="${MAINTENANCE_LOCK_FILE:-/var/lock/multica-maintenance.lock}"
 
 log() {
 	logger -t multica-guard "$*"
@@ -39,7 +42,7 @@ log() {
 
 # Low-memory builds (re-ss-01) ship without opencode release metadata;
 # there is nothing to guard and the wrapper would exit 1 anyway.
-if [ ! -f /etc/opencode/release-url ]; then
+if [ ! -f "$OC_RELEASE_FILE" ]; then
 	exit 0
 fi
 
@@ -50,16 +53,25 @@ case "$_enabled" in
 	*) exit 0 ;;
 esac
 
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+mkdir -p "$(dirname "$GUARD_LOCK_FILE")" 2>/dev/null || true
+exec 9>"$GUARD_LOCK_FILE" || exit 0
+if ! flock -n 9; then
 	exit 0
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+
+acquire_maintenance_lock() {
+	exec 8>"$MAINTENANCE_LOCK_FILE" || return 1
+	flock -n 8
+}
 
 # If multica is explicitly configured for pi (not opencode, not default),
 # there is no opencode runtime to guard.  Restore any prior disable state and
 # clean up stale counters, then exit.
 _provider="$(uci -q get multica.main.runtime_provider 2>/dev/null || true)"
 if [ -n "$_provider" ] && [ "$_provider" != "opencode" ]; then
+	if [ -f "$FALLBACK_MARKER" ] || [ ! -x "$OC_WRAPPER" ] || { [ -f "$OC_REAL_BIN" ] && [ ! -x "$OC_REAL_BIN" ]; }; then
+		acquire_maintenance_lock || exit 0
+	fi
 	rm -f "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" "$FALLBACK_MARKER" 2>/dev/null || true
 	[ -x "$OC_WRAPPER" ] || chmod 755 "$OC_WRAPPER" 2>/dev/null || true
 	[ -f "$OC_REAL_BIN" ] && [ -x "$OC_REAL_BIN" ] || chmod 755 "$OC_REAL_BIN" 2>/dev/null || true
@@ -132,10 +144,12 @@ if test_opencode; then
 	# Restore exec bits, remove the marker and all counters, then restart
 	# multica to switch back.
 	if [ "$_ok" -ge "$THRESHOLD" ] && [ -f "$FALLBACK_MARKER" ]; then
+		acquire_maintenance_lock || { log "opencode recovery action deferred because maintenance is active"; exit 0; }
+		[ -f "$FALLBACK_MARKER" ] || exit 0
 		log "opencode recovered after $_ok consecutive checks; restoring opencode provider"
 		enable_opencode
 		rm -f "$FALLBACK_MARKER" "$FAIL_COUNT_FILE" "$SUCCESS_COUNT_FILE" 2>/dev/null || true
-		/etc/init.d/multica restart >/dev/null 2>&1 || true
+		"$MULTICA_INIT" restart >/dev/null 2>&1 || true
 	fi
 else
 	# Failure: reset the success streak, extend the failure streak.
@@ -147,10 +161,12 @@ else
 	# Degraded: opencode has failed enough times.  Disable the runtime, drop
 	# the fallback marker and restart multica so it comes up on pi.
 	if [ "$_fail" -ge "$THRESHOLD" ] && [ ! -f "$FALLBACK_MARKER" ]; then
+		acquire_maintenance_lock || { log "opencode fallback action deferred because maintenance is active"; exit 0; }
+		[ ! -f "$FALLBACK_MARKER" ] || exit 0
 		log "opencode failed $_fail consecutive checks; falling back to pi provider"
 		disable_opencode
 		touch "$FALLBACK_MARKER" 2>/dev/null || true
-		/etc/init.d/multica restart >/dev/null 2>&1 || true
+		"$MULTICA_INIT" restart >/dev/null 2>&1 || true
 	fi
 fi
 

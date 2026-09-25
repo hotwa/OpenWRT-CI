@@ -59,11 +59,25 @@ commit 或内核变化会改变 ELF、musl 或固件体积契约。
    manifest 与 bundle；验证签名、架构/musl/Node ABI、哈希、空间和健康后，
    才原子切换 `current`。失败 generation 不会成为活动版本。
 4. **设备自动检查期**：启用 `multica.main.auto_runtime_upgrade=1` 时，固件在每天
-   03:07（设备本地 cron 时区）运行 `/usr/sbin/agent-runtime-auto-upgrade`，避开 03:00 同分钟运行的健康守卫与日志维护任务。它先执行
+   02:53（设备本地 cron 时区）运行 `/usr/sbin/agent-runtime-health-check`，只执行
+   `agent-runtime verify --json`；仅当结果明确为 `health_failed` 时，它才通过
+   Runtime Manager 的 `rollback --json` 尝试切换到已知 previous 或固件 baseline。
+   `/data` 不可用、runtime 正忙或状态无法识别时只记录 `deferred`/`unknown`，不改变
+   generation。相同检查也在 Multica 启动后执行一次。最近结果写入
+   `/var/run/agent-runtime-health.status`，health endpoint 只公开状态码与时间戳。
+   每天 03:07 再运行 `/usr/sbin/agent-runtime-auto-upgrade`，错开健康检查、每 5 分钟
+   的守卫与日志任务。它先执行
    `agent-runtime check --json`；仅收到“存在更新”的结果且没有活跃 Agent 任务时才调用
    `upgrade --json`。升级、验签、原子切换、Multica 重启和失败回滚仍全部由 Runtime
-   Manager 负责。将该 UCI 选项设为 `0` 可保留当前 generation；日志位于
+   Manager 负责。升级和健康回滚与其他变更操作共享短期 `flock` 维护锁；只读探测
+   使用独立锁，不会再长期占用升级锁。将该 UCI 选项设为 `0` 可保留当前 generation；日志位于
    `/data/multica/logs/agent-runtime.log`。
+
+CommandCode 的 CLI 自更新通过交互 shell 的 `COMMANDCODE_SKIP_UPDATES=1` 禁止；
+由固件 profile、SSH 版本提示、runtime 健康探测统一注入。`/opt/node`、`/opt/uv`
+及 `/opt/agent-runtime` 在启动时使用只读 bind mount 固定为镜像基线；任何意外的
+npm/pnpm 全局写入应明确失败，不能修改 manifest 对应的签名文件。用户软件更新只能
+经签名 release、完整 generation 和 Runtime Manager 原子切换交付。
 
 这些是 CI/构建/设备软件门槛，不等于已完成某型号的真机验收。把某个 runtime
 generation 推广到固件或生产设备前，仍需按目标设备的独立刷写、启动、网络和

@@ -38,11 +38,19 @@ for sequence in $(seq 1 9); do
 	printf '%s' "$sequence" | gzip -c >"$archive"
 	touch -d "@$((1700000000 + sequence))" "$archive"
 done
+if needs_maintenance; then :; else
+	echo "archive overflow did not trigger maintenance"
+	exit 1
+fi
 prune_archives
 [ "$(find "$WORK_DIR" -maxdepth 1 -name 'daemon-*.log.gz' | wc -l)" -le 7 ] || {
 	echo "archive count was not capped at seven"
 	exit 1
 }
+if needs_maintenance; then
+	echo "archive count at the configured cap still triggered maintenance"
+	exit 1
+fi
 
 old_archive="$WORK_DIR/daemon-20000101T000000Z.log.gz"
 printf old | gzip -c >"$old_archive"

@@ -270,6 +270,20 @@ runtime_path_from_link() {
 	esac
 }
 
+cleanup_stale_atomic_temps() {
+	local path name pid
+	for path in "$ROOT/current.new."* "$ROOT/previous.new."* "$DATA_ROOT/.node.new."* "$LATEST_STATE.new."*; do
+		[ -e "$path" ] || [ -L "$path" ] || continue
+		name="${path##*.new.}"
+		case "$name" in ''|*[!0-9]*) continue ;; esac
+		pid="$name"
+		kill -0 "$pid" 2>/dev/null && continue
+		case "$path" in
+			"$ROOT/current.new."*|"$ROOT/previous.new."*|"$DATA_ROOT/.node.new."*|"$LATEST_STATE.new."*) rm -f "$path" ;;
+		esac
+	done
+}
+
 current_runtime() {
 	local runtime
 	runtime="$(runtime_path_from_link "$ROOT/current" 2>/dev/null || true)"
@@ -287,7 +301,7 @@ link_atomically() {
 	[ ! -e "$link" ] || [ -L "$link" ] || return 1
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$target" "$temporary" || return 1
-	mv -f "$temporary" "$link"
+	mv -f "$temporary" "$link" || { rm -f "$temporary"; return 1; }
 }
 
 publish_node_link() {
@@ -297,8 +311,8 @@ publish_node_link() {
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$node_dir" "$temporary" || return 1
 	# Never overwrite an un-migrated real /data/node directory.
-	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || return 1
-	mv -f "$temporary" "$DATA_ROOT/node"
+	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || { rm -f "$temporary"; return 1; }
+	mv -f "$temporary" "$DATA_ROOT/node" || { rm -f "$temporary"; return 1; }
 }
 
 publish_pi_models() {
@@ -432,8 +446,13 @@ runtime_health() {
 	for command in pi cmdc multica; do
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 			command -v "$command" >/dev/null 2>&1 || return 1
-		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
-			"$command" --version >/dev/null 2>&1 || return 1
+		if [ "$command" = cmdc ]; then
+			PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+				COMMANDCODE_SKIP_UPDATES=1 "$command" --version >/dev/null 2>&1 || return 1
+		else
+			PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+				"$command" --version >/dev/null 2>&1 || return 1
+		fi
 	done
 	verify_runtime_components "$runtime" || return 1
 	return 0
@@ -775,6 +794,7 @@ case "${1:-}" in status|check|upgrade|rollback|list|verify|reconcile|gc) ;; *) u
 # path separate from upgrade after common CLI parsing.
 if [ "${1:-}" = check ]; then
 	acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+	cleanup_stale_atomic_temps
 	shift
 	data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"
 	ensure_layout || emit false no_data 'cannot initialize runtime storage' "$EX_NO_DATA"
@@ -790,7 +810,10 @@ if [ "${1:-}" = check ]; then
 	fetch_file "$base/$remote_sig" "$idx/manifest.json.sig" || emit false download_failed 'cannot download runtime manifest signature' "$EX_DOWNLOAD"
 	verify_signature "$idx/manifest.json" "$idx/manifest.json.sig" || emit false signature_failed 'runtime manifest signature verification failed' "$EX_SIGNATURE"
 	manifest_compatible "$idx" || emit false incompatible 'latest runtime is not compatible with this device' "$EX_INCOMPATIBLE"
-	manifest_release "$idx" >"$LATEST_STATE.new.$$" && mv -f "$LATEST_STATE.new.$$" "$LATEST_STATE"
+	if ! manifest_release "$idx" >"$LATEST_STATE.new.$$" || ! mv -f "$LATEST_STATE.new.$$" "$LATEST_STATE"; then
+		rm -f "$LATEST_STATE.new.$$"
+		log "could not publish the latest-release observation file"
+	fi
 	current="$(current_runtime)"
 	if [ "$(release_number "$idx")" -gt "$(release_number "$current")" ]; then
 		emit true ok 'new compatible runtime release is available' "$EX_OK" "{\"current_release\":\"$(json_escape "$(manifest_release "$current" 2>/dev/null || echo unknown)")\",\"latest_release\":\"$(json_escape "$(manifest_release "$idx")")\"}"
@@ -802,6 +825,7 @@ fi
 case "${1:-}" in
 	check|upgrade|rollback|reconcile|gc)
 		acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+		cleanup_stale_atomic_temps
 		;;
 esac
 
