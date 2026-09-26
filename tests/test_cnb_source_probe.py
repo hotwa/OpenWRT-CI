@@ -16,6 +16,8 @@ class CnbSourceProbeTests(unittest.TestCase):
             "git -C \"$source_dir\" fetch --depth=1 origin \"$pin\"",
             "./scripts/feeds update -a",
             "./scripts/feeds install -a",
+            "aptx_retry install -y git perl ca-certificates rsync gawk",
+            "[ -s ./tmp/.packageinfo ] && [ -s ./tmp/.targetinfo ]",
             "source directory already exists; refuse reuse",
         ):
             self.assertIn(required, text)

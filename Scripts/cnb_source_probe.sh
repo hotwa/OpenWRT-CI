@@ -15,12 +15,13 @@ repo='https://github.com/VIKINGYFY/immortalwrt.git'
 source_dir="$workspace/wrt"
 [ ! -e "$source_dir" ] || { echo 'ERROR: source directory already exists; refuse reuse' >&2; exit 1; }
 
-if ! command -v git >/dev/null || ! command -v perl >/dev/null; then
+if ! command -v git >/dev/null || ! command -v perl >/dev/null || \
+   ! command -v rsync >/dev/null || ! command -v gawk >/dev/null; then
   [ "$(id -u)" -eq 0 ] || { echo 'ERROR: installing git/perl requires root' >&2; exit 1; }
   export SUDO=''
   . "$workspace/Scripts/ci-apt-lib.sh"
   aptx_update
-  aptx_retry install -y git perl ca-certificates
+  aptx_retry install -y git perl ca-certificates rsync gawk
 fi
 . "$workspace/Scripts/retry.sh"
 retry_cmd 5 15 git clone --depth=1 --single-branch --branch main "$repo" "$source_dir"
@@ -36,6 +37,12 @@ printf '%s\n' "$repo/main/$resolved" > "$workspace/repo_flag"
   cd "$source_dir"
   retry_cmd 5 15 ./scripts/feeds update -a
   retry_cmd 5 15 ./scripts/feeds install -a
+  # feeds install may exit 0 even when OpenWrt's prerequisite make failed.
+  # Never mistake that for a usable package metadata graph.
+  [ -s ./tmp/.packageinfo ] && [ -s ./tmp/.targetinfo ] || {
+    echo 'ERROR: feeds returned success without required package/target metadata' >&2
+    exit 1
+  }
 )
 [ -s "$source_dir/feeds/packages/net/samba4/Makefile" ] || {
   echo 'ERROR: Samba package feed unavailable after sync' >&2; exit 1;
