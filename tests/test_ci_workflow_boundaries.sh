@@ -128,10 +128,16 @@ grep -Fq 'sysupgrade -c' "$CD_SCRIPT" || {
   echo "firmware CD must retain configuration during sysupgrade" >&2
   exit 1
 }
-grep -Fq 'openwrt-ci-health --require data,wan,tailscale,magicdns,nikki' "$CD_SCRIPT" || {
-  echo "firmware CD must require full pre/post upgrade health" >&2
+grep -Fq "requirements='data,wan,tailscale,magicdns,nikki'" "$CD_SCRIPT" &&
+  grep -Fq '/usr/sbin/openwrt-ci-health --require __HEALTH_REQUIREMENTS__' "$CD_SCRIPT" || {
+  echo "firmware CD must construct the required pre/post upgrade health check" >&2
   exit 1
 }
+upgrade_body="$(sed -n '/^upgrade_record() {/,/^}/p' "$CD_SCRIPT")"
+if [ "$(grep -Fc 'preflight_record "$record" "$ssh_config"' <<<"$upgrade_body")" -ne 2 ]; then
+  echo "firmware CD must run health preflight before and after sysupgrade" >&2
+  exit 1
+fi
 grep -Fq 'StrictHostKeyChecking yes' "$CD_WORKFLOW" || {
   echo "firmware CD must reject unpinned SSH host keys" >&2
   exit 1
