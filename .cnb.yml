@@ -8,3 +8,10 @@
       stages:
         - name: Inspect runner and run repository guards
           script: bash Scripts/cnb_shadow_probe.sh
+    - name: Read-only upstream NSS and kernel drift report
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Compare pinned sources to upstream history (no pin changes)
+          script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py
+          timeout: 8m

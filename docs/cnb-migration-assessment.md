@@ -1,6 +1,6 @@
 # CNB 迁移调查与阶段门禁（未切换）
 
-调查基线：GitHub `hotwa/OpenWRT-CI` 的 `origin/main` = `34ba9fabb6e42268d4fbc1bd7d6015db925b29a7`（2026-09-26）；本文件仅是迁移调查，不是 CNB 流水线验收记录。所有操作限于本仓库的独立工作树 `.worktrees/cnb-migration`，未推送、未触碰设备。
+调查初始基线：GitHub `hotwa/OpenWRT-CI` 的 `origin/main` = `34ba9fabb6e42268d4fbc1bd7d6015db925b29a7`（2026-09-26）；后续已更新并推送私有 CNB 仓库的独立分支，实际阶段 0 运行结果见文末。所有源码修改限于本仓库独立工作树 `.worktrees/cnb-migration`；未触碰设备。
 
 ## 现有工作保护与基线
 
@@ -13,7 +13,7 @@
 
 访问 CNB 官方 [GitHub Actions 迁移指南](https://docs.cnb.cool/zh/build/migrate-to-cnb/migrate-from-github-actions.html)、[密钥仓库](https://docs.cnb.cool/zh/repo/secret.html)、[流水线权限](https://docs.cnb.cool/zh/build/permission.html)：CNB 使用根目录 `.cnb.yml` / `include`，Linux Docker 容器而非 GitHub VM；矩阵并非原生等价、缓存可用节点卷或 `docker:cache`，附件插件可上传产物。密钥仓库通过 `imports` 注入 YAML/JSON 文件为环境变量；`allow_slugs`、`allow_events`、`allow_branches`、`allow_images` 共同控制文件引用，但一旦声明 `allow_*`，触发者角色权限会被这些规则取代。这些规则不是任务级最小密钥范围、部署审批或可靠设备锁的证明。CNB 开发者及以上角色可触发/重跑构建；不能单靠 `main` 文本条件或脚本保护有部署钥匙的作业。
 
-初次调查时浏览器未登录；用户登录后已在组织页面确认 `b2233/cloud-secret` 为现有**密钥仓库**，main 当前可见 `projects/openwrt-ci/{env.build.yml,env.cd.yml,env.release.yml}`。仅看了目录和文件名，**没有打开文件内容或核对值**，也没有编辑/覆盖；本地未跟踪的 `env.runtime-release.yml` 与云端 `env.release.yml` 名称不同，绝不自动同步。组织列表原无 `openwrt-ci`（6 个仓库），登录态直接访问也返回 404；按用户允许创建仓库的指示，已通过 Web UI 创建独立的**私有空仓** [`b2233/openwrt-ci`](https://cnb.cool/b2233/openwrt-ci)，页面显示“私有”。还没有推送源码、配置流水线或触发运行。初次本地 Git HTTPS 凭据访问新私库返回 Repository Not Found；现已在 CNB Web UI 创建 `openwrt-ci-win11-git-02`（90 天、仅 `b2233/openwrt-ci`、仅 `repo-code` 读写，其他授权默认），凭据通过 Windows Git Credential Manager 按仓库路径持久保存；未在聊天、命令行参数或仓库文件中存值。`git ls-remote` 成功（空仓 refs 为 0），`git push --dry-run` 到隔离迁移分支成功；还**没有实际推送**。仍需核对密钥文件的 ACL/存在性（不能读取值）、受保护分支、runner 和执行链接。
+初次调查时浏览器未登录；用户登录后已在组织页面确认 `b2233/cloud-secret` 为现有**密钥仓库**，main 当前可见 `projects/openwrt-ci/{env.build.yml,env.cd.yml,env.release.yml}`。仅看了目录和文件名，**没有打开文件内容或核对值**，也没有编辑/覆盖；本地未跟踪的 `env.runtime-release.yml` 与云端 `env.release.yml` 名称不同，绝不自动同步。组织列表原无 `openwrt-ci`（6 个仓库），登录态直接访问也返回 404；按用户允许创建仓库的指示，已通过 Web UI 创建独立的**私有仓库** [`b2233/openwrt-ci`](https://cnb.cool/b2233/openwrt-ci)，页面显示“私有”。创建时为空，后续已推送 GitHub 基线 `main` 和 CNB 影子迁移分支并触发试点。初次本地 Git HTTPS 凭据访问新私库返回 Repository Not Found；现已在 CNB Web UI 创建 `openwrt-ci-win11-git-02`（90 天、仅 `b2233/openwrt-ci`、仅 `repo-code` 读写，其他授权默认），凭据通过 Windows Git Credential Manager 按仓库路径持久保存；未在聊天、命令行参数或仓库文件中存值。创建时 `git ls-remote` 成功（refs 为 0），`git push --dry-run` 到隔离迁移分支成功；实际推送及 runner 执行链接见文末。仍需核对密钥文件的 ACL/存在性（不能读取值）和受保护分支。
 
 官方密钥仓库文档允许在受审计 Web UI 中存储实际值，但本次明确要求**不得把真实密钥写入 cloud-secret 的明文 YAML**。因此不能照抄该示例注入实际值；先由用户确认 CNB 上满足此要求的加密变量/凭据注入方式，或另选经用户批准、符合其约束的机制。任何需要秘钥的私有构建/发布/CD 在此之前停用；不要求用户在聊天中发送值。
 
@@ -63,4 +63,6 @@ GitHub repo secret 名称存在：`AGENT_RUNTIME_USIGN_SECRET_KEY`、`CLIPROXYAP
 
 官方 [超时策略](https://docs.cnb.cool/zh/build/timeout.html)：流水线最多 20 小时；Job 默认最多 2 小时，显式 `timeout` 最多 12 小时；默认无输出 10 分钟超时。官方 [缓存文档](https://docs.cnb.cool/zh/build/pipeline-cache.html)：节点并非固定，默认跨约 3 个节点；本地 `docker.volumes` 不保证跨节点命中，跨节点要单独验证 `docker:cache`。固件构建须设定时限/日志心跳，不能将节点缓存等同可信产物。附件留存/下载、网络可达性、并发额度和费用仍未实测。CNB `main` 当前**没有分支保护规则**；新建规则的默认选项要求评审、状态检查，并禁止直接推送（包括负责人），组织当前仅一位成员，直接采用默认值可能锁死 GitHub 镜像和自审合并。未擅自保存该规则；需确定可信第二评审人及 main 镜像更新策略。私有密钥任务和发布/CD 在完成可信分支保护前不得配置。
 
-**当前停点**：CNB 已通过无密钥 shell 试点，尚无 CNB 固件校验结果；密钥注入方式、任务级隔离及审批/锁仍未证实。下一步先选 RE-CS-07 做无设备操作的完整构建适配和私有对照，不能在未验证安全边界前导入 build/CD/签名密钥。不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
+**阶段 0.5 无密钥上游报告候选**：`Scripts/cnb_upstream_report.py` 只读读取现有 RE-CS-07/CPE-5G 工作流中的 40 字符 source pin，从 GitHub 公共 API 对照 VIKINGYFY `main` 的 `package/qca-nss`（内联 NSS 包）、`target/linux/qualcommax`（目标内核/补丁）及 `include/kernel-version.mk`（内核元数据）路径最近提交；另报告原始 ImmortalWrt `master` 的目标/内核路径最近提交及 `davidtall:stable` 候选 head。运行本地验证当前两款设备的 NSS 路径均有上游路径历史变化，**这不是版本兼容性、安全性或可合并性判断**；不自动更新 pin、签名、构建、发布或连接设备。公共 API 限额/网络可能失败，不可误报“无更新”。CNB 网络实测及运行链接待新分支 push 后补证据。
+
+**当前停点**：CNB 已通过无密钥 shell 试点，尚无 CNB 固件校验结果；密钥注入方式、任务级隔离及审批/锁仍未证实。默认 RE-CS-07 含 Samba 包，`SAMBA_DEFAULT_PASSWORD` 为完整默认构建的硬依赖；其他所需名目及作用见 [`cnb-secret-entry-checklist.md`](cnb-secret-entry-checklist.md)，设备首启 `HEADSCALE_OPENWRT_AUTHKEY` 不等于 CI 的 `HEADSCALE_CI_AUTHKEY`，不能从已部署设备取旧 key 代用。下一步先选 RE-CS-07 做无设备操作的完整构建适配和私有对照，不能在未验证安全边界前导入 build/CD/签名密钥。不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
