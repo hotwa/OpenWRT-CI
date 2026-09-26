@@ -15,6 +15,15 @@
       stages:
         - name: Verify pinned RE-CS-07, RE-CS-02 and RE-SS-01 inputs
           script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py
+  # Manual pinned host toolchain probe; no secrets or firmware.
+  web_trigger_re_host_runtime_probe:
+    - name: Probe pinned CNB host Go and Node versions
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Verify official archive hashes and installed host toolchains
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
   # Manual private-build input gate only. No source build or artifact is claimed.
   # Imports are absent from push, scheduled, and read-only profile tasks.
   web_trigger_re_private_build:

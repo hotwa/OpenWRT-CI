@@ -7,6 +7,9 @@ branch:
       - name: Check three RE build profiles (no firmware)
         description: Verify pinned source, device configs and build-only flags
         event: web_trigger_re_preflight
+      - name: Probe pinned host Go and Node (no firmware)
+        description: Download official SHA256-pinned Go 1.26.0 and Node 24.20.0 host tools
+        event: web_trigger_re_host_runtime_probe
       - name: Check private RE build input (no firmware)
         description: Manually check the cloud-secret import and mandatory Samba field; never print values
         event: web_trigger_re_private_build
