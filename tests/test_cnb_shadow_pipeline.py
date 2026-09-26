@@ -15,9 +15,9 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(list(config), ["migration/cnb-shadow-20260926"])
         branch = config["migration/cnb-shadow-20260926"]
         self.assertEqual(list(branch), [
-            "push", "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
+            "push", "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
-        self.assertEqual(len(branch["push"]), 3)
+        self.assertEqual(len(branch["push"]), 2)
         pipeline = branch["push"][0]
         self.assertEqual(set(pipeline), {"name", "docker", "stages"})
         self.assertEqual(pipeline["docker"], {"image": "ubuntu:24.04"})
@@ -29,30 +29,25 @@ class ShadowPipelineTest(unittest.TestCase):
         report = branch["push"][1]
         self.assertEqual(set(report), {"name", "docker", "stages"})
         self.assertEqual(report["docker"], {"image": "python:3.13-bookworm"})
-        self.assertEqual(len(report["stages"]), 1)
+        self.assertEqual(len(report["stages"]), 3)
         self.assertEqual(report["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
         self.assertEqual(report["stages"][0]["timeout"], "8m")
-        one_shot = branch["push"][2]
-        self.assertEqual(one_shot["docker"], {"image": "ubuntu:24.04"})
-        self.assertIn("timeout --kill-after=30 3600 bash Scripts/ci_init_environment.sh",
-                      one_shot["stages"][0]["script"])
-        self.assertNotIn("./wrt/", one_shot["stages"][0]["script"])
+        self.assertEqual(len(report["stages"]), 3)
+        self.assertIn("dpkg-query -s tzdata", report["stages"][1]["script"])
+        self.assertEqual(report["stages"][2]["script"],
+                         "python3 Scripts/cnb_re_profile_preflight.py")
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
-            "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
+            "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         })
         manual = scheduled["web_trigger_re_preflight"][0]
         self.assertEqual(manual["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
-        bootstrap = scheduled["web_trigger_re_bootstrap"][0]
-        self.assertEqual(bootstrap["docker"], {"image": "ubuntu:24.04"})
-        self.assertIn("Scripts/ci_init_environment.sh", bootstrap["stages"][0]["script"])
-        self.assertNotIn("./wrt/", bootstrap["stages"][0]["script"])
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], report["docker"])
-        self.assertEqual(weekly["stages"], report["stages"])
+        self.assertEqual(weekly["stages"], report["stages"][:1])
         self.assertEqual(set(weekly), {"name", "docker", "stages"})
 
     def test_no_secret_release_or_device_actions(self):
@@ -73,7 +68,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(len(buttons["branch"]), 1)
         self.assertEqual(buttons["branch"][0]["reg"], "^migration/cnb-shadow-20260926$")
         self.assertEqual({b["event"] for b in buttons["branch"][0]["buttons"]},
-                         {"web_trigger_re_preflight", "web_trigger_re_bootstrap"})
+                         {"web_trigger_re_preflight"})
         for button in buttons["branch"][0]["buttons"]:
             self.assertNotIn("permissions", button)  # CNB still requires repository write permission
             self.assertNotIn("inputs", button)
