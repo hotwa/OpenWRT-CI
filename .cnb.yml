@@ -1,6 +1,6 @@
 # Shadow CI only. No secret imports, release, deployment or device access.
 # Keep this branch-scoped until CNB runner and artifact contracts are verified.
-"migration/cnb-shadow-*":
+"migration/cnb-shadow-20260926":
   push:
     - name: OpenWrt shadow runner and guard probe
       docker:
@@ -15,9 +15,8 @@
         - name: Compare pinned sources to upstream history (no pin changes)
           script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py
           timeout: 8m
-# CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
-# Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
-"migration/cnb-shadow-20260926":
+  # CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
+  # Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
   web_trigger_re_preflight:
     - name: Check pinned RE-CS-07, RE-CS-02 and RE-SS-01 build profiles
       docker:

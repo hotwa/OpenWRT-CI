@@ -12,9 +12,11 @@ ROOT = Path(__file__).resolve().parent.parent
 class ShadowPipelineTest(unittest.TestCase):
     def test_branch_scoped_probe_and_read_only_upstream_report(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
-        self.assertEqual(list(config), ["migration/cnb-shadow-*", "migration/cnb-shadow-20260926"])
-        branch = config["migration/cnb-shadow-*"]
-        self.assertEqual(list(branch), ["push"])
+        self.assertEqual(list(config), ["migration/cnb-shadow-20260926"])
+        branch = config["migration/cnb-shadow-20260926"]
+        self.assertEqual(list(branch), [
+            "push", "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
+        ])
         self.assertEqual(len(branch["push"]), 2)
         pipeline = branch["push"][0]
         self.assertEqual(set(pipeline), {"name", "docker", "stages"})
@@ -31,10 +33,10 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(report["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
         self.assertEqual(report["stages"][0]["timeout"], "8m")
-        scheduled = config["migration/cnb-shadow-20260926"]
-        self.assertEqual(list(scheduled), [
+        scheduled = branch
+        self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
-        ])
+        })
         manual = scheduled["web_trigger_re_preflight"][0]
         self.assertEqual(manual["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
