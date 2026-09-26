@@ -60,6 +60,19 @@ class ShadowPipelineTest(unittest.TestCase):
         ])
         self.assertEqual(private["stages"][0]["script"],
                          "bash Scripts/cnb_re_private_input_gate.sh")
+        self.assertEqual(len(private["stages"]), 7)
+        self.assertEqual(private["stages"][1]["script"],
+                         "bash Scripts/cnb_bootstrap_environment.sh")
+        self.assertEqual(private["stages"][2]["script"],
+                         "bash Scripts/cnb_host_runtime.sh")
+        self.assertEqual(private["stages"][4]["script"],
+                         "bash Scripts/cnb_re_builder_user.sh")
+        self.assertEqual(private["stages"][5]["script"],
+                         "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild python3 -u Scripts/cnb_replay_core.py re-cs-07")
+        self.assertEqual(private["stages"][5]["timeout"], "11h")
+        self.assertEqual(private["stages"][6]["image"], attachment["stages"][1]["image"])
+        self.assertEqual(private["stages"][6]["settings"],
+                         {"attachments": ["./wrt/upload/*"], "ttl": 14})
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], profiles["docker"])

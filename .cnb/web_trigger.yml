@@ -13,6 +13,6 @@ branch:
       - name: Probe private attachment plugin (synthetic text only)
         description: Verify manual-event commit attachments before any firmware build
         event: web_trigger_re_attachment_probe
-      - name: Check private RE build input (no firmware)
-        description: Manually check the cloud-secret import and mandatory Samba field; never print values
+      - name: Build private RE-CS-07 (no release or device)
+        description: Pinned source, private overlay, full compile, image and checksum guards, private commit attachment
         event: web_trigger_re_private_build
