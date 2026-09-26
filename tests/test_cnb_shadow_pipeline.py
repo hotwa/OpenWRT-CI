@@ -17,7 +17,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(list(branch), [
             "push", "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
         ])
-        self.assertEqual(len(branch["push"]), 2)
+        self.assertEqual(len(branch["push"]), 3)
         pipeline = branch["push"][0]
         self.assertEqual(set(pipeline), {"name", "docker", "stages"})
         self.assertEqual(pipeline["docker"], {"image": "ubuntu:24.04"})
@@ -33,6 +33,11 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(report["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
         self.assertEqual(report["stages"][0]["timeout"], "8m")
+        one_shot = branch["push"][2]
+        self.assertEqual(one_shot["docker"], {"image": "ubuntu:24.04"})
+        self.assertIn("timeout --kill-after=30 3600 bash Scripts/ci_init_environment.sh",
+                      one_shot["stages"][0]["script"])
+        self.assertNotIn("./wrt/", one_shot["stages"][0]["script"])
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
