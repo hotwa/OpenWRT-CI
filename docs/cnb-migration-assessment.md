@@ -13,7 +13,7 @@
 
 访问 CNB 官方 [GitHub Actions 迁移指南](https://docs.cnb.cool/zh/build/migrate-to-cnb/migrate-from-github-actions.html)、[密钥仓库](https://docs.cnb.cool/zh/repo/secret.html)、[流水线权限](https://docs.cnb.cool/zh/build/permission.html)：CNB 使用根目录 `.cnb.yml` / `include`，Linux Docker 容器而非 GitHub VM；矩阵并非原生等价、缓存可用节点卷或 `docker:cache`，附件插件可上传产物。密钥仓库通过 `imports` 注入 YAML/JSON 文件为环境变量；`allow_slugs`、`allow_events`、`allow_branches`、`allow_images` 共同控制文件引用，但一旦声明 `allow_*`，触发者角色权限会被这些规则取代。这些规则不是任务级最小密钥范围、部署审批或可靠设备锁的证明。CNB 开发者及以上角色可触发/重跑构建；不能单靠 `main` 文本条件或脚本保护有部署钥匙的作业。
 
-CNB 当前浏览器未登录（显示“微信登录”）。直接访问 `b2233/cloud-secret` 和 `b2233/openwrt-ci` 均返回“页面不存在，或您暂无访问权限”；未认证的 `git ls-remote` 也不能判定私库是否存在。**无法核实密钥仓库实际目录、文件内容/ACL、构建仓库存在性、受保护分支、真实 runner 和执行链接；禁止据此创建/覆盖同名仓库或推送文件。**原工作树中的三个 `projects/openwrt-ci/env.*.yml` 是用户未跟踪文件，不等于已核实云端密钥仓库，不能自动同步或覆盖。
+初次调查时浏览器未登录；用户登录后已在组织页面确认 `b2233/cloud-secret` 为现有**密钥仓库**，main 当前可见 `projects/openwrt-ci/{env.build.yml,env.cd.yml,env.release.yml}`。仅看了目录和文件名，**没有打开文件内容或核对值**，也没有编辑/覆盖；本地未跟踪的 `env.runtime-release.yml` 与云端 `env.release.yml` 名称不同，绝不自动同步。组织列表原无 `openwrt-ci`（6 个仓库），登录态直接访问也返回 404；按用户允许创建仓库的指示，已通过 Web UI 创建独立的**私有空仓** [`b2233/openwrt-ci`](https://cnb.cool/b2233/openwrt-ci)，页面显示“私有”。还没有推送源码、配置流水线或触发运行。当前本地 Git HTTPS 凭据尝试 `ls-remote` 新私库仍返回 Repository Not Found（认证/权限不匹配）；不得用浏览器令牌、URL 凭据或明文环境变量绕过。仍需核对密钥文件的 ACL/存在性（不能读取值）、受保护分支、runner 和执行链接。
 
 官方密钥仓库文档允许在受审计 Web UI 中存储实际值，但本次明确要求**不得把真实密钥写入 cloud-secret 的明文 YAML**。因此不能照抄该示例注入实际值；先由用户确认 CNB 上满足此要求的加密变量/凭据注入方式，或另选经用户批准、符合其约束的机制。任何需要秘钥的私有构建/发布/CD 在此之前停用；不要求用户在聊天中发送值。
 
@@ -50,11 +50,11 @@ GitHub repo secret 名称存在：`AGENT_RUNTIME_USIGN_SECRET_KEY`、`CLIPROXYAP
 
 ## 分阶段验收、回滚和阻塞事项
 
-0. **访问/安全前置**：用户在自己的浏览器完成 CNB 登录，并授予合适的组织/仓库可见权限；仅核查两个私库的存在、目录和 ACL，不读取密钥值。核实密钥注入机制满足“不写明文 YAML”、PR/fork 隔离、分支保护、作业限钥及审批；检查 runner 架构/镜像/系统依赖、磁盘内存、时限、持久缓存、网络、附件留存及下载、并发额度与计费。任一关键安全能力不满足，停止该特权阶段。回滚：不推送、不启用任务，GitHub 维持原样。
+0. **访问/安全前置**：浏览器已登录且两个私库已确认，构建仓库为空。用户须按 CNB [Git 认证官方文档](https://docs.cnb.cool/zh/guide/git-access.html)在本机凭据管理器配置具有构建仓库访问权的 HTTPS 访问令牌（Git 用户名固定 `cnb`；CNB **不支持 SSH Git**；不在聊天、命令行参数或输出中提供令牌）；仅核查密钥 ACL/名称而不读取值。核实密钥注入机制满足“不写明文 YAML”、PR/fork 隔离、分支保护、作业限钥及审批；检查 runner 架构/镜像/系统依赖、磁盘内存、时限、持久缓存、网络、附件留存及下载、并发额度与计费。任一关键安全能力不满足，停止该特权阶段。回滚：不推送、不启用任务，GitHub 维持原样。
 1. **影子构建/测试**：先保留 GitHub 所有入口。可信私库、无 CD/签名钥匙的 RE-CS-07 手动 build，保证相同 source SHA、workflow commit、target、WAN 参数与私有输入（只有安全注入经验证才跑私有对照）。保留所有 Guard、runtime pin；测缓存守卫/命中率，缓存键涵盖 source SHA、目标、工具链和配置。核验 sysupgrade/factory 所需清单，`metadata.json` 至少记录 source/workflow commit、板型、输入、名称、生成时间，不含秘密；SHA256SUMS 与顶层合法文件精确匹配。对照相同 SHA 的 GHA run 日志、身份、清单与校验和，说明 latest-at-build 和时间戳造成的不可逐字节复现。回滚：停止 CNB 手动试点，GitHub 原 build 继续。
 2. **校验与发布**：CNB artifact 下载后再次精确覆盖验证、明确私有/公开分类、发布身份限权和失败回滚；私有固件绝不进入公开 release。签名 runtime 另设双架构验签/探测与提交顺序、串行/防重复门禁。回滚：撤销 CNB 发布入口，沿用 GitHub 产物；不删旧 release。
 3. **只读 CD**：经保护的入口按 allowlist 从已成功构建的 run 获取可信制品，验证来源、commit、board、SHA256 和 device identity/host key/空间/WAN；只读且不传输/刷机，真实设备探测本身也须用户另行授权。回滚：停 CNB 预检，保留现有 GitHub/人工路径。
 4. **单设备受控 CD**：需用户再次明确授权真实设备操作、独立审批、严格 host key pin、每设备串行锁；顺序校验目标、`sysupgrade -T`、升级后新 boot ID/commit marker/data/WAN/Tailscale/MagicDNS/Nikki，模糊升级或 post-boot 失败立即停止，不自动重刷。回滚使用经批准的物理/独立救援路径，绝不盲目刷写。
 5. **夜间只构建，再多设备**：先经批准时区的只构建 schedule、连续多轮成功/产物校验；按设备依次实机验收后才讨论自动 CD（默认关闭），记录费用/超时与回退。只有用户确认全链路切换后才考虑停止对应 GitHub 工作流，绝不自动删除 workflow、secrets、分支保护或旧产物。
 
-**当前停点**：CNB 认证及 cloud-secret 真实结构/注入方式均不可核实；不存在可报告的 CNB run ID 或固件校验结果。不得用“已经写出 YAML”充当迁移完成。
+**当前停点**：浏览器身份可访问，CNB 私有构建仓库已创建但为空；本地 Git 凭据不能访问私库，密钥注入方式、任务级隔离及审批/锁仍未证实。不存在可报告的 CNB run ID 或固件校验结果。不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
