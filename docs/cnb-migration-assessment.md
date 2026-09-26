@@ -59,4 +59,8 @@ GitHub repo secret 名称存在：`AGENT_RUNTIME_USIGN_SECRET_KEY`、`CLIPROXYAP
 
 **阶段 0 无密钥试点（2026-09-26）**：仅在 `migration/cnb-shadow-*` 的 `push` 定义 `.cnb.yml`，运行 `Scripts/cnb_shadow_probe.sh` 盘点 runner 并执行缓存身份、RE-CS-07 工作流和 CI 权限边界三个短测。没有 `imports`、PR/schedule/release/CD、设备连接或固件编译；并在测试进程清除 CNB 内建临时 token。`tests/test_cnb_shadow_pipeline.py` 静态约束该范围。先推送可信公开 GitHub 基线到 CNB 私有仓 `main`（该基线无 CNB 配置），再推送迁移分支触发试点，记录实际 run 链接和机器资源；即使此试点成功，也不代表固件构建完成。
 
-**当前停点**：浏览器和本机 Git 已可访问，CNB 私有构建仓库待推送；密钥注入方式、任务级隔离及审批/锁仍未证实。尚无 CNB 固件校验结果；不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
+**阶段 0 实际验收**：已将 GitHub `origin/main` 精确 commit `db38b3129eef517890b1eabe5a0b75f0dad1c26c` 推到 CNB 私有 `main`，并将隔离分支 commit `79856f8c` 推到 `migration/cnb-shadow-20260926`（无 force/mirror）。CNB [运行 `cnb-hv4-1k3ehqost`](https://cnb.cool/b2233/openwrt-ci/-/build/logs/cnb-hv4-1k3ehqost) 状态“通过”，三个 guard 均通过，退出码 0；runner `Linux x86_64`、8 vCPU、16 GiB RAM、`/workspace` 显示 512 GiB 可用、容器 `ubuntu:24.04`。基础镜像未提供 git（脚本可选 commit 输出为空），后续 build identity 必须显式校验 CNB 注入的 commit 与源码 pin。没有构建固件或生成附件，故无 checksum/metadata 对照。该 run 验证了触发和纯 shell runner，但不能据此宣称构建迁移完成。
+
+官方 [超时策略](https://docs.cnb.cool/zh/build/timeout.html)：流水线最多 20 小时；Job 默认最多 2 小时，显式 `timeout` 最多 12 小时；默认无输出 10 分钟超时。官方 [缓存文档](https://docs.cnb.cool/zh/build/pipeline-cache.html)：节点并非固定，默认跨约 3 个节点；本地 `docker.volumes` 不保证跨节点命中，跨节点要单独验证 `docker:cache`。固件构建须设定时限/日志心跳，不能将节点缓存等同可信产物。附件留存/下载、网络可达性、并发额度和费用仍未实测。CNB `main` 当前**没有分支保护规则**；新建规则的默认选项要求评审、状态检查，并禁止直接推送（包括负责人），组织当前仅一位成员，直接采用默认值可能锁死 GitHub 镜像和自审合并。未擅自保存该规则；需确定可信第二评审人及 main 镜像更新策略。私有密钥任务和发布/CD 在完成可信分支保护前不得配置。
+
+**当前停点**：CNB 已通过无密钥 shell 试点，尚无 CNB 固件校验结果；密钥注入方式、任务级隔离及审批/锁仍未证实。下一步先选 RE-CS-07 做无设备操作的完整构建适配和私有对照，不能在未验证安全边界前导入 build/CD/签名密钥。不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
