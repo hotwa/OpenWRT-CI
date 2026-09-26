@@ -24,6 +24,19 @@
         - name: Verify official archive hashes and installed host toolchains
           script: bash Scripts/cnb_host_runtime.sh
           timeout: 20m
+  # Attachment smoke uses a synthetic text file; no credentials or firmware.
+  web_trigger_re_attachment_probe:
+    - name: Probe private repository commit attachments without firmware
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Create synthetic test payload
+          script: printf 'CNB attachment probe only (not firmware)\n' > ./cnb-attachment-probe.txt
+        - name: Test CNB attachments plugin for manual custom events
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              ./cnb-attachment-probe.txt: 1
   # Manual private-build input gate only. No source build or artifact is claimed.
   # Imports are absent from push, scheduled, and read-only profile tasks.
   web_trigger_re_private_build:

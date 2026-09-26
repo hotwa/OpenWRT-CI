@@ -15,7 +15,8 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(list(config), ["migration/cnb-shadow-20260926"])
         branch = config["migration/cnb-shadow-20260926"]
         self.assertEqual(list(branch), [
-            "push", "web_trigger_re_host_runtime_probe", "web_trigger_re_private_build",
+            "push", "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
+            "web_trigger_re_private_build",
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
         self.assertEqual(len(branch["push"]), 2)
@@ -36,7 +37,8 @@ class ShadowPipelineTest(unittest.TestCase):
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "web_trigger_re_private_build",
-            "web_trigger_re_host_runtime_probe", "crontab: 0 9 * * 0"
+            "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
+            "crontab: 0 9 * * 0"
         })
         manual = scheduled["web_trigger_re_preflight"][0]
         self.assertEqual(manual["stages"][0]["script"],
@@ -45,6 +47,11 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(set(runtime), {"name", "docker", "stages"})
         self.assertEqual(runtime["docker"], {"image": "python:3.13-bookworm"})
         self.assertEqual(runtime["stages"][0]["script"], "bash Scripts/cnb_host_runtime.sh")
+        attachment = scheduled["web_trigger_re_attachment_probe"][0]
+        self.assertNotIn("imports", attachment)
+        self.assertEqual(attachment["stages"][1]["image"], "cnbcool/attachments:latest")
+        self.assertEqual(attachment["stages"][1]["settings"]["attachments"],
+                         {"./cnb-attachment-probe.txt": 1})
         private = scheduled["web_trigger_re_private_build"][0]
         self.assertEqual(set(private), {"name", "imports", "docker", "stages"})
         self.assertEqual(private["imports"], [
@@ -75,6 +82,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertIn("unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN", probe)
         branch = yaml.safe_load(text)["migration/cnb-shadow-20260926"]
         for event in ("push", "web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
+                      "web_trigger_re_attachment_probe",
                       "crontab: 0 9 * * 0"):
             self.assertNotIn("imports", str(branch[event]))
         gate = (ROOT / "Scripts/cnb_re_private_input_gate.sh").read_text(encoding="utf-8")
@@ -89,7 +97,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(buttons["branch"][0]["reg"], "^migration/cnb-shadow-20260926$")
         self.assertEqual({b["event"] for b in buttons["branch"][0]["buttons"]},
                          {"web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
-                          "web_trigger_re_private_build"})
+                          "web_trigger_re_attachment_probe", "web_trigger_re_private_build"})
         for button in buttons["branch"][0]["buttons"]:
             self.assertNotIn("permissions", button)  # CNB still requires repository write permission
             self.assertNotIn("inputs", button)
