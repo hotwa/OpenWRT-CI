@@ -44,7 +44,10 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(manual["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
         runtime = scheduled["web_trigger_re_host_runtime_probe"][0]
-        self.assertEqual(set(runtime), {"name", "docker", "stages"})
+        self.assertEqual(set(runtime), {"name", "runner", "docker", "stages"})
+        # The pinned official Go/Node archives are x86_64 only and CNB memory is
+        # cpus x 2 GiB, so both jobs must state the node and the core count.
+        self.assertEqual(runtime["runner"], {"tags": "cnb:arch:amd64", "cpus": 8})
         self.assertEqual(runtime["docker"], {"image": "python:3.13-bookworm"})
         self.assertEqual(runtime["stages"][0]["script"], "bash Scripts/cnb_host_runtime.sh")
         attachment = scheduled["web_trigger_re_attachment_probe"][0]
@@ -54,7 +57,8 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(attachment["stages"][1]["settings"]["attachments"],
                          {"./cnb-attachment-probe.txt": 1})
         private = scheduled["web_trigger_re_private_build"][0]
-        self.assertEqual(set(private), {"name", "imports", "docker", "stages"})
+        self.assertEqual(set(private), {"name", "imports", "runner", "docker", "stages"})
+        self.assertEqual(private["runner"], runtime["runner"])
         self.assertEqual(private["imports"], [
             "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
         ])

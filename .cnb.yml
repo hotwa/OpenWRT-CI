@@ -18,6 +18,12 @@
   # Manual pinned host toolchain probe; no secrets or firmware.
   web_trigger_re_host_runtime_probe:
     - name: Probe pinned CNB host Go and Node versions
+      # The pinned official archives are x86_64 only, and CNB memory is
+      # cpus x 2 GiB, so 8 cpus is the smallest request that still matches the
+      # GitHub hosted runner's 16 GiB (4 vCPU / 16 GiB) without over-allocating.
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 8
       docker:
         image: python:3.13-bookworm
       stages:
@@ -43,6 +49,12 @@
     - name: Build private RE-CS-07 with pinned GitHub source (no deployment)
       imports:
         - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      # amd64 is mandatory: the Go/Node archives, the OpenWrt target and the
+      # GitHub-parity assumption are all x86_64. cpus is explicit so the
+      # compile keeps the GitHub runner's 16 GiB and a bounded core-hour cost.
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 8
       docker:
         image: python:3.13-bookworm
       stages:
