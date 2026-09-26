@@ -1,14 +1,14 @@
 # cloud-secret → CNB build: read-only inventory and guarded import plan
 
-2026-09-26：已在登录的 CNB Web UI 查看 `b2233/cloud-secret/projects/openwrt-ci`，**只提取键名和 ACL 文本**；未将值下载、显示、复制、写入本仓库或改动该密钥仓库。该目录存在 `env.build.yml`、`env.cd.yml`、`env.release.yml`。后两文件的浏览器代码视图未呈现内容，**不能据此判定为空或验证字段**；保持原样，留待独立发布/CD 阶段。
+2026-09-26 初始盘点：在登录的 CNB Web UI 查看 `b2233/cloud-secret/projects/openwrt-ci`，只提取键名和 ACL 文本；未将值写入本仓库。后续手动门禁的 ACL 更新和设备 key 意外显示事件见下文，不能再称整个过程“未改动密钥仓库/未显示值”。该目录存在 `env.build.yml`、`env.cd.yml`、`env.release.yml`。后两文件的浏览器代码视图未呈现内容，**不能据此判定为空或验证字段**；保持原样，留待独立发布/CD 阶段。
 
 `env.build.yml` 的键名：`HEADSCALE_OPENWRT_AUTHKEY`、`HEADSCALE_URL`、`MULTICA_TOKEN`、`MULTICA_SERVER_URL`、`MULTICA_APP_URL`、`MULTICA_WORKSPACE_ID`、`NIKKI_SUBSCRIPTION_URL`、`OPENWRT_DROPBEAR_AUTHORIZED_KEYS`、`OPENWRT_WAN_PPPOE_USERNAME`、`OPENWRT_WAN_PPPOE_PASSWORD`、`COMMANDCODE_API_KEY`、`CLIPROXYAPI_API_KEY`、`CLIPROXYAPI_BASE_URL`、`SAMBA_DEFAULT_PASSWORD`。能看到键**不证明对应值真实有效**；本清单不核对/输出值。`HEADSCALE_CI_AUTHKEY` 不在该 build 文件中，普通固件构建不需要它。
 
-## 私有构建手动输入门禁（尚未证明可引用）
+## 私有构建手动输入门禁（CNB 已验证可引用）
 
-用户已确认：`SAMBA_DEFAULT_PASSWORD` 在密钥仓库配置完成；暂不填写 `HEADSCALE_OPENWRT_AUTHKEY`；本轮接受迁移分支不加严格分支审查，以优先诊断构建。这**不等于验证了值的有效性或免除 ACL**。在当前私人 CNB 仓库的迁移分支上，仅添加手动 `web_trigger_re_private_build` 事件的 build-only 输入检查：只检查 Samba 非空/非明显占位，不打印密钥，不执行编译、发布、CD。该阶段的受保护分支风险由用户接受；此决定**不扩展**到生产 main、发布或真实设备 CD。
+用户已确认：`SAMBA_DEFAULT_PASSWORD` 在密钥仓库配置完成；暂不填写 `HEADSCALE_OPENWRT_AUTHKEY`；本轮接受迁移分支不加严格分支审查，以优先诊断构建。这**不等于验证了值在 Samba 运行时可用或免除 ACL**。在当前私人 CNB 仓库的迁移分支上，仅添加手动 `web_trigger_re_private_build` 事件的 build-only 输入检查：只检查 Samba 非空/非明显占位，不打印密钥，不执行编译、发布、CD。该阶段的受保护分支风险由用户接受；此决定**不扩展**到生产 main、发布或真实设备 CD。第一次 `cnb-6pu-1k3f02geb` 因 `allow_events` 拒绝；Web UI 将 ACL 限到此私库、此手动事件、`main` 和迁移分支后，`cnb-f54-1k3f22j0u` 的输入门禁通过。
 
-现有文件的 ACL 如果仍是以下占位符，CNB 会拒绝 import；须在 Web UI **只改 ACL 行、保留所有值**，使 `allow_slugs` 精确匹配 `b2233/openwrt-ci`、`allow_events` 精确匹配 `web_trigger_re_private_build`、`allow_branches` 精确匹配 `migration/cnb-shadow-20260926`，再重试这个门禁。绝不能为了通过而删除 ACL 或加入 push/cron/PR 事件。
+文件 ACL 已在 Web UI 配为 `allow_slugs` 精确匹配 `b2233/openwrt-ci`、`allow_events` 精确匹配 `web_trigger_re_private_build`、`allow_branches` 仅 `main` 与 `migration/cnb-shadow-20260926`。不得为了后续构建通过而删除 ACL 或加入 push/cron/PR 事件。**重要安全事项**：检查中发现设备 key 一度非空且意外出现在代理工具输出；当前 build 文件已清空该字段，但历史提交仍存，必须由用户在 Headscale 吊销/轮换旧 key；不在此文记录或复述任何值。
 
 ## 早期授权规则不可被迁移分支引用
 
