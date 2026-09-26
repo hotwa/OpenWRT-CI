@@ -10,6 +10,10 @@ set -u
 DATA_ROOT="${OPENWRT_CI_HEALTH_DATA_ROOT:-/data}"
 MOUNTS_FILE="${OPENWRT_CI_HEALTH_MOUNTS_FILE:-/proc/mounts}"
 DATA_RUNTIME_STATUS_FILE="${OPENWRT_CI_HEALTH_DATA_RUNTIME_STATUS_FILE:-/var/run/data-runtime.status}"
+QUAD100_STATUS_FILE="${OPENWRT_CI_HEALTH_QUAD100_STATUS_FILE:-/var/run/quad100-health.ok}"
+AGENT_RUNTIME_BIN="${OPENWRT_CI_HEALTH_AGENT_RUNTIME_BIN:-/usr/sbin/agent-runtime}"
+AGENT_RUNTIME_CHECK_STATUS_FILE="${OPENWRT_CI_HEALTH_AGENT_RUNTIME_CHECK_STATUS_FILE:-/var/run/agent-runtime-health.status}"
+ROOT_SHADOW_FILE="${OPENWRT_CI_HEALTH_ROOT_SHADOW_FILE:-/etc/shadow}"
 NIKKI_CONFIG="${OPENWRT_CI_HEALTH_NIKKI_CONFIG:-/etc/config/nikki}"
 NIKKI_SUBSCRIPTION_STATUS_FILE="${OPENWRT_CI_HEALTH_NIKKI_SUBSCRIPTION_STATUS_FILE:-/var/run/nikki-subscription-sync.status}"
 NIKKI_DNS_FAILOPEN="${OPENWRT_CI_HEALTH_NIKKI_DNS_FAILOPEN:-/usr/sbin/nikki-dns-failopen}"
@@ -20,7 +24,7 @@ JSON=0
 REQUIRED=""
 
 usage() {
-  echo 'usage: openwrt-ci-health [--json] [--require data,wan,tailscale,magicdns,nikki]' >&2
+  echo 'usage: openwrt-ci-health [--json] [--require data,wan,tailscale,magicdns,nikki,runtime]' >&2
 }
 
 is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
@@ -35,6 +39,31 @@ safe_token() {
 }
 
 bool() { [ "$1" = 1 ] && printf true || printf false; }
+
+disk_free_kib() {
+  df -Pk "$1" 2>/dev/null | awk 'NR == 2 && $4 ~ /^[0-9]+$/ { print $4; found=1 } END { if (!found) print 0 }'
+}
+
+lookup_ipv4() {
+  local query="$1" resolver="$2" output
+  command -v nslookup >/dev/null 2>&1 || return 1
+  output="$(nslookup "$query" "$resolver" 2>/dev/null)" || return 1
+  printf '%s\n' "$output" | awk -v expected="$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]')" '
+    function valid_ipv4(value, parts, count, i) {
+      count = split(value, parts, ".")
+      if (count != 4) return 0
+      for (i = 1; i <= 4; i++) if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return 0
+      return 1
+    }
+    /^[[:space:]]*Name:[[:space:]]*/ {
+      name=$0; sub(/^[[:space:]]*Name:[[:space:]]*/, "", name); sub(/[.]$/, "", name)
+      active=(tolower(name) == expected); next
+    }
+    active && /^[[:space:]]*Address([[:space:]][0-9]+)?:[[:space:]]*/ {
+      ip=$0; sub(/^[[:space:]]*Address([[:space:]][0-9]+)?:[[:space:]]*/, "", ip)
+      if (valid_ipv4(ip)) { print ip; exit }
+    }'
+}
 
 status_value() {
   file="$1"
@@ -112,8 +141,62 @@ case "$SELF_DNS_NAME" in
   ''|*[!A-Za-z0-9_.-]*) SELF_DNS_NAME="" ;;
 esac
 MAGICDNS_OK=0
-if [ -n "$SELF_DNS_NAME" ] && command -v nslookup >/dev/null 2>&1; then
-  nslookup "$SELF_DNS_NAME" "$MAGICDNS_RESOLVER" 2>/dev/null | grep -q 'Name:' && MAGICDNS_OK=1
+MAGICDNS_ADDRESS=""
+safe_token "$MAGICDNS_RESOLVER" || MAGICDNS_RESOLVER=unknown
+if [ -n "$SELF_DNS_NAME" ] && [ "$MAGICDNS_RESOLVER" != unknown ]; then
+  MAGICDNS_ADDRESS="$(lookup_ipv4 "$SELF_DNS_NAME" "$MAGICDNS_RESOLVER" || true)"
+  [ -n "$MAGICDNS_ADDRESS" ] && MAGICDNS_OK=1
+fi
+
+QUAD100_STATE="$(status_value "$QUAD100_STATUS_FILE" state)"
+QUAD100_EPOCH="$(status_value "$QUAD100_STATUS_FILE" timestamp_epoch)"
+QUAD100_FQDN="$(status_value "$QUAD100_STATUS_FILE" fqdn)"
+QUAD100_ADDRESS="$(status_value "$QUAD100_STATUS_FILE" address)"
+QUAD100_REASON="$(status_value "$QUAD100_STATUS_FILE" reason)"
+safe_token "$QUAD100_STATE" || QUAD100_STATE=unknown
+is_number "$QUAD100_EPOCH" || QUAD100_EPOCH=0
+safe_token "$QUAD100_FQDN" || QUAD100_FQDN=unknown
+safe_token "$QUAD100_ADDRESS" || QUAD100_ADDRESS=unknown
+safe_token "$QUAD100_REASON" || QUAD100_REASON=unknown
+NOW_EPOCH="$(date +%s 2>/dev/null || echo 0)"
+is_number "$NOW_EPOCH" || NOW_EPOCH=0
+QUAD100_AGE=0
+if [ "$QUAD100_EPOCH" -gt 0 ] 2>/dev/null && [ "$NOW_EPOCH" -ge "$QUAD100_EPOCH" ] 2>/dev/null; then
+  QUAD100_AGE=$((NOW_EPOCH - QUAD100_EPOCH))
+fi
+QUAD100_OK=0
+[ "$QUAD100_STATE" = ok ] && [ "$QUAD100_AGE" -le 300 ] && QUAD100_OK=1
+
+RUNTIME_STATE=unavailable
+RUNTIME_OK=0
+if [ -x "$AGENT_RUNTIME_BIN" ]; then
+  RUNTIME_REPORT="$(COMMANDCODE_SKIP_UPDATES=1 "$AGENT_RUNTIME_BIN" verify --json 2>/dev/null || true)"
+  RUNTIME_CODE="$(printf '%s\n' "$RUNTIME_REPORT" | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  case "$RUNTIME_CODE" in
+    ok) RUNTIME_STATE=verified; RUNTIME_OK=1 ;;
+    health_failed) RUNTIME_STATE=health-failed ;;
+    busy|no_data|signature_failed|incompatible|insufficient_space|download_failed) RUNTIME_STATE="$RUNTIME_CODE" ;;
+    *) RUNTIME_STATE=unknown ;;
+  esac
+fi
+RUNTIME_CHECK_STATE="$(status_value "$AGENT_RUNTIME_CHECK_STATUS_FILE" state)"
+RUNTIME_CHECK_EPOCH="$(status_value "$AGENT_RUNTIME_CHECK_STATUS_FILE" timestamp_epoch)"
+safe_token "$RUNTIME_CHECK_STATE" || RUNTIME_CHECK_STATE=unknown
+is_number "$RUNTIME_CHECK_EPOCH" || RUNTIME_CHECK_EPOCH=0
+
+ROOT_FREE_KIB="$(disk_free_kib /)"
+DATA_FREE_KIB="$(disk_free_kib "$DATA_ROOT")"
+is_number "$ROOT_FREE_KIB" || ROOT_FREE_KIB=0
+is_number "$DATA_FREE_KIB" || DATA_FREE_KIB=0
+ROOT_PASSWORD_STATE=unknown
+if [ -r "$ROOT_SHADOW_FILE" ]; then
+  ROOT_HASH="$(awk -F: '$1 == "root" { print $2; exit }' "$ROOT_SHADOW_FILE" 2>/dev/null || true)"
+  case "$ROOT_HASH" in
+    '') ROOT_PASSWORD_STATE=empty ;;
+    '!'*|'*'*) ROOT_PASSWORD_STATE=locked ;;
+    *) ROOT_PASSWORD_STATE=set ;;
+  esac
+  unset ROOT_HASH
 fi
 
 NIKKI_STATUS=""
@@ -170,6 +253,12 @@ if [ "$JSON" -eq 1 ]; then
   printf '"wan":{"healthy":%s,"protocol":"%s","up":%s,"default_route":%s},' "$(bool "$WAN_OK")" "$WAN_PROTO" "$(bool "$WAN_UP")" "$(bool "$WAN_ROUTE")"
   printf '"tailscale":{"healthy":%s,"backend_state":"%s","interface":%s,"accept_routes":%s,"route_health":"%s"},' "$(bool "$TAILSCALE_OK")" "$TAILSCALE_BACKEND" "$(bool "$TAILSCALE_INTERFACE")" "$(bool "$ACCEPT_ROUTES")" "$TAILSCALE_ROUTE_STATUS"
   printf '"magicdns":{"healthy":%s,"resolver":"%s","self_name":"%s"},' "$(bool "$MAGICDNS_OK")" "$MAGICDNS_RESOLVER" "$SELF_DNS_NAME"
+  printf '"quad100":{"healthy":%s,"state":"%s","timestamp_epoch":%s,"age_seconds":%s,"fqdn":"%s","address":"%s","reason":"%s"},' \
+    "$(bool "$QUAD100_OK")" "$QUAD100_STATE" "$QUAD100_EPOCH" "$QUAD100_AGE" "$QUAD100_FQDN" "$QUAD100_ADDRESS" "$QUAD100_REASON"
+  printf '"agent_runtime":{"healthy":%s,"verify":"%s","self_check":"%s","self_check_epoch":%s},' \
+    "$(bool "$RUNTIME_OK")" "$RUNTIME_STATE" "$RUNTIME_CHECK_STATE" "$RUNTIME_CHECK_EPOCH"
+  printf '"storage":{"root_free_kib":%s,"data_free_kib":%s},' "$ROOT_FREE_KIB" "$DATA_FREE_KIB"
+  printf '"root_auth":{"password":"%s"},' "$ROOT_PASSWORD_STATE"
   printf '"nikki":{"healthy":%s,"mode":"%s"},' "$(bool "$NIKKI_OK")" "$NIKKI_MODE"
   printf '"subscription":{"healthy":%s,"configured":%s,"result":"%s","last_attempt_epoch":%s,"last_success_epoch":%s}}\n' \
     "$(bool "$SUBSCRIPTION_OK")" "$(bool "$SUBSCRIPTION_CONFIGURED")" "$SUBSCRIPTION_RESULT" "$SUBSCRIPTION_ATTEMPT" "$SUBSCRIPTION_SUCCESS"
@@ -178,6 +267,11 @@ else
   printf 'wan=%s protocol=%s up=%s default_route=%s\n' "$(bool "$WAN_OK")" "$WAN_PROTO" "$(bool "$WAN_UP")" "$(bool "$WAN_ROUTE")"
   printf 'tailscale=%s backend_state=%s interface=%s accept_routes=%s route_health=%s\n' "$(bool "$TAILSCALE_OK")" "$TAILSCALE_BACKEND" "$(bool "$TAILSCALE_INTERFACE")" "$(bool "$ACCEPT_ROUTES")" "$TAILSCALE_ROUTE_STATUS"
   printf 'magicdns=%s resolver=%s\n' "$(bool "$MAGICDNS_OK")" "$MAGICDNS_RESOLVER"
+  printf 'quad100=%s state=%s timestamp_epoch=%s age_seconds=%s fqdn=%s address=%s reason=%s\n' \
+    "$(bool "$QUAD100_OK")" "$QUAD100_STATE" "$QUAD100_EPOCH" "$QUAD100_AGE" "$QUAD100_FQDN" "$QUAD100_ADDRESS" "$QUAD100_REASON"
+  printf 'agent_runtime=%s verify=%s\n' "$(bool "$RUNTIME_OK")" "$RUNTIME_STATE"
+  printf 'storage root_free_kib=%s data_free_kib=%s\n' "$ROOT_FREE_KIB" "$DATA_FREE_KIB"
+  printf 'root_auth password=%s\n' "$ROOT_PASSWORD_STATE"
   printf 'nikki=%s mode=%s\n' "$(bool "$NIKKI_OK")" "$NIKKI_MODE"
   printf 'subscription=%s configured=%s result=%s last_attempt_epoch=%s last_success_epoch=%s\n' \
     "$(bool "$SUBSCRIPTION_OK")" "$(bool "$SUBSCRIPTION_CONFIGURED")" "$SUBSCRIPTION_RESULT" "$SUBSCRIPTION_ATTEMPT" "$SUBSCRIPTION_SUCCESS"
@@ -197,6 +291,7 @@ for requirement in "$@"; do
     tailscale) [ "$TAILSCALE_OK" -eq 1 ] || REQUIRE_OK=0 ;;
     magicdns) [ "$MAGICDNS_OK" -eq 1 ] || REQUIRE_OK=0 ;;
     nikki) [ "$NIKKI_OK" -eq 1 ] || REQUIRE_OK=0 ;;
+    runtime) [ "$RUNTIME_OK" -eq 1 ] || REQUIRE_OK=0 ;;
     *) usage; exit 2 ;;
   esac
 done

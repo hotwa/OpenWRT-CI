@@ -35,7 +35,23 @@ command_path() {
 }
 
 first_line() {
-	"$@" 2>/dev/null | sed -n '1p' || true
+	if [ "${1:-}" = cmdc ]; then
+		shift
+		COMMANDCODE_SKIP_UPDATES=1 "$@" 2>/dev/null | sed -n '1p' || true
+	else
+		"$@" 2>/dev/null | sed -n '1p' || true
+	fi
+}
+
+cleanup_stale_profile_temps() {
+	local path name pid
+	for path in "$PROFILE_FILE.new."* "$IDENTITY_FILE.new."*; do
+		[ -e "$path" ] || [ -L "$path" ] || continue
+		name="${path##*.new.}"
+		case "$name" in ''|*[!0-9]*) continue ;; esac
+		pid="$name"
+		kill -0 "$pid" 2>/dev/null || rm -f "$path"
+	done
 }
 
 lan_device() {
@@ -166,6 +182,7 @@ tool_line() {
 render_profile() {
 	local tmp identity_tmp board model lan tail_ip data_mount memory firmware_commit
 	mkdir -p "$DATA_DIR"
+	cleanup_stale_profile_temps
 	tmp="$PROFILE_FILE.new.$$"
 	identity_tmp="$IDENTITY_FILE.new.$$"
 	cleanup_profile_temps() {

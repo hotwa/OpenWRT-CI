@@ -150,14 +150,21 @@ done
 
 for helper in \
 	"$TAILSCALE_ROUTE_RECONCILE" \
-	"$TAILSCALE_QUAD100_HEALTH" \
 	"$ROOT_DIR/files/etc/init.d/tailscale-lan-tailnet" \
 	"$TAILSCALE_NIKKI_BOOT_GUARD"; do
 	grep -q 'logger ' "$helper" || {
 		echo "$helper must retain explicit logger-based observability"
 		exit 1
 	}
-done
+	done
+
+QUAD100_PROBE="$ROOT_DIR/files/usr/sbin/tailscale-quad100-health-probe"
+grep -Fq 'procd_set_param stdout 1' "$TAILSCALE_QUAD100_HEALTH" &&
+	grep -Fq 'procd_set_param stderr 1' "$TAILSCALE_QUAD100_HEALTH" &&
+	grep -Fq 'logger -t "$PROBE_TAG"' "$QUAD100_PROBE" || {
+	echo "Quad100 monitor must forward probe output and retain explicit logger events"
+	exit 1
+}
 
 tr -d '\r' < "$TAILSCALE_CONFIG" | grep -q "^	option disable_magic_dns '1'$" || {
   echo "default tailscale UCI config overlay is missing disable_magic_dns"
@@ -299,7 +306,7 @@ grep -q '/hs.jmsu.top/100.100.100.100@tailscale0' "$TAILSCALE_MAGICDNS_FORWARD" 
   exit 1
 }
 
-grep -q '100.100.100.100' "$TAILSCALE_QUAD100_HEALTH" || {
+grep -q '100.100.100.100' "$QUAD100_PROBE" || {
   echo "tailscale Quad100 health guard does not target Quad100"
   exit 1
 }

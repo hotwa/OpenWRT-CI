@@ -138,23 +138,25 @@ remote_exec() {
 }
 
 preflight_record() {
-	local record="$1" ssh_config="$2" id board cidr fqdn output remote_board remote_ip remote_mask remote_cidr remote_pref remote_dns remote_prefix
+	local record="$1" ssh_config="$2" id board cidr fqdn output remote_board remote_ip remote_mask remote_cidr remote_pref remote_dns remote_prefix remote_command
 	id="$(jq -r '.id' <<<"$record")"
 	board="$(jq -r '.board' <<<"$record")"
 	cidr="$(jq -r '.lan_cidr' <<<"$record")"
 	fqdn="$(jq -r '.magicdns' <<<"$record")"
 	valid_fqdn "$fqdn" || die "unsafe registry FQDN: $fqdn"
-
-	output="$(remote_exec "$ssh_config" "$fqdn" 'set -eu
+	remote_command='set -eu
 board="$(ubus call system board | jsonfilter -e "@.board_name")"
 status="$(ubus call network.interface.lan status)"
 lan_ip="$(printf "%s" "$status" | jsonfilter -e "@[\"ipv4-address\"][0].address")"
 lan_mask="$(printf "%s" "$status" | jsonfilter -e "@[\"ipv4-address\"][0].mask")"
+data_state="$(sed -n "s/^state=//p" /var/run/data-runtime.status 2>/dev/null | head -n 1)"
+[ "$data_state" = persistent ] || { echo "persistent /data runtime is unavailable" >&2; exit 1; }
+awk '\''$2 == "/data" && $1 ~ /^\/dev\// && $3 !~ /^(overlay|tmpfs|ramfs|squashfs)$/ { found = 1 } END { exit !found }'\'' /proc/mounts || { echo "block-backed /data mount is unavailable" >&2; exit 1; }
 pref="$(tailscale debug prefs | jsonfilter -e "@.Hostname")"
 dns="$(tailscale status --json | jsonfilter -e "@.Self.DNSName")"
 dns="${dns%.}"
-/usr/sbin/openwrt-ci-health --require data,wan,tailscale,magicdns,nikki >/dev/null
-	printf "%s\t%s\t%s\t%s\t%s\n" "$board" "$lan_ip" "$lan_mask" "$pref" "$dns"')" || die "cannot complete read-only preflight for $id ($fqdn)"
+printf "%s\t%s\t%s\t%s\t%s\n" "$board" "$lan_ip" "$lan_mask" "$pref" "$dns"'
+	output="$(remote_exec "$ssh_config" "$fqdn" "$remote_command")" || die "cannot complete read-only preflight for $id ($fqdn)"
 	IFS=$'\t' read -r remote_board remote_ip remote_mask remote_pref remote_dns <<<"$output"
 	case "$remote_mask" in
 		24|255.255.255.0) remote_prefix=24 ;;

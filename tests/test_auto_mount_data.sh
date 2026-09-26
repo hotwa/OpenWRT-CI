@@ -30,6 +30,18 @@ grep -Fq 'fstab.data.partuuid' "$SCRIPT" || {
 	echo "auto mount script does not support explicit PARTUUID opt-in"
 	exit 1
 }
+grep -Fq 'atomic_copy_file()' "$SCRIPT" || {
+	echo "auto mount migration lacks atomic copy helper"
+	exit 1
+}
+grep -Fq 'atomic_write_text()' "$SCRIPT" || {
+	echo "auto mount migration lacks atomic text helper"
+	exit 1
+}
+if grep -Eq '\.new(["[:space:]]|$)' "$SCRIPT"; then
+	echo "auto mount migration retains predictable fixed temporary filenames"
+	exit 1
+fi
 if grep -Fq 'fstab.data.device=' "$SCRIPT"; then
 	echo "auto mount script persists an unstable /dev path"
 	exit 1

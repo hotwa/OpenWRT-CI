@@ -7,7 +7,8 @@ DATA_DIR="/data/multica"
 RUNTIME_LOG_DIR="$DATA_DIR/logs"
 DAEMON_LOG="$DATA_DIR/daemon.log"
 RUNTIME_LOG="$RUNTIME_LOG_DIR/agent-runtime.log"
-LOCK_DIR="/var/run/multica-maintenance.lock"
+INVOCATION_LOCK_FILE="${INVOCATION_LOCK_FILE:-/var/lock/multica-log-hygiene.lock}"
+MAINTENANCE_LOCK_FILE="${MAINTENANCE_LOCK_FILE:-/var/lock/multica-maintenance.lock}"
 MAX_BYTES=8388608
 KEEP_ARCHIVES=7
 RETENTION_DAYS=14
@@ -66,13 +67,34 @@ prune_archives() {
 		done
 }
 
+needs_maintenance() {
+	local size archive_count
+	for log_file in "$DAEMON_LOG" "$RUNTIME_LOG"; do
+		size="$(file_size "$log_file")"
+		case "$size" in ''|*[!0-9]*) size=0 ;; esac
+		[ "$size" -gt "$MAX_BYTES" ] && return 0
+	done
+	[ -n "$(find "$DATA_DIR" -type f -name 'daemon-*.log.gz' -mtime "+$RETENTION_DAYS" -print -quit 2>/dev/null)" ] && return 0
+	archive_count="$(find "$DATA_DIR" -type f -name 'daemon-*.log.gz' -print 2>/dev/null | awk 'END { print NR + 0 }')"
+	case "$archive_count" in ''|*[!0-9]*) archive_count=0 ;; esac
+	[ "$archive_count" -gt "$KEEP_ARCHIVES" ] && return 0
+	return 1
+}
+
 main() {
 	[ -d "$DATA_DIR" ] || return 0
-	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-		log "another Multica maintenance task is already running; skipping"
+	mkdir -p "$(dirname "$INVOCATION_LOCK_FILE")" 2>/dev/null || true
+	exec 9>"$INVOCATION_LOCK_FILE" || { log "cannot open log hygiene invocation lock"; return 0; }
+	if ! flock -n 9; then
+		log "another log hygiene invocation is already running; skipping"
 		return 0
 	fi
-	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+	needs_maintenance || return 0
+	exec 8>"$MAINTENANCE_LOCK_FILE" || { log "cannot open maintenance mutation lock"; return 0; }
+	if ! flock -n 8; then
+		log "maintenance mutation is busy; log cleanup deferred"
+		return 0
+	fi
 
 	timestamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%S')"
 	archive="$DATA_DIR/daemon-$timestamp.log.gz"

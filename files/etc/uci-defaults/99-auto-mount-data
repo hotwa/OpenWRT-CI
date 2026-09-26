@@ -27,6 +27,24 @@ log_error() {
 	command -v logger >/dev/null 2>&1 && logger -t auto-mount-data -- "$*" || true
 }
 
+atomic_copy_file() {
+	local source="$1" target="$2" temporary
+	temporary="$(umask 077; mktemp "${target}.new.XXXXXX")" || return 1
+	if ! cp -p "$source" "$temporary" || ! mv -f "$temporary" "$target"; then
+		rm -f "$temporary"
+		return 1
+	fi
+}
+
+atomic_write_text() {
+	local target="$1" contents="$2" temporary
+	temporary="$(umask 077; mktemp "${target}.new.XXXXXX")" || return 1
+	if ! printf '%s\n' "$contents" >"$temporary" || ! mv -f "$temporary" "$target"; then
+		rm -f "$temporary"
+		return 1
+	fi
+}
+
 cleanup_lock() {
 	rmdir "$LOCK_DIR" 2>/dev/null || true
 }
@@ -321,9 +339,13 @@ detach_known_automount() {
 	fi
 	if [ "$TESTING" = "1" ]; then
 		[ "${AUTO_MOUNT_TEST_UMOUNT_FAIL:-0}" != "1" ] || return 1
-		awk -v source="$CANDIDATE_DEVICE" -v target="$expected" \
-			'!($1 == source && $2 == target)' "$MOUNTS_FILE" >"$MOUNTS_FILE.new.$$" || return 1
-		mv "$MOUNTS_FILE.new.$$" "$MOUNTS_FILE" || return 1
+		local temporary
+		temporary="$(umask 077; mktemp "${MOUNTS_FILE}.new.XXXXXX")" || return 1
+		if ! awk -v source="$CANDIDATE_DEVICE" -v target="$expected" \
+			'!($1 == source && $2 == target)' "$MOUNTS_FILE" >"$temporary" || ! mv -f "$temporary" "$MOUNTS_FILE"; then
+			rm -f "$temporary"
+			return 1
+		fi
 		return 0
 	fi
 	umount "$expected"
@@ -686,8 +708,8 @@ migrate_commandcode_provider() {
 	}
 	# Carry the build-injected auth.json onto /data so Pi finds it at runtime.
 	if [ ! -e "$data_auth" ]; then
-		( umask 077; cp -p "$firmware_auth" "$data_auth.new" ) || return 1
-		mv "$data_auth.new" "$data_auth" || return 1
+		atomic_copy_file "$firmware_auth" "$data_auth" || return 1
+		chmod 600 "$data_auth" 2>/dev/null || true
 	fi
 	mark_settings_firmware_managed
 	log_error "migrated existing Pi settings to CommandCode provider (model: $selected_model, backup: $backup)"
@@ -790,15 +812,12 @@ prepare_agent_storage() {
 	migrate_commandcode_provider || return 1
 
 	if [ -f "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
-		cp -p "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
-		cmp -s "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
-		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
+		atomic_copy_file "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
 	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json; do
 		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
-		cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
-		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
+		atomic_copy_file "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file" || return 1
 		if [ "$config_file" = "settings.json" ]; then
 			mark_settings_firmware_managed
 		fi
@@ -826,8 +845,8 @@ prepare_agent_storage() {
 				( umask 077; cp -p "$DATA_ROOT/commandcode/auth.json" \
 					"$DATA_ROOT/commandcode/auth.json.bak.$(date +%Y%m%d%H%M%S)" ) 2>/dev/null || true
 			fi
-			( umask 077; cp -p "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
-			mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
+			atomic_copy_file "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json" || return 1
+			chmod 600 "$DATA_ROOT/commandcode/auth.json" 2>/dev/null || true
 		fi
 	fi
 
@@ -846,9 +865,7 @@ prepare_agent_storage() {
 	subagent_cfg_dir="$DATA_ROOT/pi/agent/extensions/subagent"
 	if [ ! -e "$subagent_cfg_dir/config.json" ]; then
 		ensure_real_directory "$subagent_cfg_dir" || return 1
-		printf '%s\n' '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' \
-			> "$subagent_cfg_dir/config.json.new" || return 1
-		mv "$subagent_cfg_dir/config.json.new" "$subagent_cfg_dir/config.json" || return 1
+		atomic_write_text "$subagent_cfg_dir/config.json" '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' || return 1
 	fi
 
 	# cloudcollector API key placeholder. An empty file keeps the path stable

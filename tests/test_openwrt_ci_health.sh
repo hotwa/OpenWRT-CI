@@ -8,7 +8,7 @@ HEALTH="$ROOT_DIR/files/usr/sbin/openwrt-ci-health"
 sh -n "$HEALTH"
 grep -Fq '100.100.100.100' "$HEALTH"
 grep -Fq 'tailscale status --json' "$HEALTH"
-grep -Fq 'nslookup "$SELF_DNS_NAME" "$MAGICDNS_RESOLVER"' "$HEALTH"
+grep -Fq 'lookup_ipv4 "$SELF_DNS_NAME" "$MAGICDNS_RESOLVER"' "$HEALTH"
 grep -Fq 'nikki-dns-failopen' "$HEALTH"
 grep -Fq -- '--require data,wan,tailscale,magicdns,nikki' "$HEALTH"
 
@@ -53,9 +53,19 @@ cat >"$BIN_DIR/nslookup" <<'EOF'
 #!/bin/sh
 printf '%s %s\n' "${1:-}" "${2:-}" >>"${NSLOOKUP_LOG:?}"
 if [ "${MAGICDNS_LOOKUP_RC:-0}" = 0 ]; then
-  printf '%s\n' "Name: ${1:-}"
+  case "${MAGICDNS_LOOKUP_MODE:-valid}" in
+    valid) printf 'Name: %s\nAddress 1: 100.64.0.18\n' "${1:-}" ;;
+    wrong-name) printf 'Name: other.hs.jmsu.top\nAddress 1: 100.64.0.18\n' ;;
+    no-address) printf 'Name: %s\n' "${1:-}" ;;
+    resolver-only) printf 'Address 1: 100.100.100.100\n' ;;
+  esac
 fi
 exit "${MAGICDNS_LOOKUP_RC:-0}"
+EOF
+cat >"$BIN_DIR/agent-runtime" <<'EOF'
+#!/bin/sh
+[ "${COMMANDCODE_SKIP_UPDATES:-}" = 1 ] || exit 9
+printf '%s\n' "${AGENT_RUNTIME_REPORT:-{\"ok\":true,\"code\":\"ok\"}}"
 EOF
 cat >"$BIN_DIR/nikki-dns-failopen" <<'EOF'
 #!/bin/sh
@@ -71,16 +81,26 @@ MOUNTS_FILE="$WORK_DIR/mounts"
 DATA_STATUS="$WORK_DIR/data-runtime.status"
 NIKKI_CONFIG="$WORK_DIR/nikki"
 SUBSCRIPTION_STATUS="$WORK_DIR/nikki-subscription-sync.status"
+QUAD100_STATUS="$WORK_DIR/quad100-health.ok"
+RUNTIME_CHECK_STATUS="$WORK_DIR/agent-runtime-health.status"
+ROOT_SHADOW="$WORK_DIR/shadow"
 NSLOOKUP_LOG="$WORK_DIR/nslookup.log"
 touch "$NIKKI_CONFIG"
+printf 'state=ok\ntimestamp_epoch=%s\nfqdn=re-cs-02-s11.hs.jmsu.top\naddress=100.64.0.18\nreason=resolved\n' "$(date +%s)" >"$QUAD100_STATUS"
+printf 'root:$6$hash-that-must-not-leak:::::::\n' >"$ROOT_SHADOW"
 printf '/dev/sda1 %s ext4 rw 0 0\n' "$WORK_DIR/data" >"$MOUNTS_FILE"
 printf 'state=persistent\n' >"$DATA_STATUS"
+printf 'state=verified\ntimestamp_epoch=%s\ncode=ok\n' "$(date +%s)" >"$RUNTIME_CHECK_STATUS"
 
 run_health() {
   PATH="$BIN_DIR:$PATH" \
     OPENWRT_CI_HEALTH_DATA_ROOT="$WORK_DIR/data" \
     OPENWRT_CI_HEALTH_MOUNTS_FILE="$MOUNTS_FILE" \
     OPENWRT_CI_HEALTH_DATA_RUNTIME_STATUS_FILE="$DATA_STATUS" \
+    OPENWRT_CI_HEALTH_QUAD100_STATUS_FILE="$QUAD100_STATUS" \
+    OPENWRT_CI_HEALTH_ROOT_SHADOW_FILE="$ROOT_SHADOW" \
+    OPENWRT_CI_HEALTH_AGENT_RUNTIME_BIN="$BIN_DIR/agent-runtime" \
+    OPENWRT_CI_HEALTH_AGENT_RUNTIME_CHECK_STATUS_FILE="$RUNTIME_CHECK_STATUS" \
     OPENWRT_CI_HEALTH_NIKKI_CONFIG="$NIKKI_CONFIG" \
     OPENWRT_CI_HEALTH_NIKKI_SUBSCRIPTION_STATUS_FILE="$SUBSCRIPTION_STATUS" \
     OPENWRT_CI_HEALTH_NIKKI_DNS_FAILOPEN="$BIN_DIR/nikki-dns-failopen" \
@@ -97,9 +117,40 @@ grep -Fq '"protocol":"dhcp"' <<<"$output"
 grep -Fq '"accept_routes":true' <<<"$output"
 grep -Fq '"route_health":"healthy"' <<<"$output"
 grep -Fq '"magicdns":{"healthy":true,"resolver":"100.100.100.100"' <<<"$output"
+grep -Fq '"quad100":{"healthy":true,"state":"ok"' <<<"$output"
+grep -Fq '"agent_runtime":{"healthy":true,"verify":"verified","self_check":"verified","self_check_epoch":' <<<"$output"
+grep -Eq '"storage":\{"root_free_kib\":[0-9]+,"data_free_kib\":[0-9]+\}' <<<"$output"
+grep -Fq '"root_auth":{"password":"set"}' <<<"$output"
 grep -Fq '"nikki":{"healthy":true,"mode":"direct"}' <<<"$output"
 grep -Fq '"subscription":{"healthy":true,"configured":false,"result":"unconfigured"' <<<"$output"
 grep -Fxq 're-cs-02-s11.hs.jmsu.top 100.100.100.100' "$NSLOOKUP_LOG"
+grep -Fq 'COMMANDCODE_SKIP_UPDATES' "$HEALTH"
+
+if MAGICDNS_LOOKUP_MODE=wrong-name run_health --require magicdns >/dev/null; then
+  echo 'MagicDNS accepted an unrelated DNS answer' >&2
+  exit 1
+fi
+if MAGICDNS_LOOKUP_MODE=no-address run_health --require magicdns >/dev/null; then
+  echo 'MagicDNS accepted a response without an address' >&2
+  exit 1
+fi
+if MAGICDNS_LOOKUP_MODE=resolver-only run_health --require magicdns >/dev/null; then
+  echo 'MagicDNS accepted only the resolver address as an answer' >&2
+  exit 1
+fi
+
+printf 'state=failed\ntimestamp_epoch=%s\nfqdn=re-cs-02-s11.hs.jmsu.top\naddress=unknown\nreason=no-matching-address\n' "$(date +%s)" >"$QUAD100_STATUS"
+output="$(run_health --json)"
+grep -Fq '"quad100":{"healthy":false,"state":"failed"' <<<"$output"
+
+if AGENT_RUNTIME_REPORT='{"ok":false,"code":"health_failed"}' run_health --json --require runtime >/dev/null; then
+  echo 'degraded agent runtime unexpectedly passed a required health gate' >&2
+  exit 1
+fi
+if grep -Fq '$6$hash-that-must-not-leak' <<<"$output"; then
+  echo 'health JSON leaked the root password hash' >&2
+  exit 1
+fi
 
 output="$(UCI_WAN_PROTO=pppoe NIKKI_DNS_STATUS='health=healthy(via mihomo)' run_health --json)"
 grep -Fq '"protocol":"pppoe"' <<<"$output"

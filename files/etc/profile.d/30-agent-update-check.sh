@@ -23,7 +23,7 @@ print_agent_status() {
 		fi
 		[ -z "$python_v" ] && python_v="not ready"
 	fi
-	cmdc_v="$(cmdc --version 2>/dev/null || echo "not installed")"
+	cmdc_v="$(COMMANDCODE_SKIP_UPDATES=1 cmdc --version 2>/dev/null || echo "not installed")"
 	pi_v="$(pi --version 2>/dev/null || echo "not installed")"
 
 	printf "\n\033[1;36m┌──────────────────────────────────────────────────────────────┐\033[0m\n"

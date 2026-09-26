@@ -698,12 +698,17 @@ jobs:
           cp -f ./files/etc/data-runtime.env ./wrt/files/etc/data-runtime.env
           cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
           cp -f ./files/etc/init.d/agent-data-prep ./wrt/files/etc/init.d/agent-data-prep
+          cp -f ./files/etc/init.d/agent-runtime-baseline-readonly ./wrt/files/etc/init.d/agent-runtime-baseline-readonly
+          cp -f ./files/etc/init.d/agent-runtime-health-check ./wrt/files/etc/init.d/agent-runtime-health-check
+          cp -f ./files/etc/init.d/tailscale-quad100-health ./wrt/files/etc/init.d/tailscale-quad100-health
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/init.d/nikki-dns-failopen ./wrt/files/etc/init.d/nikki-dns-failopen
           cp -f ./files/etc/init.d/upgrade-tmp-capacity ./wrt/files/etc/init.d/upgrade-tmp-capacity
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
+          cp -f ./files/etc/uci-defaults/94-agent-runtime-baseline-readonly ./wrt/files/etc/uci-defaults/94-agent-runtime-baseline-readonly
+          cp -f ./files/etc/uci-defaults/95-agent-runtime-health-check ./wrt/files/etc/uci-defaults/95-agent-runtime-health-check
           cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
           cp -f ./files/etc/uci-defaults/96-samba-default-user ./wrt/files/etc/uci-defaults/96-samba-default-user
           cp -f ./files/etc/uci-defaults/99-nikki-subscription-cron ./wrt/files/etc/uci-defaults/99-nikki-subscription-cron
@@ -742,6 +747,9 @@ jobs:
           cp -f ./files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
+          cp -f ./files/usr/sbin/agent-runtime-health-check ./wrt/files/usr/sbin/agent-runtime-health-check
+          cp -f ./files/usr/sbin/tailscale-quad100-health-monitor ./wrt/files/usr/sbin/tailscale-quad100-health-monitor
+          cp -f ./files/usr/sbin/tailscale-quad100-health-probe ./wrt/files/usr/sbin/tailscale-quad100-health-probe
           cp -f ./files/usr/sbin/multica-maintenance-cron-reconcile ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile
           cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
@@ -750,6 +758,9 @@ jobs:
           cp -f ./files/usr/sbin/openwrt-upgrade-space ./wrt/files/usr/sbin/openwrt-upgrade-space
           chmod 0755 \
             ./wrt/files/etc/init.d/agent-data-prep \
+            ./wrt/files/etc/init.d/agent-runtime-baseline-readonly \
+            ./wrt/files/etc/init.d/agent-runtime-health-check \
+            ./wrt/files/etc/init.d/tailscale-quad100-health \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
@@ -762,6 +773,8 @@ jobs:
             ./wrt/files/etc/uci-defaults/99-enable-nikki-subscription-bootstrap \
             ./wrt/files/usr/sbin/nikki-subscription-sync \
             ./wrt/files/etc/uci-defaults/93-logd-ring-size \
+            ./wrt/files/etc/uci-defaults/94-agent-runtime-baseline-readonly \
+            ./wrt/files/etc/uci-defaults/95-agent-runtime-health-check \
             ./wrt/files/etc/uci-defaults/94-zram-swap-defaults \
             ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron \
             ./wrt/files/etc/uci-defaults/96-samba-default-user \
@@ -781,6 +794,9 @@ jobs:
             ./wrt/files/usr/sbin/agent-tools-link \
             ./wrt/files/usr/sbin/rclone-data-backup \
             ./wrt/files/usr/sbin/agent-runtime-auto-upgrade \
+            ./wrt/files/usr/sbin/agent-runtime-health-check \
+            ./wrt/files/usr/sbin/tailscale-quad100-health-monitor \
+            ./wrt/files/usr/sbin/tailscale-quad100-health-probe \
             ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile \
             ./wrt/files/usr/sbin/multica-log-hygiene \
             ./wrt/files/usr/sbin/multica-runtime-guard \

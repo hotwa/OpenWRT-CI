@@ -11,7 +11,8 @@ DATA_ROOT="${DATA_ROOT:-/data}"
 DATA_DIR="${DATA_DIR:-$DATA_ROOT/multica}"
 LOG_DIR="$DATA_DIR/logs"
 LOG_FILE="$LOG_DIR/agent-runtime.log"
-LOCK_DIR="${LOCK_DIR:-/var/run/multica-maintenance.lock}"
+AUTO_UPGRADE_LOCK_FILE="${AUTO_UPGRADE_LOCK_FILE:-/var/lock/agent-runtime-auto-upgrade.lock}"
+MAINTENANCE_LOCK_FILE="${MAINTENANCE_LOCK_FILE:-/var/lock/multica-maintenance.lock}"
 RUNTIME_BIN="${RUNTIME_BIN:-/usr/sbin/agent-runtime}"
 
 log() {
@@ -47,6 +48,17 @@ active_tasks() {
 	printf '%s' "$tasks" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"(queued|running|dispatched|in_progress|pending|started|active)"'
 }
 
+acquire_maintenance_lock() {
+	local attempt=0
+	exec 8>"$MAINTENANCE_LOCK_FILE" || return 1
+	while [ "$attempt" -lt 12 ]; do
+		flock -n 8 && return 0
+		attempt=$((attempt + 1))
+		sleep 5
+	done
+	return 1
+}
+
 main() {
 	local enabled check_output code upgrade_output
 	enabled="$(cfg auto_runtime_upgrade 1)"
@@ -57,11 +69,12 @@ main() {
 
 	[ -x "$RUNTIME_BIN" ] || { log "agent-runtime manager unavailable"; return 0; }
 	[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ] || { log "skipping runtime check because /data is unavailable"; return 0; }
-	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-		log "another Multica maintenance task is already running"
+	mkdir -p "$(dirname "$AUTO_UPGRADE_LOCK_FILE")" 2>/dev/null || true
+	exec 9>"$AUTO_UPGRADE_LOCK_FILE" || { log "cannot open automatic-upgrade lock"; return 0; }
+	if ! flock -n 9; then
+		log "another automatic runtime-upgrade check is already running"
 		return 0
 	fi
-	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
 	mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 	check_output="$("$RUNTIME_BIN" check --json 2>&1 || true)"
@@ -71,6 +84,10 @@ main() {
 		ok)
 			if active_tasks; then
 				log "new runtime available but an Agent task is active; deferring upgrade"
+				return 0
+			fi
+			if ! acquire_maintenance_lock; then
+				log "runtime upgrade deferred because another mutating maintenance action held the lock for 60 seconds"
 				return 0
 			fi
 			upgrade_output="$("$RUNTIME_BIN" upgrade --json 2>&1 || true)"

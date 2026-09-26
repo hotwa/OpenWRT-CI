@@ -6,6 +6,8 @@
 CRONTAB_FILE="${CRONTAB_FILE:-/etc/crontabs/root}"
 AUTO_UPGRADE_COMMAND='/usr/sbin/agent-runtime-auto-upgrade'
 AUTO_UPGRADE_NEW='7 3 * * * /usr/sbin/agent-runtime-auto-upgrade'
+RUNTIME_VERIFY_COMMAND='/usr/sbin/agent-runtime-health-check'
+RUNTIME_VERIFY_NEW='53 2 * * * /usr/sbin/agent-runtime-health-check'
 RUNTIME_GUARD='*/5 * * * * /usr/sbin/multica-runtime-guard #multica runtime guard'
 LOG_HYGIENE='*/30 * * * * /usr/sbin/multica-log-hygiene #multica log hygiene'
 
@@ -43,11 +45,12 @@ touch "$CRONTAB_FILE" || fail_cron_update "cannot create or update $CRONTAB_FILE
 # Comments and unrelated entries retain their original content.
 cron_tmp="$cron_dir/.${cron_name}.tmp.$$"
 (umask 077; : >"$cron_tmp") || fail_cron_update "cannot create temporary crontab"
-awk -v command="$AUTO_UPGRADE_COMMAND" '
-	$1 !~ /^#/ && $6 == command { next }
+awk -v upgrade="$AUTO_UPGRADE_COMMAND" -v verify="$RUNTIME_VERIFY_COMMAND" '
+	$1 !~ /^#/ && ($6 == upgrade || $6 == verify) { next }
 	{ print }
 ' "$CRONTAB_FILE" >"$cron_tmp" || fail_cron_update "cannot filter existing crontab"
 printf '%s\n' "$AUTO_UPGRADE_NEW" >>"$cron_tmp" || fail_cron_update "cannot append the canonical auto-upgrade schedule"
+printf '%s\n' "$RUNTIME_VERIFY_NEW" >>"$cron_tmp" || fail_cron_update "cannot append the runtime verification schedule"
 
 grep -Fq '#multica runtime guard' "$cron_tmp" 2>/dev/null
 grep_status=$?
@@ -71,6 +74,13 @@ awk -v command="$AUTO_UPGRADE_COMMAND" -v canonical="$AUTO_UPGRADE_NEW" '
 	}
 	END { exit !(owned == 1 && exact == 1) }
 ' "$cron_tmp" || fail_cron_update "staged crontab failed validation"
+awk -v command="$RUNTIME_VERIFY_COMMAND" -v canonical="$RUNTIME_VERIFY_NEW" '
+	$1 !~ /^#/ && $6 == command {
+		owned++
+		if ($0 == canonical) exact++
+	}
+	END { exit !(owned == 1 && exact == 1) }
+' "$cron_tmp" || fail_cron_update "staged runtime verification schedule failed validation"
 
 if cmp -s "$CRONTAB_FILE" "$cron_tmp"; then
 	cleanup_cron_tmp

@@ -125,9 +125,12 @@ required reviewer before allowing it to hold the deployment secrets.
 
 The manual `PREFLIGHT` route is read-only. It first requires a successful
 main-branch build run and then confirms the remote board, active LAN CIDR,
-local hostname preference, controller-assigned MagicDNS name, `/data`, WAN,
-Tailscale, MagicDNS, and Nikki. A legacy controller name therefore fails
-before any artifact is transferred.
+local hostname preference, controller-assigned MagicDNS name, and a persistent
+block-backed `/data` mount for image staging. A legacy controller name or
+missing data mount therefore fails before any artifact is transferred. Per
+request, CD does not run the `openwrt-ci-health` service-health checks for WAN,
+Tailscale, Nikki, or agent runtime; operators must verify those separately if
+they need service-level acceptance.
 
 When explicitly enabled after preflight, a run handles one device and is
 evidence-based. A future nightly orchestrator must dispatch devices in the
@@ -138,11 +141,11 @@ workflows:
 candidate build
   -> artifact metadata + SHA256SUMS validation
   -> resolve registry MagicDNS through the Tailnet
-  -> verify board, active LAN CIDR, Tailscale health, /data, and Nikki health
+  -> verify board, active LAN CIDR, MagicDNS identity, and persistent /data
   -> resumable SSH transfer
   -> remote SHA256 + sysupgrade -T
   -> sysupgrade -c
-  -> new boot ID + post-boot acceptance
+  -> new boot ID + firmware commit marker + identity recheck
 ```
 
 Every build artifact also carries `workflow_commit`, which identifies the
@@ -186,12 +189,14 @@ through an approved recovery path first. Losing `/data` means a new Tailscale
 identity may be enrolled.
 
 The resolver result is a locator, not authority to flash. Before every upgrade,
-the deployment job must compare the remote board name and advertised LAN CIDR
-against the inventory row and require:
-
-```sh
-openwrt-ci-health --require data,wan,tailscale,magicdns,nikki
-```
+the deployment job compares the remote board name and active LAN CIDR against
+the inventory row, verifies the fixed MagicDNS identity, and requires the
+`/data` runtime status to be `persistent` with `/data` mounted from a block
+device. After reboot it verifies a changed boot ID, the exact firmware commit
+marker, and the same device identity. It deliberately does not gate completion
+on WAN, Nikki, Tailscale service health, or agent runtime health. A successful
+CD run therefore means the image was installed and identity checks passed, not
+that those services were accepted as healthy.
 
 One failure stops the remainder of the fleet. Devices are never flashed in
 parallel. The deployment path receives `contents: read` and `actions: read`
