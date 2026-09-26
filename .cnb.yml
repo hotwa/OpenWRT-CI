@@ -1,4 +1,5 @@
-# Shadow CI only. No secret imports, release, deployment or device access.
+# Shadow CI only. Build credentials import only on the explicit manual gate.
+# No release, deployment or device access.
 # Keep this branch-scoped until CNB runner and artifact contracts are verified.
 "migration/cnb-shadow-20260926":
   push:
@@ -14,6 +15,18 @@
       stages:
         - name: Verify pinned RE-CS-07, RE-CS-02 and RE-SS-01 inputs
           script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py
+  # Manual private-build input gate only. No source build or artifact is claimed.
+  # Imports are absent from push, scheduled, and read-only profile tasks.
+  web_trigger_re_private_build:
+    - name: Verify RE private-build credential import without exposing values
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
   # CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
   # Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
   web_trigger_re_preflight:
