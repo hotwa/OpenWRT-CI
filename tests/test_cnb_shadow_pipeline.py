@@ -40,8 +40,8 @@ class ShadowPipelineTest(unittest.TestCase):
         one_shot = branch["push"][2]
         self.assertEqual(one_shot["docker"], {"image": "python:3.13-bookworm"})
         self.assertEqual(one_shot["stages"][0]["script"],
-                         "bash Scripts/cnb_bootstrap_environment.sh")
-        self.assertEqual(one_shot["stages"][0]["timeout"], "75m")
+                         "bash Scripts/cnb_source_probe.sh")
+        self.assertEqual(one_shot["stages"][0]["timeout"], "40m")
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
