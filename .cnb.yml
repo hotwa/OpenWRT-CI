@@ -8,25 +8,12 @@
       stages:
         - name: Inspect runner and run repository guards
           script: bash Scripts/cnb_shadow_probe.sh
-    - name: Read-only upstream NSS and kernel drift report
+    - name: Verify three RE build profiles without GitHub API calls
       docker:
         image: python:3.13-bookworm
       stages:
-        - name: Compare pinned sources to upstream history (no pin changes)
-          script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py
-          timeout: 8m
-        - name: Check image timezone package before builder selection
-          script: |
-            if dpkg-query -s tzdata >/dev/null 2>&1; then
-              echo 'python builder image has preinstalled tzdata'
-            else
-              echo 'python builder image lacks preinstalled tzdata'
-            fi
-            if mountpoint -q /etc/localtime; then
-              echo '/etc/localtime is a bind mount; tzdata postinst cannot replace it'
-            fi
-        - name: Verify RE-CS-07, RE-CS-02 and RE-SS-01 source and device pins
-          script: python3 Scripts/cnb_re_profile_preflight.py
+        - name: Verify pinned RE-CS-07, RE-CS-02 and RE-SS-01 inputs
+          script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py
   # CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
   # Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
   web_trigger_re_preflight:

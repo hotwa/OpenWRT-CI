@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class ShadowPipelineTest(unittest.TestCase):
-    def test_branch_scoped_probe_and_read_only_upstream_report(self):
+    def test_branch_scoped_profiles_and_weekly_upstream_report(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
         self.assertEqual(list(config), ["migration/cnb-shadow-20260926"])
         branch = config["migration/cnb-shadow-20260926"]
@@ -26,17 +26,12 @@ class ShadowPipelineTest(unittest.TestCase):
             pipeline["stages"][0]["script"], "bash Scripts/cnb_shadow_probe.sh"
         )
         self.assertEqual(set(pipeline["stages"][0]), {"name", "script"})
-        report = branch["push"][1]
-        self.assertEqual(set(report), {"name", "docker", "stages"})
-        self.assertEqual(report["docker"], {"image": "python:3.13-bookworm"})
-        self.assertEqual(len(report["stages"]), 3)
-        self.assertEqual(report["stages"][0]["script"],
-                         "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
-        self.assertEqual(report["stages"][0]["timeout"], "8m")
-        self.assertEqual(len(report["stages"]), 3)
-        self.assertIn("dpkg-query -s tzdata", report["stages"][1]["script"])
-        self.assertEqual(report["stages"][2]["script"],
-                         "python3 Scripts/cnb_re_profile_preflight.py")
+        profiles = branch["push"][1]
+        self.assertEqual(set(profiles), {"name", "docker", "stages"})
+        self.assertEqual(profiles["docker"], {"image": "python:3.13-bookworm"})
+        self.assertEqual(len(profiles["stages"]), 1)
+        self.assertEqual(profiles["stages"][0]["script"],
+                         "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
@@ -46,8 +41,12 @@ class ShadowPipelineTest(unittest.TestCase):
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
-        self.assertEqual(weekly["docker"], report["docker"])
-        self.assertEqual(weekly["stages"], report["stages"][:1])
+        self.assertEqual(weekly["docker"], profiles["docker"])
+        self.assertEqual(weekly["stages"], [
+            {"name": "Compare pinned sources to upstream history (no pin changes)",
+             "script": "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py",
+             "timeout": "8m"}
+        ])
         self.assertEqual(set(weekly), {"name", "docker", "stages"})
 
     def test_no_secret_release_or_device_actions(self):

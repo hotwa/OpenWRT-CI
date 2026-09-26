@@ -73,6 +73,14 @@ def latest_path_commit(fetch, repo, ref, path):
 
 
 def report(fetch=github_json, workflow_root=ROOT):
+    path_cache = {}
+
+    def cached_path(repo, ref, path):
+        key = (repo, ref, path)
+        if key not in path_cache:
+            path_cache[key] = latest_path_commit(fetch, repo, ref, path)
+        return path_cache[key]
+
     pins = {
         name: source_pin((workflow_root / filename).read_text(encoding="utf-8"))
         for name, filename in WORKFLOWS.items()
@@ -95,8 +103,8 @@ def report(fetch=github_json, workflow_root=ROOT):
     for name, item in pins.items():
         paths = {}
         for path in WATCH_PATHS:
-            pinned = latest_path_commit(fetch, SOURCE_REPO, item["pin"], path)
-            current = latest_path_commit(fetch, SOURCE_REPO, head, path)
+            pinned = cached_path(SOURCE_REPO, item["pin"], path)
+            current = cached_path(SOURCE_REPO, head, path)
             paths[path] = {
                 "pinned_last_change": pinned,
                 "head_last_change": current,
@@ -114,8 +122,8 @@ def report(fetch=github_json, workflow_root=ROOT):
         "branch": original_branch,
         "head": original_head,
         # No production fork ancestry is assumed; this is NOT a safe merge proposal.
-        "qualcommax_last_change": latest_path_commit(fetch, original, original_head, "target/linux/qualcommax"),
-        "kernel_metadata_last_change": latest_path_commit(fetch, original, original_head, "include/kernel-version.mk"),
+        "qualcommax_last_change": cached_path(original, original_head, "target/linux/qualcommax"),
+        "kernel_metadata_last_change": cached_path(original, original_head, "include/kernel-version.mk"),
     }
     candidate = "davidtall/immortalwrt"
     candidate_branch = "stable"

@@ -49,7 +49,7 @@ class UpstreamReportTests(unittest.TestCase):
             self.assertTrue(actual["devices"]["RE-CS-07"]["source_advanced"])
             self.assertTrue(actual["devices"]["RE-CS-07"]["paths"]["package/qca-nss"]["changed"])
             self.assertFalse(actual["devices"]["CPE-5G"]["paths"]["target/linux/qualcommax"]["changed"])
-            self.assertEqual(len(requested), 17)
+            self.assertEqual(len(requested), 11)  # both fixture profiles share a pin
             self.assertEqual(sorted(p.name for p in root.rglob("*")),
                              sorted([Path(p).name for p in reporter.WORKFLOWS.values()] + ["workflows", ".github"]))
 
