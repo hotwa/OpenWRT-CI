@@ -57,4 +57,6 @@ GitHub repo secret 名称存在：`AGENT_RUNTIME_USIGN_SECRET_KEY`、`CLIPROXYAP
 4. **单设备受控 CD**：需用户再次明确授权真实设备操作、独立审批、严格 host key pin、每设备串行锁；顺序校验目标、`sysupgrade -T`、升级后新 boot ID/commit marker/data/WAN/Tailscale/MagicDNS/Nikki，模糊升级或 post-boot 失败立即停止，不自动重刷。回滚使用经批准的物理/独立救援路径，绝不盲目刷写。
 5. **夜间只构建，再多设备**：先经批准时区的只构建 schedule、连续多轮成功/产物校验；按设备依次实机验收后才讨论自动 CD（默认关闭），记录费用/超时与回退。只有用户确认全链路切换后才考虑停止对应 GitHub 工作流，绝不自动删除 workflow、secrets、分支保护或旧产物。
 
-**当前停点**：浏览器和本机 Git 已可访问，CNB 私有构建仓库仍为空；密钥注入方式、任务级隔离及审批/锁仍未证实。不存在可报告的 CNB run ID 或固件校验结果。不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。
+**阶段 0 无密钥试点（2026-09-26）**：仅在 `migration/cnb-shadow-*` 的 `push` 定义 `.cnb.yml`，运行 `Scripts/cnb_shadow_probe.sh` 盘点 runner 并执行缓存身份、RE-CS-07 工作流和 CI 权限边界三个短测。没有 `imports`、PR/schedule/release/CD、设备连接或固件编译；并在测试进程清除 CNB 内建临时 token。`tests/test_cnb_shadow_pipeline.py` 静态约束该范围。先推送可信公开 GitHub 基线到 CNB 私有仓 `main`（该基线无 CNB 配置），再推送迁移分支触发试点，记录实际 run 链接和机器资源；即使此试点成功，也不代表固件构建完成。
+
+**当前停点**：浏览器和本机 Git 已可访问，CNB 私有构建仓库待推送；密钥注入方式、任务级隔离及审批/锁仍未证实。尚无 CNB 固件校验结果；不得用“已经写出 YAML”或“创建了空仓”充当迁移完成。

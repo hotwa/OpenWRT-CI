@@ -1,0 +1,10 @@
+# Shadow CI only. No secret imports, release, deployment or device access.
+# Keep this branch-scoped until CNB runner and artifact contracts are verified.
+"migration/cnb-shadow-*":
+  push:
+    - name: OpenWrt shadow runner and guard probe
+      docker:
+        image: ubuntu:24.04
+      stages:
+        - name: Inspect runner and run repository guards
+          script: bash Scripts/cnb_shadow_probe.sh
