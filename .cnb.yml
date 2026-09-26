@@ -15,3 +15,14 @@
         - name: Compare pinned sources to upstream history (no pin changes)
           script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py
           timeout: 8m
+# CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
+# Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
+"migration/cnb-shadow-20260926":
+  "crontab: 0 9 * * 0":
+    - name: Weekly read-only upstream NSS and kernel drift report
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Compare pinned sources to upstream history (no pin changes)
+          script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py
+          timeout: 8m

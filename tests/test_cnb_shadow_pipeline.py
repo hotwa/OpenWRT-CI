@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class ShadowPipelineTest(unittest.TestCase):
     def test_branch_scoped_probe_and_read_only_upstream_report(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
-        self.assertEqual(list(config), ["migration/cnb-shadow-*"])
+        self.assertEqual(list(config), ["migration/cnb-shadow-*", "migration/cnb-shadow-20260926"])
         branch = config["migration/cnb-shadow-*"]
         self.assertEqual(list(branch), ["push"])
         self.assertEqual(len(branch["push"]), 2)
@@ -31,6 +31,13 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(report["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
         self.assertEqual(report["stages"][0]["timeout"], "8m")
+        scheduled = config["migration/cnb-shadow-20260926"]
+        self.assertEqual(list(scheduled), ["crontab: 0 9 * * 0"])
+        self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
+        weekly = scheduled["crontab: 0 9 * * 0"][0]
+        self.assertEqual(weekly["docker"], report["docker"])
+        self.assertEqual(weekly["stages"], report["stages"])
+        self.assertEqual(set(weekly), {"name", "docker", "stages"})
 
     def test_no_secret_release_or_device_actions(self):
         text = (ROOT / ".cnb.yml").read_text(encoding="utf-8")
