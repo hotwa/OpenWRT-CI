@@ -58,7 +58,7 @@
         - name: Install pinned workflow YAML parser
           script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
           timeout: 10m
-        - name: Create non-root OpenWrt builder with sudo-only Samba generator
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
           script: bash Scripts/cnb_re_builder_user.sh
           timeout: 10m
         - name: Replay guarded GitHub build steps through private firmware package verification
