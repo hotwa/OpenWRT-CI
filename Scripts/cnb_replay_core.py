@@ -193,7 +193,24 @@ def check_metadata(env):
                     str(upload), env["WRT_EXPECTED_DEVICE"]], check=True, cwd=ROOT, env=env)
 
 
+def pin_github_cpu_count():
+    """Match GitHub's four build CPUs while retaining CNB's 16 GiB quota.
+
+    CNB allocates memory as cpus * 2 GiB; requesting only four CPUs
+    would halve available memory. Affinity propagates to make and its
+    children, so the unchanged GitHub `make -j$(nproc)` uses four jobs.
+    """
+    available = sorted(os.sched_getaffinity(0))
+    if len(available) < 4:
+        raise BuildGateError("CNB builder has fewer than four available CPUs")
+    os.sched_setaffinity(0, available[:4])
+    if len(os.sched_getaffinity(0)) != 4:
+        raise BuildGateError("CNB builder CPU affinity is not four CPUs")
+    print("CNB build CPU affinity: four GitHub-equivalent CPUs", flush=True)
+
+
 def run(name):
+    pin_github_cpu_count()
     steps = workflow_steps()
     inputs = profile_inputs(name)
     secrets = secret_env(os.environ)

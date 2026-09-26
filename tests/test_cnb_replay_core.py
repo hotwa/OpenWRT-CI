@@ -14,6 +14,15 @@ import cnb_replay_core as core  # noqa: E402
 
 
 class CnbReplayCoreTest(unittest.TestCase):
+    def test_build_affinity_matches_four_cpu_github_runner(self):
+        with patch.object(core.os, "sched_getaffinity", side_effect=[{3, 5, 7, 9, 11}, {3, 5, 7, 9}], create=True), \
+                patch.object(core.os, "sched_setaffinity", create=True) as set_affinity:
+            core.pin_github_cpu_count()
+            set_affinity.assert_called_once_with(0, [3, 5, 7, 9])
+        with patch.object(core.os, "sched_getaffinity", return_value={3, 5, 7}, create=True):
+            with self.assertRaises(core.BuildGateError):
+                core.pin_github_cpu_count()
+
     def test_only_reviewed_original_run_steps(self):
         found = core.workflow_steps()
         self.assertEqual(len(core.STEPS), len(set(core.STEPS)))

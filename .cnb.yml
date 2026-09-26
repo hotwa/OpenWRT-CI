@@ -30,12 +30,6 @@
         - name: Verify official archive hashes and installed host toolchains
           script: bash Scripts/cnb_host_runtime.sh
           timeout: 20m
-        # Diagnostic only: short timeout must end sleep before its 30s exit.
-        # No imported credentials, firmware, publication, or device access.
-        - name: Diagnose CNB job timeout interpretation
-          script: sleep 30; echo 'ERROR CNB string timeout not enforced'; exit 1
-          timeout: 15s
-          allowFailure: true
   # Attachment smoke uses a synthetic text file; no credentials or firmware.
   web_trigger_re_attachment_probe:
     - name: Probe private repository commit attachments without firmware
