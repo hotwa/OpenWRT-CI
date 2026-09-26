@@ -124,9 +124,10 @@ remote_exec() {
 REMOTE_PREFLIGHT_COMMAND_FILE="$WORK_DIR/cs02-remote-command"
 CS02_RECORD="$(jq -c '.devices[] | select(.id == "cs02-11")' "$INVENTORY")"
 preflight_record "$CS02_RECORD" "$WORK_DIR/unused-ssh-config" >/dev/null
-grep -Fq -- '--require data,wan,tailscale,magicdns,nikki' "$REMOTE_PREFLIGHT_COMMAND_FILE"
-if grep -Fq ',runtime' "$REMOTE_PREFLIGHT_COMMAND_FILE"; then
-	echo "non-CS07 device preflight unexpectedly requires the runtime extension" >&2
+grep -Fq '[ "$data_state" = persistent ]' "$REMOTE_PREFLIGHT_COMMAND_FILE"
+grep -Fq 'block-backed /data mount is unavailable' "$REMOTE_PREFLIGHT_COMMAND_FILE"
+if grep -Fq 'openwrt-ci-health' "$REMOTE_PREFLIGHT_COMMAND_FILE"; then
+	echo "CD preflight unexpectedly runs service health checks" >&2
 	exit 1
 fi
 remote_exec() {
@@ -135,7 +136,12 @@ remote_exec() {
 }
 CS07_RECORD="$(jq -c '.devices[] | select(.id == "cs07-10")' "$INVENTORY")"
 preflight_record "$CS07_RECORD" "$WORK_DIR/unused-ssh-config" >/dev/null
-grep -Fq -- '--require data,wan,tailscale,magicdns,nikki,runtime' "$REMOTE_PREFLIGHT_COMMAND_FILE"
+grep -Fq '[ "$data_state" = persistent ]' "$REMOTE_PREFLIGHT_COMMAND_FILE"
+grep -Fq 'block-backed /data mount is unavailable' "$REMOTE_PREFLIGHT_COMMAND_FILE"
+if grep -Fq 'openwrt-ci-health' "$REMOTE_PREFLIGHT_COMMAND_FILE"; then
+	echo "CS07 CD preflight unexpectedly runs service health checks" >&2
+	exit 1
+fi
 remote_exec() {
 	printf 'jdcloud,re-cs-02\t192.168.13.1\t24\tcs02-11\tcs02-11.hs.jmsu.top\n'
 }

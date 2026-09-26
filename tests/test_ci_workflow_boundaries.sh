@@ -128,9 +128,13 @@ grep -Fq 'sysupgrade -c' "$CD_SCRIPT" || {
   echo "firmware CD must retain configuration during sysupgrade" >&2
   exit 1
 }
-grep -Fq "requirements='data,wan,tailscale,magicdns,nikki'" "$CD_SCRIPT" &&
-  grep -Fq '/usr/sbin/openwrt-ci-health --require __HEALTH_REQUIREMENTS__' "$CD_SCRIPT" || {
-  echo "firmware CD must construct the required pre/post upgrade health check" >&2
+if grep -Fq 'openwrt-ci-health' "$CD_SCRIPT"; then
+  echo "firmware CD health checks must remain disabled by request" >&2
+  exit 1
+fi
+grep -Fq '[ "$data_state" = persistent ]' "$CD_SCRIPT" &&
+  grep -Fq 'block-backed /data mount is unavailable' "$CD_SCRIPT" || {
+  echo "firmware CD must keep the /data image-staging prerequisite" >&2
   exit 1
 }
 upgrade_body="$(sed -n '/^upgrade_record() {/,/^}/p' "$CD_SCRIPT")"
