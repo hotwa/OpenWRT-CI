@@ -49,7 +49,8 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(runtime["stages"][0]["script"], "bash Scripts/cnb_host_runtime.sh")
         attachment = scheduled["web_trigger_re_attachment_probe"][0]
         self.assertNotIn("imports", attachment)
-        self.assertEqual(attachment["stages"][1]["image"], "cnbcool/attachments:latest")
+        self.assertEqual(attachment["stages"][1]["image"],
+                         "cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0")
         self.assertEqual(attachment["stages"][1]["settings"]["attachments"],
                          {"./cnb-attachment-probe.txt": 1})
         private = scheduled["web_trigger_re_private_build"][0]

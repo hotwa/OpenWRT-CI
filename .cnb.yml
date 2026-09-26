@@ -33,7 +33,7 @@
         - name: Create synthetic test payload
           script: printf 'CNB attachment probe only (not firmware)\n' > ./cnb-attachment-probe.txt
         - name: Test CNB attachments plugin for manual custom events
-          image: cnbcool/attachments:latest
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
           settings:
             attachments:
               ./cnb-attachment-probe.txt: 1
