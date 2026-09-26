@@ -32,7 +32,16 @@ class ShadowPipelineTest(unittest.TestCase):
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_upstream_report.py")
         self.assertEqual(report["stages"][0]["timeout"], "8m")
         scheduled = config["migration/cnb-shadow-20260926"]
-        self.assertEqual(list(scheduled), ["crontab: 0 9 * * 0"])
+        self.assertEqual(list(scheduled), [
+            "web_trigger_re_preflight", "web_trigger_re_bootstrap", "crontab: 0 9 * * 0"
+        ])
+        manual = scheduled["web_trigger_re_preflight"][0]
+        self.assertEqual(manual["stages"][0]["script"],
+                         "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
+        bootstrap = scheduled["web_trigger_re_bootstrap"][0]
+        self.assertEqual(bootstrap["docker"], {"image": "ubuntu:24.04"})
+        self.assertIn("Scripts/ci_init_environment.sh", bootstrap["stages"][0]["script"])
+        self.assertNotIn("./wrt/", bootstrap["stages"][0]["script"])
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], report["docker"])
@@ -44,7 +53,7 @@ class ShadowPipelineTest(unittest.TestCase):
         probe = (ROOT / "Scripts/cnb_shadow_probe.sh").read_text(encoding="utf-8")
         for pattern in (
             r"\bimports\s*:", r"\binclude\s*:", r"\benv\s*:",
-            r"\bpull_request\s*:", r"\bweb_trigger\w*\s*:",
+            r"\bpull_request\s*:",
             r"\b(schedule|tag_push|api_trigger)\s*:",
             r"\b(cnb:apply|cnb:trigger|docker:cache)\b",
         ):
@@ -53,6 +62,15 @@ class ShadowPipelineTest(unittest.TestCase):
         for command in ("ssh ", "scp ", "sysupgrade ", "curl ", "wget "):
             self.assertNotIn(command, probe)
         self.assertRegex(probe, re.compile(r"bash \"\$test_script\""))
+        buttons = yaml.safe_load((ROOT / ".cnb/web_trigger.yml").read_text(encoding="utf-8"))
+        self.assertEqual(len(buttons["branch"]), 1)
+        self.assertEqual(buttons["branch"][0]["reg"], "^migration/cnb-shadow-20260926$")
+        self.assertEqual({b["event"] for b in buttons["branch"][0]["buttons"]},
+                         {"web_trigger_re_preflight", "web_trigger_re_bootstrap"})
+        for button in buttons["branch"][0]["buttons"]:
+            self.assertEqual(button["permissions"], {"users": ["zeng"]})
+            self.assertNotIn("inputs", button)
+            self.assertNotIn("env", button)
 
 
 if __name__ == "__main__":

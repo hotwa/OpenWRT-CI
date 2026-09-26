@@ -1,6 +1,6 @@
 # CNB secret 待填清单（只有名称；**此文件不得填写值**）
 
-当前只有无密钥的 CNB 探针和上游差异报告。`b2233/cloud-secret` 既有文件不读取、不覆盖。CNB 的 `imports` 会把密钥仓库的 YAML/JSON 内容作为环境变量注入任务；**密钥仓库中的 YAML/JSON 本身仍可能是对有权限者可见的明文源码**。此前禁止在 cloud-secret 明文 YAML 存放真实值的要求仍有效。用户若决定改变该要求，应先明确可接受的存储/加密方式、访问角色、审计和分支保护；不要通过聊天发送值，也不要在本仓库提交值。
+当前已在登录的 CNB Web UI **仅检查** `b2233/cloud-secret/projects/openwrt-ci/env.build.yml` 的键名及 ACL，未查看/输出值或改写现有文件；授权规则与分支保护阻塞项见 [`cnb-secret-import-plan.md`](cnb-secret-import-plan.md)。CNB 的 `imports` 把密钥仓库 YAML/JSON 注入环境变量；文件内容可能对获授权的仓库角色可见。用户本次批准规划引用现有密钥仓库，但**尚未授权放宽 ACL、开放不受保护的分支或在本仓库复制值**。不要通过聊天发送值或在构建仓库提交值。
 
 ## 第一阶段：默认 RE-CS-07（DHCP、`WRT_BUILD_ONLY=true`、无 debug）
 
