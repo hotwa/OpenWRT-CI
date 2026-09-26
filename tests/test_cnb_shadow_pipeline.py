@@ -70,7 +70,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual({b["event"] for b in buttons["branch"][0]["buttons"]},
                          {"web_trigger_re_preflight", "web_trigger_re_bootstrap"})
         for button in buttons["branch"][0]["buttons"]:
-            self.assertEqual(button["permissions"], {"users": ["zeng"]})
+            self.assertNotIn("permissions", button)  # CNB still requires repository write permission
             self.assertNotIn("inputs", button)
             self.assertNotIn("env", button)
 

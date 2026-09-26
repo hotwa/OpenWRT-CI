@@ -6,12 +6,6 @@ branch:
       - name: Check three RE build profiles (no firmware)
         description: Verify pinned source, device configs and build-only flags
         event: web_trigger_re_preflight
-        permissions:
-          users:
-            - zeng
       - name: Test firmware builder prerequisites (no firmware)
         description: Install host dependencies in an ephemeral Ubuntu container
         event: web_trigger_re_bootstrap
-        permissions:
-          users:
-            - zeng
