@@ -17,7 +17,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(list(branch), [
             "push", "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
-        self.assertEqual(len(branch["push"]), 2)
+        self.assertEqual(len(branch["push"]), 3)
         pipeline = branch["push"][0]
         self.assertEqual(set(pipeline), {"name", "docker", "stages"})
         self.assertEqual(pipeline["docker"], {"image": "ubuntu:24.04"})
@@ -37,6 +37,11 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertIn("dpkg-query -s tzdata", report["stages"][1]["script"])
         self.assertEqual(report["stages"][2]["script"],
                          "python3 Scripts/cnb_re_profile_preflight.py")
+        one_shot = branch["push"][2]
+        self.assertEqual(one_shot["docker"], {"image": "python:3.13-bookworm"})
+        self.assertEqual(one_shot["stages"][0]["script"],
+                         "bash Scripts/cnb_bootstrap_environment.sh")
+        self.assertEqual(one_shot["stages"][0]["timeout"], "75m")
         scheduled = branch
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
