@@ -88,6 +88,12 @@ REFERENCED_NOT_IN_INVENTORY = (
     "OPENWRT_WAN_PPPOE_USERNAME", "OPENWRT_WAN_PPPOE_PASSWORD",
     "MULTICA_SERVER_URL", "MULTICA_APP_URL",
 )
+# Observed state (names only) from a read-only repository listing on 2026-09-27:
+# the four names above are referenced by workflows but are not defined as
+# repository secrets, so an empty value in the CNB file reproduces GitHub.
+OBSERVED_UNSET = REFERENCED_NOT_IN_INVENTORY
+OBSERVED_AT = "2026-09-27"
+
 
 PURPOSE = {
     "SAMBA_DEFAULT_PASSWORD": "Samba build credential used by every firmware profile",
@@ -242,8 +248,9 @@ def render_template():
         "# Reconciliation notes (names only):",
         "#   present in the GitHub inventory but referenced by no workflow: "
         + ", ".join(info["inventory_not_referenced"]),
-        "#   referenced by workflows but absent from the provided inventory: "
+        "#   referenced by workflows but absent from the repository secret list: "
         + ", ".join(info["referenced_not_in_inventory"]),
+        f"#   (observed unset at {OBSERVED_AT}; leave them empty to match GitHub)", 
         "",
     ]
     return "\n".join(lines)
