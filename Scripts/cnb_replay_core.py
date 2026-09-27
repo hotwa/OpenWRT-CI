@@ -194,19 +194,32 @@ def check_metadata(env):
 
 
 def pin_github_cpu_count():
-    """Match GitHub's four build CPUs while retaining CNB's 16 GiB quota.
+    """Match GitHub's four build CPUs unless the devbox asks for all of them.
 
     CNB allocates memory as cpus * 2 GiB; requesting only four CPUs
     would halve available memory. Affinity propagates to make and its
     children, so the unchanged GitHub `make -j$(nproc)` uses four jobs.
+
+    A devbox long-compile run sets CNB_REPLAY_CPU_PIN=native to keep every
+    allocated CPU: the firmware bytes do not depend on the job count, only
+    the wall clock does, and the build pipeline's 120 minute cap is the
+    reason the devbox route exists.
     """
+    requested = os.environ.get("CNB_REPLAY_CPU_PIN", "4").strip().lower()
     available = sorted(os.sched_getaffinity(0))
     if len(available) < 4:
         raise BuildGateError("CNB builder has fewer than four available CPUs")
-    os.sched_setaffinity(0, available[:4])
-    if len(os.sched_getaffinity(0)) != 4:
-        raise BuildGateError("CNB builder CPU affinity is not four CPUs")
-    print("CNB build CPU affinity: four GitHub-equivalent CPUs", flush=True)
+    if requested in ("native", "all"):
+        print(f"CNB build CPU affinity: native ({len(available)} CPUs)", flush=True)
+        return
+    if not requested.isdigit() or not 1 <= int(requested) <= len(available):
+        raise BuildGateError(
+            "CNB_REPLAY_CPU_PIN must be a CPU count within the allocation or 'native'")
+    pinned = int(requested)
+    os.sched_setaffinity(0, available[:pinned])
+    if len(os.sched_getaffinity(0)) != pinned:
+        raise BuildGateError("CNB builder CPU affinity is not the requested count")
+    print(f"CNB build CPU affinity: {pinned} CPUs", flush=True)
 
 
 def run(name):

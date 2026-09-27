@@ -16,7 +16,7 @@ class ShadowPipelineTest(unittest.TestCase):
         branch = config["migration/cnb-shadow-20260926"]
         self.assertEqual(list(branch), [
             "push", "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
-            "web_trigger_re_private_build",
+            "web_trigger_re_private_build", "vscode",
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
         self.assertEqual(len(branch["push"]), 2)
@@ -38,6 +38,7 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(set(scheduled) - {"push"}, {
             "web_trigger_re_preflight", "web_trigger_re_private_build",
             "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
+            "vscode",
             "crontab: 0 9 * * 0"
         })
         manual = scheduled["web_trigger_re_preflight"][0]
@@ -86,6 +87,28 @@ class ShadowPipelineTest(unittest.TestCase):
              "timeout": "8m"}
         ])
         self.assertEqual(set(weekly), {"name", "docker", "stages"})
+
+    def test_devbox_long_compile_is_branch_scoped_and_bounded(self):
+        config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
+        # The devbox must stay a branch-scoped event, never a global "$" entry.
+        self.assertNotIn("$", config)
+        devbox = config["migration/cnb-shadow-20260926"]["vscode"][0]
+        self.assertEqual(set(devbox), {"name", "imports", "runner", "services", "docker", "stages"})
+        self.assertEqual(devbox["imports"], [
+            "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
+        ])
+        self.assertEqual(devbox["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
+        self.assertEqual(devbox["services"], ["vscode", "docker"])
+        self.assertEqual(len(devbox["stages"]), 2)
+        self.assertEqual(devbox["stages"][1]["script"], "bash Scripts/cnb_devbox_run.sh")
+        script = (ROOT / "Scripts/cnb_devbox_run.sh").read_text(encoding="utf-8")
+        # Long compile must survive a stage timeout, keep every CPU, and never
+        # print the imported Samba credential.
+        self.assertIn("setsid", script)
+        self.assertIn("CNB_REPLAY_CPU_PIN=native", script)
+        self.assertIn('set +x', script)
+        self.assertIn('SAMBA_DEFAULT_PASSWORD', script)
+        self.assertNotIn('echo "$SAMBA_DEFAULT_PASSWORD"', script)
 
     def test_no_secret_release_or_device_actions(self):
         text = (ROOT / ".cnb.yml").read_text(encoding="utf-8")

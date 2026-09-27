@@ -23,6 +23,17 @@ class CnbReplayCoreTest(unittest.TestCase):
             with self.assertRaises(core.BuildGateError):
                 core.pin_github_cpu_count()
 
+    def test_devbox_can_keep_every_allocated_cpu(self):
+        with patch.dict(core.os.environ, {"CNB_REPLAY_CPU_PIN": "native"}), \
+                patch.object(core.os, "sched_getaffinity", return_value={3, 5, 7, 9, 11}, create=True), \
+                patch.object(core.os, "sched_setaffinity", create=True) as set_affinity:
+            core.pin_github_cpu_count()
+            set_affinity.assert_not_called()
+        with patch.dict(core.os.environ, {"CNB_REPLAY_CPU_PIN": "99"}), \
+                patch.object(core.os, "sched_getaffinity", return_value={3, 5, 7, 9}, create=True):
+            with self.assertRaises(core.BuildGateError):
+                core.pin_github_cpu_count()
+
     def test_only_reviewed_original_run_steps(self):
         found = core.workflow_steps()
         self.assertEqual(len(core.STEPS), len(set(core.STEPS)))

@@ -82,6 +82,36 @@
             attachments:
               - ./wrt/upload/*
             ttl: 14
+  # Manual, interactive long-compile dev environment (云原生开发). The observed
+  # build-pipeline cap is 120 minutes, so the same private RE-CS-07 replay also
+  # runs here: it consumes 云原生开发 quota instead of 云原生构建 quota, keeps every
+  # allocated CPU, and only hides/streams the log of the detached build. The
+  # import is the same build credential file as the manual build job; no release,
+  # deployment or device access, and no other event may import secrets.
+  vscode:
+    - name: RE-CS-07 devbox compile (interactive, no release or device)
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      services:
+        - vscode
+        - docker
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Prepare dependencies, host toolchain and builder user
+          script: |
+            bash Scripts/cnb_re_private_input_gate.sh
+            bash Scripts/cnb_bootstrap_environment.sh
+            bash Scripts/cnb_host_runtime.sh
+            python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+            bash Scripts/cnb_re_builder_user.sh
+          timeout: 90m
+        - name: Run the pinned RE-CS-07 replay inside the devbox
+          script: bash Scripts/cnb_devbox_run.sh
+          timeout: 12h
   # CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
   # Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
   web_trigger_re_preflight:
