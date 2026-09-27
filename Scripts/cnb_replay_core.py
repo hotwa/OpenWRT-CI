@@ -50,6 +50,8 @@ STEPS = (
     "Package Firmware",
 )
 ALLOWED_OUTPUT = re.compile(r"^(?:WRT_[A-Z0-9_]+|GOPROXY|GOSUMDB|GO_INSTALLED)$")
+RUNTIME_MODES = ("prebuilt", "auto", "openwrt")
+RUNTIME_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,40}$")
 EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 SENSITIVE = (
     "SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY", "MULTICA_TOKEN",
@@ -99,8 +101,11 @@ def profile_inputs(name):
             value = profile["lan"]
         elif key == "WRT_WAN_PROTOCOL" and value == "${{ inputs.WAN_PROTOCOL || 'dhcp' }}":
             value = "dhcp"
-        elif key == "DEBUG_SSH" and value == "${{ inputs.DEBUG_SSH }}":
-            value = "false"  # Never hold or enroll a CNB builder.
+        elif key == "DEBUG_SSH" and value in (
+                "${{ inputs.DEBUG_SSH }}", "${{ inputs.DEBUG_SSH || false }}"):
+            # Both are the GitHub caller's false default; a CNB builder is never
+            # held open or enrolled into the Tailnet.
+            value = "false"
         if value is None:
             value = ""
         value = str(value).lower() if isinstance(value, bool) else str(value)
@@ -222,10 +227,42 @@ def pin_github_cpu_count():
     print(f"CNB build CPU affinity: {pinned} CPUs", flush=True)
 
 
+def runtime_overrides():
+    """Allow-audited container runtime mode/version for runtime-test entries.
+
+    The audited private build keeps the caller's prebuilt, version-free default
+    (still enforced by profile_inputs). A runtime-test pipeline may opt in with
+    CNB_REPLAY_RUNTIME_MODE / CNB_REPLAY_RUNTIME_VERSION; both values are
+    validated here so a variant can never smuggle an arbitrary image reference
+    or path into the firmware.
+    """
+    mode = os.environ.get("CNB_REPLAY_RUNTIME_MODE", "").strip()
+    version = os.environ.get("CNB_REPLAY_RUNTIME_VERSION", "").strip()
+    if not mode and not version:
+        return {}
+    if mode and mode not in RUNTIME_MODES:
+        raise BuildGateError(
+            "CNB_REPLAY_RUNTIME_MODE must be one of " + ", ".join(RUNTIME_MODES))
+    if version and not RUNTIME_VERSION.fullmatch(version):
+        raise BuildGateError("CNB_REPLAY_RUNTIME_VERSION must be a plain version token")
+    overrides = {}
+    if mode:
+        overrides["WRT_CONTAINER_RUNTIME_MODE"] = mode
+        overrides["WRT_CONTAINER_RUNTIME_TEST"] = "true"
+    if version:
+        overrides["WRT_CONTAINER_RUNTIME_VERSION"] = version
+    return overrides
+
+
 def run(name):
     pin_github_cpu_count()
     steps = workflow_steps()
     inputs = profile_inputs(name)
+    # Runtime variants are an explicit, allowlisted opt-in on top of the
+    # audited caller inputs; an empty result means "caller default".
+    overrides = runtime_overrides()
+    inputs.update(overrides)
+    print(f"CNB container runtime override: {overrides or 'caller default'}", flush=True)
     secrets = secret_env(os.environ)
     if (ROOT / "wrt").exists() or not (ROOT / ".git").exists():
         raise BuildGateError("must start from a fresh checked-out repository without wrt/")

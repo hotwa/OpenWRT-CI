@@ -34,6 +34,35 @@ class CnbReplayCoreTest(unittest.TestCase):
             with self.assertRaises(core.BuildGateError):
                 core.pin_github_cpu_count()
 
+    def test_runtime_variants_require_an_allowlisted_mode_and_version(self):
+        clean = {k: v for k, v in core.os.environ.items()
+                 if k not in ("CNB_REPLAY_RUNTIME_MODE", "CNB_REPLAY_RUNTIME_VERSION")}
+        with patch.dict(core.os.environ, clean, clear=True):
+            self.assertEqual(core.runtime_overrides(), {})
+        with patch.dict(core.os.environ, {"CNB_REPLAY_RUNTIME_MODE": "openwrt",
+                                          "CNB_REPLAY_RUNTIME_VERSION": "0.2.7"}):
+            self.assertEqual(core.runtime_overrides(),
+                             {"WRT_CONTAINER_RUNTIME_MODE": "openwrt",
+                              "WRT_CONTAINER_RUNTIME_TEST": "true",
+                              "WRT_CONTAINER_RUNTIME_VERSION": "0.2.7"})
+        for bad in ("latest", "evil:latest", "prebuilt;rm -rf /"):
+            with patch.dict(core.os.environ, {"CNB_REPLAY_RUNTIME_MODE": bad}):
+                with self.assertRaises(core.BuildGateError):
+                    core.runtime_overrides()
+        for bad in ("../etc/passwd", "a b", "-flag"):
+            with patch.dict(core.os.environ, {"CNB_REPLAY_RUNTIME_VERSION": bad}):
+                with self.assertRaises(core.BuildGateError):
+                    core.runtime_overrides()
+
+    def test_wlg_profile_keeps_the_lab_identity_without_a_debug_hold(self):
+        data = core.profile_inputs("wlg-re-cs-07")
+        self.assertEqual(data["WRT_IP"], "192.168.50.1")
+        self.assertEqual(data["WRT_NAME"], "WLG-RE-CS-07")
+        self.assertEqual(data["WRT_COMMIT"], "a4638cd4389183f1a1fcad0441f491ca11c97757")
+        self.assertEqual(data["WRT_BUILD_ONLY"], "true")
+        self.assertEqual(data["WRT_EMMC_DATA_PROVISIONING"], "true")
+        self.assertEqual(data["DEBUG_SSH"], "false")
+
     def test_only_reviewed_original_run_steps(self):
         found = core.workflow_steps()
         self.assertEqual(len(core.STEPS), len(set(core.STEPS)))

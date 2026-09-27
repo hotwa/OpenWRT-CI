@@ -164,6 +164,41 @@
             attachments:
               - ./wrt/upload/*
             ttl: 14
+    - name: Build private WLG-RE-CS-07 with pinned GitHub source (no deployment)
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      # Lab identity (192.168.50.1) of the same board and pin; same runner
+      # contract as the RE entries. Its caller injects no device activation key.
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py wlg-re-cs-07
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
   # Manual, interactive long-compile dev environment (云原生开发). The observed
   # build-pipeline cap is 120 minutes, so the same private RE-CS-07 replay also
   # runs here: it consumes 云原生开发 quota instead of 云原生构建 quota, keeps every

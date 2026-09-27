@@ -29,6 +29,13 @@ PROFILES = {
         "config": "IPQ60XX-RE-SS-01", "device": "jdcloud_re-ss-01",
         "name": "RE-SS-01", "lan": "192.168.12.1",
     },
+    # WLG is the RE-CS-07 board with a lab identity (192.168.50.1) and eMMC data
+    # provisioning; its caller keeps the same pin, overlay and build-only flags.
+    "wlg-re-cs-07": {
+        "workflow": "WLG-RE-CS-07-BUILD.yml", "job": "build",
+        "config": "IPQ60XX-RE-CS-07-NOWIFI", "device": "jdcloud_re-cs-07",
+        "name": "WLG-RE-CS-07", "lan": "192.168.50.1",
+    },
 }
 
 

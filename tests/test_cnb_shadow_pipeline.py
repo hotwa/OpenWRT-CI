@@ -62,8 +62,8 @@ class ShadowPipelineTest(unittest.TestCase):
         # click therefore starts all of them concurrently (about 44 core-hours
         # per profile), which is why this event stays manual.
         fleet = scheduled["web_trigger_re_private_build"]
-        self.assertEqual(len(fleet), 3)
-        for entry, profile in zip(fleet, ("re-cs-07", "re-cs-02", "re-ss-01")):
+        self.assertEqual(len(fleet), 4)
+        for entry, profile in zip(fleet, ("re-cs-07", "re-cs-02", "re-ss-01", "wlg-re-cs-07")):
             with self.subTest(profile=profile):
                 self.assertEqual(set(entry), {"name", "imports", "runner", "docker", "stages"})
                 self.assertEqual(entry["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
@@ -87,7 +87,7 @@ class ShadowPipelineTest(unittest.TestCase):
                 self.assertEqual(entry["stages"][6]["settings"],
                                  {"attachments": ["./wrt/upload/*"], "ttl": 14})
         self.assertEqual([e["name"].split()[2] for e in fleet],
-                         ["RE-CS-07", "RE-CS-02", "RE-SS-01"])
+                         ["RE-CS-07", "RE-CS-02", "RE-SS-01", "WLG-RE-CS-07"])
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], profiles["docker"])

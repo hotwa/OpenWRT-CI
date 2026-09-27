@@ -13,7 +13,8 @@ spec.loader.exec_module(preflight)
 
 class ReProfilePreflightTests(unittest.TestCase):
     def test_current_callers_and_device_config_match(self):
-        self.assertEqual(set(preflight.PROFILES), {"re-cs-07", "re-cs-02", "re-ss-01"})
+        self.assertEqual(set(preflight.PROFILES),
+                         {"re-cs-07", "re-cs-02", "re-ss-01", "wlg-re-cs-07"})
         for profile in preflight.PROFILES.values():
             with self.subTest(profile=profile["name"]):
                 preflight.verify_profile(preflight.ROOT, profile)
