@@ -21,6 +21,13 @@ class ReProfilePreflightTests(unittest.TestCase):
         for profile in preflight.PROFILES.values():
             with self.subTest(profile=profile["name"]):
                 preflight.verify_profile(preflight.ROOT, profile)
+        # Only the user-disabled CPE-706-A baseline carries the flag; every other
+        # profile is part of the active one-click fleet.
+        disabled = {name for name, profile in preflight.PROFILES.items()
+                    if profile.get("disabled_in_fleet")}
+        self.assertEqual(disabled, {"cpe5g-a"})
+        self.assertEqual(preflight.profile_expectations(
+            preflight.PROFILES["cpe5g-a"])["feature_overlay"], False)
 
     def test_pin_board_and_defaults_fail_closed(self):
         original = preflight.PROFILES["re-cs-07"]

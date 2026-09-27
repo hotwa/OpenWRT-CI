@@ -2,6 +2,7 @@
 """Fail closed if the initial CNB pipeline gains credentials or deployment."""
 from pathlib import Path
 import re
+import sys
 import unittest
 
 import yaml
@@ -62,7 +63,7 @@ class ShadowPipelineTest(unittest.TestCase):
         # attachment; a config-only profile (WRT_TEST) renders no firmware and must
         # not advertise an upload. One click starts all of them concurrently.
         fleet = scheduled["web_trigger_re_private_build"]
-        self.assertEqual(len(fleet), 9)
+        self.assertEqual(len(fleet), 8)
 
         def replay_stage(entry):
             for stage in entry["stages"]:
@@ -77,13 +78,21 @@ class ShadowPipelineTest(unittest.TestCase):
             return "CNB_REPLAY_WRT_TEST=1" in replay_stage(entry)["script"]
 
         self.assertEqual([profile_of(e) for e in fleet], [
-            "re-cs-07", "re-cs-02", "re-ss-01", "cpe5g-b", "cpe5g-a",
+            "re-cs-07", "re-cs-02", "re-ss-01", "cpe5g-b",
             "cpe5g-b-configonly", "qca-ipq60xx-wifi-no", "qca-ipq60xx-wifi-yes",
             "wlg-re-cs-07",
         ])
+        # A profile the user disabled (the CPE-706-A baseline) keeps its identity
+        # verification but must never be wired into the one-click fleet.
+        sys.path.insert(0, str(ROOT / "Scripts"))
+        import cnb_re_profile_preflight as preflight  # noqa: E402
+        disabled = {name for name, profile in preflight.PROFILES.items()
+                    if profile.get("disabled_in_fleet")}
+        self.assertEqual(disabled, {"cpe5g-a"})
+        self.assertEqual([profile_of(e) for e in fleet if profile_of(e) in disabled], [])
         firmware = [e for e in fleet if not is_config_only(e)]
         config_only = [e for e in fleet if is_config_only(e)]
-        self.assertEqual((len(firmware), len(config_only)), (8, 1))
+        self.assertEqual((len(firmware), len(config_only)), (7, 1))
         for entry in firmware:
             with self.subTest(profile=profile_of(entry)):
                 self.assertEqual(set(entry), {"name", "imports", "runner", "docker", "stages"})

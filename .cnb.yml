@@ -198,40 +198,11 @@
             attachments:
               - ./wrt/upload/*
             ttl: 14
-    - name: Build private CPE-706-A baseline with pinned GitHub source (no deployment)
-      # CPE-706-A baseline (feature overlay off); GitHub builds it only on request, CNB mirrors that semantics.
-      imports:
-        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
-      runner:
-        tags: cnb:arch:amd64
-        cpus: 32
-      docker:
-        image: python:3.13-bookworm
-      stages:
-        - name: Fail closed on missing mandatory Samba build input
-          script: bash Scripts/cnb_re_private_input_gate.sh
-          timeout: 3m
-        - name: Install same OpenWrt host dependencies on Debian bookworm
-          script: bash Scripts/cnb_bootstrap_environment.sh
-          timeout: 75m
-        - name: Install checksum-pinned host Go 1.26 and Node 24.20
-          script: bash Scripts/cnb_host_runtime.sh
-          timeout: 20m
-        - name: Install pinned workflow YAML parser
-          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
-          timeout: 10m
-        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
-          script: bash Scripts/cnb_re_builder_user.sh
-          timeout: 10m
-        - name: Replay guarded GitHub build steps through private firmware package verification
-          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py cpe5g-a
-          timeout: 11h
-        - name: Upload verified private firmware to private commit attachments (14 days)
-          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
-          settings:
-            attachments:
-              - ./wrt/upload/*
-            ttl: 14
+    # The CPE-706-A baseline pipeline is intentionally absent: the user disabled it
+    # for the one-click fleet (the GitHub caller still gates it behind its own
+    # BUILD_BASELINE_A input, unchanged). Its profile stays in the preflight so
+    # re-enabling it is one YAML block, and tests assert no fleet entry uses a
+    # disabled profile.
     - name: Render CPE-5G configuration only (WRT_TEST, no firmware)
       # Config-only render of the CPE-5G caller; the device activation key is deliberately not required.
       # A WRT_TEST run renders configuration only: it compiles no firmware and

@@ -69,7 +69,11 @@ PROFILES = {
     # CPE-5G: the 706 board with its own reviewed pin, no WRT_EXPECTED_DEVICE and
     # no build-only flag. Its callers inject the device activation key, so a real
     # CNB firmware build must fail closed while that key is absent.
+    # Disabled in the one-click fleet by user decision: the profile identity stays
+    # verified so re-enabling is a single pipeline block, but no pipeline may use
+    # it (a test asserts that).
     "cpe5g-a": {
+        "disabled_in_fleet": True,
         "workflow": "CPE-5G.yml", "job": "baseline_a",
         "config": "IPQ60XX-706-NOWIFI", "device": "jdcloud_re-ss-01",
         "name": "CPE-706-A", "lan": "192.168.10.1",
