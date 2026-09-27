@@ -45,6 +45,15 @@
               ./cnb-attachment-probe.txt: 1
   # Manual, build-only private firmware. This branch has no release/CD/device job.
   # Imports are absent from push, scheduled, and read-only profile tasks.
+  #
+  # Fan-out contract: each enabled profile is its own pipeline under this single
+  # manual event, so ONE button click starts every enabled profile in parallel.
+  # Every pipeline here imports the same build credential file, runs on 32 amd64
+  # CPUs (64 GiB at CNB's memory = cpus x 2 GiB rule) and uploads its own private
+  # commit attachment. One full RE build is about 1h23m wall clock, i.e. roughly
+  # 44 core-hours, so a click on three profiles costs about 130 core-hours and
+  # runs them concurrently - which is why this event stays manual and why push,
+  # cron and preflight tasks never import credentials.
   web_trigger_re_private_build:
     - name: Build private RE-CS-07 with pinned GitHub source (no deployment)
       imports:
@@ -81,6 +90,73 @@
           # `make -j$(nproc)` steps run -j32 instead of the GitHub four-CPU
           # parity default. The firmware bytes do not depend on the job count.
           script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-cs-07
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
+    - name: Build private RE-CS-02 with pinned GitHub source (no deployment)
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      # Same runner contract as RE-CS-07: amd64 only, 32 CPUs, 64 GiB.
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-cs-02
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
+    - name: Build private RE-SS-01 with pinned GitHub source (no deployment)
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-ss-01
           timeout: 11h
         - name: Upload verified private firmware to private commit attachments (14 days)
           image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0

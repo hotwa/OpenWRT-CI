@@ -57,28 +57,37 @@ class ShadowPipelineTest(unittest.TestCase):
                          "cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0")
         self.assertEqual(attachment["stages"][1]["settings"]["attachments"],
                          {"./cnb-attachment-probe.txt": 1})
-        private = scheduled["web_trigger_re_private_build"][0]
-        self.assertEqual(set(private), {"name", "imports", "runner", "docker", "stages"})
-        self.assertEqual(private["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
-        self.assertEqual(private["imports"], [
-            "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
-        ])
-        self.assertEqual(private["stages"][0]["script"],
-                         "bash Scripts/cnb_re_private_input_gate.sh")
-        self.assertEqual(len(private["stages"]), 7)
-        self.assertEqual(private["stages"][1]["script"],
-                         "bash Scripts/cnb_bootstrap_environment.sh")
-        self.assertEqual(private["stages"][2]["script"],
-                         "bash Scripts/cnb_host_runtime.sh")
-        self.assertEqual(private["stages"][4]["script"],
-                         "bash Scripts/cnb_re_builder_user.sh")
-        self.assertEqual(private["stages"][5]["script"],
-                         "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild "
-                         "CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-cs-07")
-        self.assertEqual(private["stages"][5]["timeout"], "11h")
-        self.assertEqual(private["stages"][6]["image"], attachment["stages"][1]["image"])
-        self.assertEqual(private["stages"][6]["settings"],
-                         {"attachments": ["./wrt/upload/*"], "ttl": 14})
+        # Fan-out contract: one manual event, one pipeline per enabled profile,
+        # each on 32 amd64 CPUs with its own private attachment upload. A single
+        # click therefore starts all of them concurrently (about 44 core-hours
+        # per profile), which is why this event stays manual.
+        fleet = scheduled["web_trigger_re_private_build"]
+        self.assertEqual(len(fleet), 3)
+        for entry, profile in zip(fleet, ("re-cs-07", "re-cs-02", "re-ss-01")):
+            with self.subTest(profile=profile):
+                self.assertEqual(set(entry), {"name", "imports", "runner", "docker", "stages"})
+                self.assertEqual(entry["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
+                self.assertEqual(entry["imports"], [
+                    "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
+                ])
+                self.assertEqual(len(entry["stages"]), 7)
+                self.assertEqual(entry["stages"][0]["script"],
+                                 "bash Scripts/cnb_re_private_input_gate.sh")
+                self.assertEqual(entry["stages"][1]["script"],
+                                 "bash Scripts/cnb_bootstrap_environment.sh")
+                self.assertEqual(entry["stages"][2]["script"],
+                                 "bash Scripts/cnb_host_runtime.sh")
+                self.assertEqual(entry["stages"][4]["script"],
+                                 "bash Scripts/cnb_re_builder_user.sh")
+                self.assertEqual(entry["stages"][5]["script"],
+                                 "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild "
+                                 f"CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py {profile}")
+                self.assertEqual(entry["stages"][5]["timeout"], "11h")
+                self.assertEqual(entry["stages"][6]["image"], attachment["stages"][1]["image"])
+                self.assertEqual(entry["stages"][6]["settings"],
+                                 {"attachments": ["./wrt/upload/*"], "ttl": 14})
+        self.assertEqual([e["name"].split()[2] for e in fleet],
+                         ["RE-CS-07", "RE-CS-02", "RE-SS-01"])
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], profiles["docker"])

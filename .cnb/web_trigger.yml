@@ -13,6 +13,6 @@ branch:
       - name: Probe private attachment plugin (synthetic text only)
         description: Verify manual-event commit attachments before any firmware build
         event: web_trigger_re_attachment_probe
-      - name: Build private RE-CS-07 (no release or device)
-        description: Pinned source, private overlay, full compile, image and checksum guards, private commit attachment
+      - name: Build private RE fleet (RE-CS-07 / RE-CS-02 / RE-SS-01, no release or device)
+        description: One click starts every enabled profile in parallel (32 CPUs each, about 44 core-hours per profile) - pinned source, private overlay, full compile, image and checksum guards, private commit attachments
         event: web_trigger_re_private_build
