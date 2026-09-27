@@ -13,8 +13,11 @@ spec.loader.exec_module(preflight)
 
 class ReProfilePreflightTests(unittest.TestCase):
     def test_current_callers_and_device_config_match(self):
-        self.assertEqual(set(preflight.PROFILES),
-                         {"re-cs-07", "re-cs-02", "re-ss-01", "wlg-re-cs-07"})
+        self.assertEqual(set(preflight.PROFILES), {
+            "re-cs-07", "re-cs-02", "re-ss-01", "wlg-re-cs-07",
+            "cpe5g-a", "cpe5g-b", "cpe5g-b-configonly",
+            "qca-ipq60xx-wifi-no", "qca-ipq60xx-wifi-yes",
+        })
         for profile in preflight.PROFILES.values():
             with self.subTest(profile=profile["name"]):
                 preflight.verify_profile(preflight.ROOT, profile)
@@ -49,6 +52,20 @@ class ReProfilePreflightTests(unittest.TestCase):
         self.assertEqual(ss01["WRT_EXPECTED_DEVICE"], "jdcloud_re-ss-01")
         with self.assertRaisesRegex(ValueError, "missing workflow job"):
             preflight.job_inputs(mesh, "re_cs_08")
+
+    def test_block_scalar_and_matrix_inputs_are_parsed_faithfully(self):
+        cpe = preflight.ROOT / ".github/workflows/CPE-5G.yml"
+        overlay_b = preflight.job_inputs(cpe, "cpe_overlay_b")
+        self.assertIn("CONFIG_PACKAGE_mwan3=y", overlay_b["WRT_PACKAGE"])
+        self.assertIn("CONFIG_PACKAGE_luci-app-mwan3=y", overlay_b["WRT_PACKAGE"])
+        baseline_a = preflight.job_inputs(cpe, "baseline_a")
+        self.assertEqual(baseline_a["WRT_PACKAGE"], "")
+        self.assertEqual(baseline_a["WRT_FEATURE_OVERLAY"], "false")
+        # The QCA caller floats on main: the profile must reject an unreviewed
+        # matrix expansion instead of guessing a pin.
+        qca = preflight.PROFILES["qca-ipq60xx-wifi-no"]
+        self.assertFalse(preflight.profile_expectations(qca)["pin_in_caller"])
+        self.assertEqual(qca["commit"], preflight.PIN)
 
 
 if __name__ == "__main__":

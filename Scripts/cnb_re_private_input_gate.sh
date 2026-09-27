@@ -14,4 +14,6 @@ case "$SAMBA_DEFAULT_PASSWORD" in
 esac
 unset SAMBA_DEFAULT_PASSWORD
 printf '%s\n' 'Required private-build credential is present (value not displayed).'
-printf '%s\n' 'HEADSCALE_OPENWRT_AUTHKEY is optional and not inspected by this preflight.'
+printf '%s\n' 'Only the shared Samba build credential is inspected here; the replay enforces'
+printf '%s\n' 'each profile requirement (for example the CPE-5G and QCA device activation key)'
+printf '%s\n' 'and fails closed without printing any value.'

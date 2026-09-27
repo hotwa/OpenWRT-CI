@@ -18,7 +18,9 @@ import time
 
 import yaml
 
-from cnb_re_profile_preflight import PROFILES, ROOT, verify_profile
+from cnb_re_profile_preflight import (
+    PROFILES, ROOT, profile_expectations, verify_profile,
+)
 
 CORE = ROOT / ".github/workflows/WRT-CORE.yml"
 # This digest locks the replayed shell bodies. A changed GitHub core must be
@@ -58,6 +60,33 @@ SENSITIVE = (
     "OPENWRT_WAN_PPPOE_USERNAME", "OPENWRT_WAN_PPPOE_PASSWORD",
     "COMMANDCODE_API_KEY", "CLIPROXYAPI_API_KEY", "CLIPROXYAPI_BASE_URL",
 )
+# GitHub caller expressions that the CNB fallback resolves to the caller's own
+# declared defaults. Each entry is a reviewed, non-secret scalar; any other
+# expression still fails closed as unresolved.
+CALLER_EXPRESSION_DEFAULTS = {
+    "${{ inputs.WAN_PROTOCOL || 'dhcp' }}": "dhcp",
+    "${{ inputs.DEBUG_SSH }}": "false",
+    "${{ inputs.DEBUG_SSH || false }}": "false",
+    "${{ inputs.TEST }}": "false",
+    "${{inputs.TEST}}": "false",
+    "${{ inputs.WAN_SSH || false }}": "false",
+    "${{ inputs.WAN_SSH_SOURCE }}": "",
+    "${{ inputs.WAN_SSH_PORT || '22' }}": "22",
+    "${{ inputs.PACKAGE }}": "",
+    "${{inputs.PACKAGE}}": "",
+    # QCA's LAN/Tailnet gateway expression: a workflow_dispatch run resolves to
+    # inputs.LAN_TAILNET, whose declared default is true.
+    "${{ github.event_name != 'workflow_dispatch' || inputs.LAN_TAILNET }}": "true",
+}
+# CI-debug credentials are never needed here (that gate is not replayed), so the
+# builder environment must not inherit them.
+UNUSED_CI_KEYS = ("HEADSCALE_CI_AUTHKEY", "HEADSCALE_AUTHKEY")
+# Steps the GitHub workflow itself skips when WRT_TEST is true: a config-only run
+# downloads nothing, compiles nothing and therefore has no firmware to verify.
+CONFIG_ONLY_SKIPPED = (
+    "Download Packages", "Reserve Disk Space Before Compile",
+    "Compile Firmware", "Record Compile Cache Stats",
+)
 
 
 class BuildGateError(RuntimeError):
@@ -82,6 +111,13 @@ def workflow_steps():
     return found
 
 
+def caller_workflow_name(profile):
+    """Human-readable name of the GitHub caller workflow (labelling only)."""
+    caller = ROOT / ".github" / "workflows" / profile["workflow"]
+    data = yaml.safe_load(caller.read_text(encoding="utf-8"))
+    return str(data.get("name", "workflow"))
+
+
 def profile_inputs(name):
     if name not in PROFILES:
         raise BuildGateError("unsupported device profile")
@@ -97,13 +133,12 @@ def profile_inputs(name):
             if value != profile["lan"] and not str(value).startswith("${{ inputs."):
                 raise BuildGateError("caller LAN default changed; review CNB profile")
             value = profile["lan"]
-        elif key == "WRT_WAN_PROTOCOL" and value == "${{ inputs.WAN_PROTOCOL || 'dhcp' }}":
-            value = "dhcp"
-        elif key == "DEBUG_SSH" and value in (
-                "${{ inputs.DEBUG_SSH }}", "${{ inputs.DEBUG_SSH || false }}"):
-            # Both are the GitHub caller's false default; a CNB builder is never
-            # held open or enrolled into the Tailnet.
-            value = "false"
+        elif isinstance(value, str) and value in CALLER_EXPRESSION_DEFAULTS:
+            value = CALLER_EXPRESSION_DEFAULTS[value]
+        elif key == "CI_NAME" and isinstance(value, str) and "github.workflow" in value:
+            # The GitHub expression labels a manual dispatch as <workflow>-MANUAL;
+            # reproducing the label keeps run/artifact names comparable.
+            value = caller_workflow_name(profile) + "-MANUAL"
         if value is None:
             value = ""
         value = str(value).lower() if isinstance(value, bool) else str(value)
@@ -112,14 +147,35 @@ def profile_inputs(name):
         if "${{" in value:
             raise BuildGateError(f"unresolved caller expression for {key}")
         result[key] = value
-    if (result["WRT_BUILD_ONLY"], result["WRT_FEATURE_OVERLAY"],
-            result["WRT_COMMIT"], result["WRT_WAN_PROTOCOL"]) != (
-            "true", "true", "a4638cd4389183f1a1fcad0441f491ca11c97757", "dhcp"):
-        raise BuildGateError("unsafe or drifted private build inputs")
-    if result["WRT_TEST"] or result["DEBUG_SSH"] != "false":
+    exp = profile_expectations(profile)
+    if not exp["pin_in_caller"] and not result["WRT_COMMIT"]:
+        # The GitHub caller floats on main; the CNB fallback builds the reviewed
+        # pin declared by the profile and records it as source_commit.
+        result["WRT_COMMIT"] = exp["commit"]
+    boolean = lambda flag: "true" if flag else "false"
+    checks = {
+        "WRT_BUILD_ONLY": boolean(exp["build_only"]),
+        "WRT_FEATURE_OVERLAY": boolean(exp["feature_overlay"]),
+        "WRT_EMMC_DATA_PROVISIONING": boolean(exp["emmc"]),
+        "WRT_CONTAINER_RUNTIME_TEST": boolean(exp["container_runtime_test"]),
+        "WRT_CONTAINER_RUNTIME_MODE": exp["container_runtime_mode"],
+        "WRT_COMMIT": exp["commit"],
+        "WRT_WAN_PROTOCOL": "dhcp",
+        "DEBUG_SSH": "false",
+    }
+    if exp["expected_device"]:
+        checks["WRT_EXPECTED_DEVICE"] = profile["device"]
+    if exp["expect_required_device"]:
+        checks["WRT_REQUIRED_DEVICE"] = profile.get("required_device") or profile["device"]
+    for key, want in checks.items():
+        if result.get(key) != want:
+            raise BuildGateError(f"{key} drifted from the reviewed CNB profile")
+    test_mode = config_only_requested()
+    if test_mode and not exp["allow_test"]:
+        raise BuildGateError("config-only TEST mode is not allowed for this profile")
+    if not test_mode and result["WRT_TEST"] not in ("", "false"):
         raise BuildGateError("test/debug mode cannot run the private build pilot")
-    if result["WRT_CONTAINER_RUNTIME_TEST"] != "true" or result["WRT_CONTAINER_RUNTIME_MODE"] != "prebuilt":
-        raise BuildGateError("container runtime inputs drifted from the RE GitHub default")
+    result["WRT_TEST"] = boolean(test_mode)
     return result
 
 
@@ -134,10 +190,40 @@ def clean_optional(value):
     return value
 
 
-def secret_env(base):
-    if not base.get("SAMBA_DEFAULT_PASSWORD") or clean_optional(base["SAMBA_DEFAULT_PASSWORD"]) == "":
-        raise BuildGateError("Samba build credential is missing or a placeholder")
-    return {k: clean_optional(base.get(k, "")) for k in SENSITIVE}
+def config_only_requested():
+    """Parse the explicit config-only (WRT_TEST) opt-in for a CNB fallback run."""
+    raw = os.environ.get("CNB_REPLAY_WRT_TEST", "").strip().lower()
+    if raw in ("", "0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    raise BuildGateError("CNB_REPLAY_WRT_TEST must be a boolean flag")
+
+
+def secret_env(base, profile):
+    """Return the builder credentials, failing closed on a missing requirement.
+
+    Only the variable names may ever appear in an error message; values are never
+    echoed. A profile that embeds device enrollment material requires that key, so
+    a real CNB build stops instead of silently producing a non-enrolling firmware.
+    """
+    env = {k: clean_optional(base.get(k, "")) for k in SENSITIVE}
+    missing = sorted(k for k in profile_expectations(profile)["required_secrets"]
+                     if not clean_optional(base.get(k, "")))
+    if missing:
+        raise BuildGateError(
+            "required build credential missing or placeholder: " + ", ".join(missing))
+    return env
+
+
+def verify_config_only(root):
+    """A WRT_TEST run renders configuration only and must never claim firmware."""
+    config = root / "wrt/.config"
+    if not config.is_file() or config.stat().st_size == 0:
+        raise BuildGateError("config-only run produced no wrt/.config")
+    print("CNB config-only run (WRT_TEST=true): configuration rendered, "
+          "no firmware compiled, no artifact uploaded, "
+          f".config bytes={config.stat().st_size}", flush=True)
 
 
 def step_env(stage, env, secrets):
@@ -229,14 +315,14 @@ def run(name):
     pin_github_cpu_count()
     steps = workflow_steps()
     inputs = profile_inputs(name)
-    secrets = secret_env(os.environ)
+    secrets = secret_env(os.environ, PROFILES[name])
     if (ROOT / "wrt").exists() or not (ROOT / ".git").exists():
         raise BuildGateError("must start from a fresh checked-out repository without wrt/")
     git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", git_sha):
         raise BuildGateError("invalid CNB workflow checkout identity")
     host = os.environ.copy()
-    for key in ("CNB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+    for key in ("CNB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", *UNUSED_CI_KEYS):
         host.pop(key, None)
     host.update({k: v for k, v in inputs.items()})
     host.update({"GITHUB_WORKSPACE": str(ROOT), "GITHUB_SHA": git_sha,
@@ -257,7 +343,12 @@ def run(name):
         environment_file = Path(tmp) / "github-env"
         host["GITHUB_ENV"] = str(environment_file)
         environment_file.touch(mode=0o600)
-        for step_name in STEPS:
+        step_names = tuple(s for s in STEPS if s not in CONFIG_ONLY_SKIPPED) \
+            if inputs["WRT_TEST"] == "true" else STEPS
+        print(f"CNB replay step selection: {len(step_names)}/{len(STEPS)} steps"
+              + (" (config-only WRT_TEST run)" if inputs["WRT_TEST"] == "true" else ""),
+              flush=True)
+        for step_name in step_names:
             stage = steps[step_name]
             script = stage["run"]
             if step_name == "Reserve Disk Space Before Compile":
@@ -288,7 +379,10 @@ def run(name):
                     host.get("WRT_PRIVATE_BUILD") != "true" or
                     host.get("WRT_ARTIFACT_PRIVACY_SUFFIX") != "private"):
                 raise BuildGateError("private firmware guard was not upheld")
-        check_metadata(host)
+        if inputs["WRT_TEST"] == "true":
+            verify_config_only(ROOT)
+        else:
+            check_metadata(host)
     print("CNB device-free private firmware build and local artifact guards passed", flush=True)
 
 

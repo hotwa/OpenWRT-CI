@@ -9,11 +9,11 @@
       stages:
         - name: Inspect runner and run repository guards
           script: bash Scripts/cnb_shadow_probe.sh
-    - name: Verify three RE build profiles without GitHub API calls
+    - name: Verify every enabled CNB build profile without GitHub API calls
       docker:
         image: python:3.13-bookworm
       stages:
-        - name: Verify pinned RE-CS-07, RE-CS-02 and RE-SS-01 inputs
+        - name: Verify the pinned RE, CPE-5G and QCA profile inputs
           script: unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py
   # Manual pinned host toolchain probe; no secrets or firmware.
   web_trigger_re_host_runtime_probe:
@@ -164,6 +164,172 @@
             attachments:
               - ./wrt/upload/*
             ttl: 14
+    - name: Build private CPE-5G with pinned GitHub source (no deployment)
+      # CPE-5G B overlay, own reviewed pin, no expected device. Fails closed until the device activation key exists.
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py cpe5g-b
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
+    - name: Build private CPE-706-A baseline with pinned GitHub source (no deployment)
+      # CPE-706-A baseline (feature overlay off); GitHub builds it only on request, CNB mirrors that semantics.
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py cpe5g-a
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
+    - name: Render CPE-5G configuration only (WRT_TEST, no firmware)
+      # Config-only render of the CPE-5G caller; the device activation key is deliberately not required.
+      # A WRT_TEST run renders configuration only: it compiles no firmware and
+      # therefore has no upload stage, so it can never be mistaken for an image.
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Render configuration only (WRT_TEST, no firmware, no upload)
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native CNB_REPLAY_WRT_TEST=1 python3 -u Scripts/cnb_replay_core.py cpe5g-b-configonly
+          timeout: 4h
+    - name: Build private QCA-6.18 IPQ60XX-WIFI-NO with pinned source (no deployment)
+      # Static expansion of the QCA matrix; the GitHub caller floats on main, so the CNB profile pins the reviewed commit.
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py qca-ipq60xx-wifi-no
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
+    - name: Build private QCA-6.18 IPQ60XX-WIFI-YES with pinned source (no deployment)
+      # Static expansion of the QCA matrix; the GitHub caller floats on main, so the CNB profile pins the reviewed commit.
+      imports:
+        - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 32
+      docker:
+        image: python:3.13-bookworm
+      stages:
+        - name: Fail closed on missing mandatory Samba build input
+          script: bash Scripts/cnb_re_private_input_gate.sh
+          timeout: 3m
+        - name: Install same OpenWrt host dependencies on Debian bookworm
+          script: bash Scripts/cnb_bootstrap_environment.sh
+          timeout: 75m
+        - name: Install checksum-pinned host Go 1.26 and Node 24.20
+          script: bash Scripts/cnb_host_runtime.sh
+          timeout: 20m
+        - name: Install pinned workflow YAML parser
+          script: python3 -m pip install --no-cache-dir --disable-pip-version-check --timeout 30 --retries 3 'PyYAML==6.0.3'
+          timeout: 10m
+        - name: Create non-root OpenWrt builder with disposable GitHub-like sudo
+          script: bash Scripts/cnb_re_builder_user.sh
+          timeout: 10m
+        - name: Replay guarded GitHub build steps through private firmware package verification
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py qca-ipq60xx-wifi-yes
+          timeout: 11h
+        - name: Upload verified private firmware to private commit attachments (14 days)
+          image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0
+          settings:
+            attachments:
+              - ./wrt/upload/*
+            ttl: 14
     - name: Build private WLG-RE-CS-07 with pinned GitHub source (no deployment)
       imports:
         - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
@@ -232,7 +398,7 @@
   # CNB crontab requires a literal branch, never a glob. Weekly report-only pilot:
   # Sunday 09:00 Asia/Shanghai, no secrets or privileged build identity.
   web_trigger_re_preflight:
-    - name: Check pinned RE-CS-07, RE-CS-02 and RE-SS-01 build profiles
+    - name: Check every pinned CNB build profile (RE, CPE-5G, QCA, WLG)
       docker:
         image: python:3.13-bookworm
       stages:

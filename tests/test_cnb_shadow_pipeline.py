@@ -57,14 +57,35 @@ class ShadowPipelineTest(unittest.TestCase):
                          "cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0")
         self.assertEqual(attachment["stages"][1]["settings"]["attachments"],
                          {"./cnb-attachment-probe.txt": 1})
-        # Fan-out contract: one manual event, one pipeline per enabled profile,
-        # each on 32 amd64 CPUs with its own private attachment upload. A single
-        # click therefore starts all of them concurrently (about 44 core-hours
-        # per profile), which is why this event stays manual.
+        # Fan-out contract: one manual event, one pipeline per enabled profile.
+        # Every firmware profile requests 32 amd64 CPUs and uploads its own private
+        # attachment; a config-only profile (WRT_TEST) renders no firmware and must
+        # not advertise an upload. One click starts all of them concurrently.
         fleet = scheduled["web_trigger_re_private_build"]
-        self.assertEqual(len(fleet), 4)
-        for entry, profile in zip(fleet, ("re-cs-07", "re-cs-02", "re-ss-01", "wlg-re-cs-07")):
-            with self.subTest(profile=profile):
+        self.assertEqual(len(fleet), 9)
+
+        def replay_stage(entry):
+            for stage in entry["stages"]:
+                if "cnb_replay_core.py" in str(stage.get("script", "")):
+                    return stage
+            self.fail("fleet entry without a replay stage")
+
+        def profile_of(entry):
+            return replay_stage(entry)["script"].split()[-1]
+
+        def is_config_only(entry):
+            return "CNB_REPLAY_WRT_TEST=1" in replay_stage(entry)["script"]
+
+        self.assertEqual([profile_of(e) for e in fleet], [
+            "re-cs-07", "re-cs-02", "re-ss-01", "cpe5g-b", "cpe5g-a",
+            "cpe5g-b-configonly", "qca-ipq60xx-wifi-no", "qca-ipq60xx-wifi-yes",
+            "wlg-re-cs-07",
+        ])
+        firmware = [e for e in fleet if not is_config_only(e)]
+        config_only = [e for e in fleet if is_config_only(e)]
+        self.assertEqual((len(firmware), len(config_only)), (8, 1))
+        for entry in firmware:
+            with self.subTest(profile=profile_of(entry)):
                 self.assertEqual(set(entry), {"name", "imports", "runner", "docker", "stages"})
                 self.assertEqual(entry["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
                 self.assertEqual(entry["imports"], [
@@ -79,15 +100,19 @@ class ShadowPipelineTest(unittest.TestCase):
                                  "bash Scripts/cnb_host_runtime.sh")
                 self.assertEqual(entry["stages"][4]["script"],
                                  "bash Scripts/cnb_re_builder_user.sh")
-                self.assertEqual(entry["stages"][5]["script"],
-                                 "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild "
-                                 f"CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py {profile}")
-                self.assertEqual(entry["stages"][5]["timeout"], "11h")
+                self.assertEqual(replay_stage(entry)["timeout"], "11h")
                 self.assertEqual(entry["stages"][6]["image"], attachment["stages"][1]["image"])
                 self.assertEqual(entry["stages"][6]["settings"],
                                  {"attachments": ["./wrt/upload/*"], "ttl": 14})
-        self.assertEqual([e["name"].split()[2] for e in fleet],
-                         ["RE-CS-07", "RE-CS-02", "RE-SS-01", "WLG-RE-CS-07"])
+        for entry in config_only:
+            with self.subTest(profile=profile_of(entry)):
+                self.assertEqual(len(entry["stages"]), 6)
+                self.assertFalse(any("attachments" in str(s.get("settings", ""))
+                                     for s in entry["stages"]))
+                # The entry must say out loud that it renders no firmware.
+                self.assertIn("no firmware", entry["name"].lower())
+                self.assertTrue(any("no firmware" in str(s.get("name", "")).lower()
+                                    for s in entry["stages"]))
         self.assertEqual(len(scheduled["crontab: 0 9 * * 0"]), 1)
         weekly = scheduled["crontab: 0 9 * * 0"][0]
         self.assertEqual(weekly["docker"], profiles["docker"])

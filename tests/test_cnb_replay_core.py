@@ -71,13 +71,14 @@ class CnbReplayCoreTest(unittest.TestCase):
                                  "a4638cd4389183f1a1fcad0441f491ca11c97757")
 
     def test_missing_samba_rejected_optional_placeholders_are_omitted(self):
+        pilot = core.PROFILES["re-cs-07"]
         with self.assertRaises(core.BuildGateError):
-            core.secret_env({})
+            core.secret_env({}, pilot)
         with self.assertRaises(core.BuildGateError):
-            core.secret_env({"SAMBA_DEFAULT_PASSWORD": "<fill>"})
+            core.secret_env({"SAMBA_DEFAULT_PASSWORD": "<fill>"}, pilot)
         values = core.secret_env({"SAMBA_DEFAULT_PASSWORD": "synthetic-only",
                                   "HEADSCALE_OPENWRT_AUTHKEY": "",
-                                  "MULTICA_TOKEN": "<optional-placeholder>"})
+                                  "MULTICA_TOKEN": "<optional-placeholder>"}, pilot)
         self.assertEqual(values["SAMBA_DEFAULT_PASSWORD"], "synthetic-only")
         self.assertEqual(values["HEADSCALE_OPENWRT_AUTHKEY"], "")
         self.assertEqual(values["MULTICA_TOKEN"], "")
@@ -129,6 +130,42 @@ class CnbReplayCoreTest(unittest.TestCase):
                 env["WRT_PRIVATE_BUILD"] = "false"
                 with self.assertRaises(core.BuildGateError):
                     core.check_metadata(env)
+
+    def test_config_only_runs_are_limited_to_profiles_that_allow_them(self):
+        with patch.dict(core.os.environ, {"CNB_REPLAY_WRT_TEST": "1"}):
+            self.assertEqual(core.profile_inputs("cpe5g-b")["WRT_TEST"], "true")
+            with self.assertRaises(core.BuildGateError):
+                core.profile_inputs("re-cs-07")
+        with patch.dict(core.os.environ, {"CNB_REPLAY_WRT_TEST": "maybe"}):
+            with self.assertRaises(core.BuildGateError):
+                core.config_only_requested()
+
+    def test_missing_device_activation_key_fails_closed_without_echoing_values(self):
+        secret = "samba-value-that-must-never-be-printed"
+        with patch.dict(core.os.environ, {"SAMBA_DEFAULT_PASSWORD": secret}, clear=True):
+            for profile in ("cpe5g-b", "cpe5g-a", "qca-ipq60xx-wifi-no"):
+                with self.subTest(profile=profile):
+                    with self.assertRaises(core.BuildGateError) as ctx:
+                        core.secret_env(core.os.environ, core.PROFILES[profile])
+                    message = str(ctx.exception)
+                    self.assertIn("HEADSCALE_OPENWRT_AUTHKEY", message)
+                    self.assertNotIn(secret, message)
+            env = core.secret_env(core.os.environ, core.PROFILES["cpe5g-b-configonly"])
+            self.assertEqual(env["SAMBA_DEFAULT_PASSWORD"], secret)
+
+    def test_cpe_and_qca_profiles_keep_their_github_semantics(self):
+        b = core.profile_inputs("cpe5g-b")
+        self.assertEqual((b["WRT_FEATURE_OVERLAY"], b["WRT_BUILD_ONLY"],
+                          b["WRT_COMMIT"], b["WRT_LAN_TAILNET"]),
+                         ("true", "false", "0bad892975fe49fd180f99b414a7f168bb694dd7", "true"))
+        self.assertIn("CONFIG_PACKAGE_mwan3=y", b["WRT_PACKAGE"])
+        a = core.profile_inputs("cpe5g-a")
+        self.assertEqual((a["WRT_FEATURE_OVERLAY"], a["WRT_PACKAGE"], a["WRT_IP"]),
+                         ("false", "", "192.168.10.1"))
+        q = core.profile_inputs("qca-ipq60xx-wifi-yes")
+        self.assertEqual(q["WRT_CONFIG"], "IPQ60XX-WIFI-YES")
+        self.assertEqual(q["WRT_COMMIT"], core.PROFILES["qca-ipq60xx-wifi-yes"]["commit"])
+        self.assertEqual(q["CI_NAME"], "QCA-6.18-VIKINGYFY-MANUAL")
 
 
 if __name__ == "__main__":
