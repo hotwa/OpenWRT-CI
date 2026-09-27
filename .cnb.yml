@@ -50,11 +50,14 @@
       imports:
         - https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml
       # amd64 is mandatory: the Go/Node archives, the OpenWrt target and the
-      # GitHub-parity assumption are all x86_64. cpus is explicit so the
-      # compile keeps the GitHub runner's 16 GiB and a bounded core-hour cost.
+      # GitHub-parity assumption are all x86_64. 32 cpus (64 GiB at the CNB
+      # memory = cpus x 2 GiB rule) is the configuration that finished the full
+      # RE-CS-07 replay in 63 minutes in the devbox, i.e. inside the observed
+      # 120 minute build-pipeline cap; the four-CPU GitHub-parity affinity pin is
+      # opted out in the replay stage below for the same reason.
       runner:
         tags: cnb:arch:amd64
-        cpus: 8
+        cpus: 32
       docker:
         image: python:3.13-bookworm
       stages:
@@ -74,7 +77,10 @@
           script: bash Scripts/cnb_re_builder_user.sh
           timeout: 10m
         - name: Replay guarded GitHub build steps through private firmware package verification
-          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild python3 -u Scripts/cnb_replay_core.py re-cs-07
+          # native keeps every allocated CPU: nproc = 32 here, so the unchanged
+          # `make -j$(nproc)` steps run -j32 instead of the GitHub four-CPU
+          # parity default. The firmware bytes do not depend on the job count.
+          script: runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-cs-07
           timeout: 11h
         - name: Upload verified private firmware to private commit attachments (14 days)
           image: cnbcool/attachments@sha256:3000e40e6495209ef056c374234f83505525257f799eaf51c9dcf8a8235efdb0

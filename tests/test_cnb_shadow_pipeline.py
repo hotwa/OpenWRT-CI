@@ -59,7 +59,7 @@ class ShadowPipelineTest(unittest.TestCase):
                          {"./cnb-attachment-probe.txt": 1})
         private = scheduled["web_trigger_re_private_build"][0]
         self.assertEqual(set(private), {"name", "imports", "runner", "docker", "stages"})
-        self.assertEqual(private["runner"], runtime["runner"])
+        self.assertEqual(private["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
         self.assertEqual(private["imports"], [
             "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
         ])
@@ -73,7 +73,8 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(private["stages"][4]["script"],
                          "bash Scripts/cnb_re_builder_user.sh")
         self.assertEqual(private["stages"][5]["script"],
-                         "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild python3 -u Scripts/cnb_replay_core.py re-cs-07")
+                         "runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild "
+                         "CNB_REPLAY_CPU_PIN=native python3 -u Scripts/cnb_replay_core.py re-cs-07")
         self.assertEqual(private["stages"][5]["timeout"], "11h")
         self.assertEqual(private["stages"][6]["image"], attachment["stages"][1]["image"])
         self.assertEqual(private["stages"][6]["settings"],
