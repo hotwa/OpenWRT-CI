@@ -31,6 +31,7 @@ class SecretTemplateTests(unittest.TestCase):
         info = inventory.classification()
         required = sorted(name for name in names if data[name] == "<FILL:required>")
         self.assertEqual(required, info["required_union"])
+        self.assertEqual(sorted(names), sorted(info["required"] + info["optional"]))
         for name in names:
             self.assertRegex(data[name], r"^<FILL:(required|optional)>$")
         for forbidden in DEPLOYMENT_SECRETS:
@@ -57,6 +58,36 @@ class SecretTemplateTests(unittest.TestCase):
         # GitHub-only keys stay out of the CNB build requirement.
         self.assertNotIn("HEADSCALE_CI_AUTHKEY", union)
         self.assertNotIn("HEADSCALE_URL", union)
+        self.assertNotIn("GH_PAT", union)
+
+    def test_grouping_covers_the_owner_inventory(self):
+        info = inventory.classification()
+        # Other domain: GitHub-only credentials that a CNB build never uses.
+        self.assertEqual(sorted(info["other_domain"]),
+                         ["GH_PAT", "HEADSCALE_CI_AUTHKEY", "HEADSCALE_URL"])
+        # Forbidden: deployment, release and backup credentials, by name only.
+        for name in ("FIRMWARE_CD_SSH_PRIVATE_KEY", "FIRMWARE_CD_KNOWN_HOSTS",
+                     "AGENT_RUNTIME_USIGN_SECRET_KEY",
+                     "WRTBAK_HOME_PROXY_URL", "WRTBAK_OFFICE_PROXY_URL",
+                     "WRTBAK_R2_ACCESS_KEY_ID", "WRTBAK_R2_SECRET_ACCESS_KEY",
+                     "WRTBAK_R2_BUCKET", "WRTBAK_R2_ENDPOINT", "WRTBAK_R2_PREFIX",
+                     "WRTBAK_R2_REGION", "GITHUB_TOKEN"):
+            with self.subTest(secret=name):
+                self.assertIn(name, info["forbidden"])
+        # Reconciliation: names in the inventory without a workflow reference, and
+        # workflow references missing from the inventory.
+        self.assertEqual(sorted(info["inventory_not_referenced"]),
+                         ["GH_PAT", "WRTBAK_HOME_PROXY_URL", "WRTBAK_OFFICE_PROXY_URL",
+                          "WRTBAK_R2_ACCESS_KEY_ID", "WRTBAK_R2_BUCKET",
+                          "WRTBAK_R2_ENDPOINT", "WRTBAK_R2_PREFIX", "WRTBAK_R2_REGION",
+                          "WRTBAK_R2_SECRET_ACCESS_KEY"])
+        self.assertEqual(sorted(info["referenced_not_in_inventory"]),
+                         ["MULTICA_APP_URL", "MULTICA_SERVER_URL",
+                          "OPENWRT_WAN_PPPOE_PASSWORD", "OPENWRT_WAN_PPPOE_USERNAME"])
+        # The CNB preflight must agree with the embedded reviewed table.
+        cross = inventory.cross_check_preflight()
+        if cross is not None:
+            self.assertEqual(cross, [])
 
     def test_audit_workflow_is_manual_only_and_never_reads_values(self):
         self.assertTrue(AUDIT_WORKFLOW.is_file())
@@ -82,10 +113,12 @@ class SecretTemplateTests(unittest.TestCase):
                 r"^PRESENT_[A-Z0-9_]+:\s*\$\{\{\s*secrets\.[A-Z0-9_]+ != ''\s*\}\}$")
             comparisons += 1
         info = inventory.classification()
-        expected_probes = len(info["required"]) + len(info["optional"]) + len(info["ignored"])
+        expected_probes = (len(info["required"]) + len(info["optional"])
+                           + len(info["other_domain"]) - 1)  # GH_PAT is listed, never probed
         self.assertEqual(comparisons, expected_probes)
         probed = set(re.findall(r"PRESENT_([A-Z0-9_]+):", text))
-        self.assertEqual(probed, set(info["required"] + info["optional"] + info["ignored"]))
+        self.assertEqual(probed, set(info["required"] + info["optional"]
+                                     + [name for name in info["other_domain"] if name != "GH_PAT"]))
         for name in DEPLOYMENT_SECRETS:
             self.assertNotIn(name, probed)
         # The log loop may only print the boolean state.

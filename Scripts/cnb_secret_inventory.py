@@ -2,19 +2,23 @@
 """Audit and template the build-domain secrets a CNB fallback needs.
 
 Read-only by construction: this script only ever looks at secret *names* in the
-GitHub workflows, in ``.cnb.yml`` and in the CNB profile requirements. It never
-reads, prints, hashes or copies a value, and it never touches GitHub secrets, the
-cloud-secret repository or any ACL.
+GitHub workflows and at reviewed tables in this file. It never reads, prints,
+hashes or copies a value, and it never touches GitHub secrets, the cloud-secret
+repository, any ACL or the protected ``firmware-cd`` environment.
 
 Subcommands
 -----------
---audit                 list the build-domain secret names with their callers
---check PATH            validate an existing unfilled template (exit 1 on drift)
+--audit                 print the name inventory, grouped by build impact
+--check PATH            validate an unfilled template (exit 1 on drift)
 --write PATH            regenerate the unfilled template (placeholders only)
 
-The template holds placeholders, not values; ``<...>`` is documented as absent by
-the CNB replay (``clean_optional``), so an unfilled optional key can never be
-mistaken for a real credential.
+``--check`` additionally cross-checks the embedded profile requirement table
+against the CNB preflight module when that module is present (the CNB side); on
+GitHub the module is absent and the embedded table is authoritative.
+
+The template holds placeholders, not values. ``<...>`` is documented as absent by
+the CNB replay (``clean_optional``), so an unfilled key can never be mistaken for
+a real credential.
 """
 
 import argparse
@@ -23,33 +27,66 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "Scripts"))
-
-import cnb_re_profile_preflight as preflight  # noqa: E402
-
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 TEMPLATE_PATH = ROOT / ".cnb/cloud-secret-env.build.template.yml"
 SECRET_REF = re.compile(r"secrets\.([A-Z][A-Z0-9_]*)")
 PLACEHOLDER = re.compile(r"^<FILL:[^<>]{1,120}>$")
 
 # Reviewed ACL for the build credential file. The owner maintains the file; this
-# template only records the values that were actually agreed for the migration
-# branch, so nobody has to guess them.
+# template only records the values agreed for the migration branch.
 ALLOW_SLUGS = ["b2233/openwrt-ci"]
 ALLOW_EVENTS = ["web_trigger_re_private_build", "vscode"]
 ALLOW_BRANCHES = ["main", "migration/cnb-shadow-20260926"]
 
-# Referenced by the GitHub build callers but deliberately not used by the CNB
+# Reviewed per-profile requirement table (names only). It mirrors
+# Scripts/cnb_re_profile_preflight.py on the CNB side; --check cross-checks both
+# when that module is importable.
+REVIEWED_PROFILE_REQUIREMENTS = {
+    "re-cs-07": ("SAMBA_DEFAULT_PASSWORD",),
+    "re-cs-02": ("SAMBA_DEFAULT_PASSWORD",),
+    "re-ss-01": ("SAMBA_DEFAULT_PASSWORD",),
+    "wlg-re-cs-07": ("SAMBA_DEFAULT_PASSWORD",),
+    "cpe5g-a": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),
+    "cpe5g-b": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),
+    "cpe5g-b-configonly": ("SAMBA_DEFAULT_PASSWORD",),
+    "qca-ipq60xx-wifi-no": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),
+    "qca-ipq60xx-wifi-yes": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),
+}
+
+# Referenced by the GitHub build callers but deliberately unused by the CNB
 # replay: the CI debug hold is never replayed and the replay strips these keys
 # from the builder environment.
-CNB_IGNORED = ("HEADSCALE_CI_AUTHKEY", "HEADSCALE_URL")
+OTHER_DOMAIN = {
+    "HEADSCALE_CI_AUTHKEY": "GitHub CI debug hold only; not replayed by the CNB build",
+    "HEADSCALE_URL": "GitHub CI debug hold only; stripped from the CNB builder environment",
+    "GH_PAT": "GitHub API automation credential; not a build credential",
+}
 
-# Deployment / release credentials: the build boundary must never receive them.
-NEVER_IN_BUILD = (
-    "FIRMWARE_CD_SSH_PRIVATE_KEY",
-    "FIRMWARE_CD_KNOWN_HOSTS",
-    "AGENT_RUNTIME_USIGN_SECRET_KEY",
-    "GITHUB_TOKEN",
+# Deployment, release and backup credentials: the build boundary must never
+# receive them. ``firmware-cd`` environment secrets are listed here only by name;
+# this repository never binds that environment.
+NEVER_IN_BUILD = {
+    "FIRMWARE_CD_SSH_PRIVATE_KEY": "firmware-cd environment (deployment)",
+    "FIRMWARE_CD_KNOWN_HOSTS": "firmware-cd environment (deployment)",
+    "AGENT_RUNTIME_USIGN_SECRET_KEY": "agent runtime signing/release",
+    "WRTBAK_HOME_PROXY_URL": "device backup proxy",
+    "WRTBAK_OFFICE_PROXY_URL": "device backup proxy",
+    "WRTBAK_R2_ACCESS_KEY_ID": "device backup object storage",
+    "WRTBAK_R2_SECRET_ACCESS_KEY": "device backup object storage",
+    "WRTBAK_R2_BUCKET": "device backup object storage",
+    "WRTBAK_R2_ENDPOINT": "device backup object storage",
+    "WRTBAK_R2_PREFIX": "device backup object storage",
+    "WRTBAK_R2_REGION": "device backup object storage",
+    "GITHUB_TOKEN": "GitHub Actions built-in, not a transferable secret",
+}
+
+# Names the owner's GitHub secret inventory contains but no repository workflow
+# references, and names workflows reference that the inventory did not list.
+INVENTORY_NOT_REFERENCED = ("GH_PAT",) + tuple(
+    name for name in NEVER_IN_BUILD if name.startswith("WRTBAK_"))
+REFERENCED_NOT_IN_INVENTORY = (
+    "OPENWRT_WAN_PPPOE_USERNAME", "OPENWRT_WAN_PPPOE_PASSWORD",
+    "MULTICA_SERVER_URL", "MULTICA_APP_URL",
 )
 
 PURPOSE = {
@@ -73,47 +110,76 @@ def workflow_secret_names():
     """Map every referenced secret name to the workflow files that reference it."""
     found = {}
     for workflow in sorted(WORKFLOW_DIR.glob("*.yml")):
+        if workflow.name == "CNB-Secret-Audit.yml":
+            # The audit workflow references these names only for boolean presence
+            # checks; it is not a build caller, so it must not appear as one.
+            continue
         # Comments may mention a placeholder such as secrets.<NAME>; only real
         # references count, so comments are stripped before scanning.
         text = "\n".join(line.split("#", 1)[0]
-                          for line in workflow.read_text(encoding="utf-8").splitlines())
+                         for line in workflow.read_text(encoding="utf-8").splitlines())
         for name in set(SECRET_REF.findall(text)):
             found.setdefault(name, []).append(workflow.name)
     return {name: sorted(files) for name, files in found.items()}
 
 
 def profile_requirements():
-    """Return required secret names per CNB profile and the union of them."""
-    per_profile = {}
-    for name, profile in preflight.PROFILES.items():
-        required = tuple(preflight.profile_expectations(profile)["required_secrets"])
-        per_profile[name] = required
+    """Required secret names per CNB profile and their union (names only)."""
+    per_profile = {name: tuple(required)
+                   for name, required in REVIEWED_PROFILE_REQUIREMENTS.items()}
     union = sorted({secret for required in per_profile.values() for secret in required})
     return per_profile, union
 
 
+def cross_check_preflight():
+    """Compare the embedded table with the CNB preflight when it is available."""
+    preflight_path = ROOT / "Scripts/cnb_re_profile_preflight.py"
+    if not preflight_path.is_file():
+        return None
+    sys.path.insert(0, str(ROOT / "Scripts"))
+    import cnb_re_profile_preflight as preflight  # noqa: E402
+
+    problems = []
+    for name, profile in preflight.PROFILES.items():
+        expected = tuple(preflight.profile_expectations(profile)["required_secrets"])
+        if name not in REVIEWED_PROFILE_REQUIREMENTS:
+            problems.append(f"profile missing from the reviewed table: {name}")
+        elif tuple(REVIEWED_PROFILE_REQUIREMENTS[name]) != expected:
+            problems.append(f"profile requirement drift: {name}")
+    for name in REVIEWED_PROFILE_REQUIREMENTS:
+        if name not in preflight.PROFILES:
+            problems.append(f"reviewed table lists an unknown profile: {name}")
+    return problems
+
+
 def classification():
-    """Classify every referenced name for the build-domain template."""
+    """Group every known name by its impact on the CNB build."""
     referenced = workflow_secret_names()
     per_profile, required_union = profile_requirements()
-    required = []
-    optional = []
-    ignored = []
+    required, optional, other, forbidden = [], [], [], []
     for name in sorted(referenced):
         if name in NEVER_IN_BUILD:
             continue
-        if name in CNB_IGNORED:
-            ignored.append(name)
+        if name in OTHER_DOMAIN:
+            other.append(name)
         elif name in required_union:
             required.append(name)
         else:
             optional.append(name)
+    for name in sorted(OTHER_DOMAIN):
+        if name not in other:
+            other.append(name)
+    for name in sorted(NEVER_IN_BUILD):
+        forbidden.append(name)
     missing = [name for name in required_union if name not in referenced]
     if missing:
         raise SystemExit("profile requirement is absent from the GitHub workflows: "
                          + ", ".join(missing))
-    return {"referenced": referenced, "per_profile": per_profile, "required_union": required_union,
-            "required": required, "optional": optional, "ignored": sorted(ignored)}
+    return {"referenced": referenced, "per_profile": per_profile,
+            "required_union": required_union, "required": required, "optional": optional,
+            "other_domain": sorted(other), "forbidden": forbidden,
+            "inventory_not_referenced": sorted(INVENTORY_NOT_REFERENCED),
+            "referenced_not_in_inventory": sorted(REFERENCED_NOT_IN_INVENTORY)}
 
 
 def render_template():
@@ -129,7 +195,8 @@ def render_template():
         "# Placeholder semantics: the CNB replay treats <...> as absent, so a",
         "# placeholder can never be used as a credential.",
         "#",
-        "# Scope: build domain only. Deployment credentials are deliberately absent.",
+        "# Scope: build domain only. Deployment, release and backup credentials are",
+        "# deliberately absent (see the comments at the end of this file).",
         "",
         "# ACL the owner maintains on that file (keep as reviewed):",
         "allow_slugs:",
@@ -160,20 +227,30 @@ def render_template():
         lines.append(f'{name}: "<FILL:optional>"')
         lines.append("")
     lines += [
-        "# Not used by the CNB replay (kept out of the builder environment):",
+        "# Not used by the CNB build (names only; never add them here):",
     ]
-    lines += [f"#   {name}" for name in info["ignored"]]
+    lines += [f"#   {name:32s} {OTHER_DOMAIN[name]}" for name in info["other_domain"]]
     lines += [
         "",
-        "# Never add deployment or release credentials here:",
+        "# Forbidden here (deployment/release/backup domain, names only):",
     ]
-    lines += [f"#   {name}" for name in NEVER_IN_BUILD if name != "GITHUB_TOKEN"]
-    lines.append("")
+    lines += [f"#   {name:32s} {NEVER_IN_BUILD[name]}"
+              for name in info["forbidden"] if name != "GITHUB_TOKEN"]
+    lines += [
+        "#   GITHUB_TOKEN                     GitHub Actions built-in, not transferable",
+        "",
+        "# Reconciliation notes (names only):",
+        "#   present in the GitHub inventory but referenced by no workflow: "
+        + ", ".join(info["inventory_not_referenced"]),
+        "#   referenced by workflows but absent from the provided inventory: "
+        + ", ".join(info["referenced_not_in_inventory"]),
+        "",
+    ]
     return "\n".join(lines)
 
 
 def validate_template(path):
-    """Fail closed on any drift or on any value that is not a placeholder."""
+    """Fail closed on drift or on any value that is not a placeholder."""
     info = classification()
     if not path.is_file():
         return [f"template is missing: {path}"]
@@ -198,36 +275,53 @@ def validate_template(path):
             problems.append(f"required secret missing from template: {name}")
     for name in names:
         if name in NEVER_IN_BUILD:
-            problems.append(f"deployment/release credential must not be in the build template: {name}")
+            problems.append(f"deployment/release/backup credential must not be a template key: {name}")
+        if name in OTHER_DOMAIN:
+            problems.append(f"other-domain credential must not be a template key: {name}")
         if name not in info["referenced"]:
             problems.append(f"template lists a name no GitHub workflow references: {name}")
         value = data[name]
         if not isinstance(value, str) or not (PLACEHOLDER.match(value) or value == ""):
             problems.append(f"{name} is not an empty or <FILL:...> placeholder")
+    cross = cross_check_preflight()
+    if cross:
+        problems.extend(cross)
     return problems
 
 
 def cmd_audit():
     info = classification()
-    print("build-domain secret names (names only; no values are read or printed):")
+    print("build-domain secret names (names only; no value is read or printed)")
+    print("  [build-required]")
     for name in info["required"]:
         profiles = ",".join(sorted(p for p, req in info["per_profile"].items() if name in req))
-        print(f"  required  {name:34s} profiles={profiles}")
+        print(f"    {name:34s} profiles={profiles}")
+    print("  [build-optional]")
     for name in info["optional"]:
-        print(f"  optional  {name:34s} callers={','.join(info['referenced'][name])}")
-    for name in info["ignored"]:
-        print(f"  unused    {name:34s} (GitHub-only; not used by the CNB replay)")
-    for name in NEVER_IN_BUILD:
-        if name != "GITHUB_TOKEN":
-            print(f"  forbidden {name:34s} (deployment/release boundary)")
-    print(f"required union: {','.join(info['required_union'])}")
+        print(f"    {name:34s} callers={','.join(info['referenced'][name])}")
+    print("  [github-only / other domain: not used by the CNB build]")
+    for name in info["other_domain"]:
+        print(f"    {name:34s} {OTHER_DOMAIN[name]}")
+    print("  [forbidden in the build domain: deployment/release/backup]")
+    for name in info["forbidden"]:
+        print(f"    {name:34s} {NEVER_IN_BUILD[name]}")
+    print("  [reconciliation]")
+    print("    inventory but no workflow reference: "
+          + ", ".join(info["inventory_not_referenced"]))
+    print("    workflow reference but not in the inventory: "
+          + ", ".join(info["referenced_not_in_inventory"]))
+    print("    required union: " + ",".join(info["required_union"]))
+    cross = cross_check_preflight()
+    print("    preflight cross-check: "
+          + ("not available (GitHub side)" if cross is None
+             else ("passed" if not cross else "; ".join(cross))))
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--audit", action="store_true", help="print the name inventory")
+    parser.add_argument("--audit", action="store_true", help="print the grouped name inventory")
     parser.add_argument("--check", metavar="PATH", help="validate an unfilled template")
     parser.add_argument("--write", metavar="PATH", help="regenerate the unfilled template")
     args = parser.parse_args()
