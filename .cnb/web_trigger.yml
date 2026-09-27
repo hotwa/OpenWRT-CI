@@ -16,3 +16,30 @@ branch:
       - name: Build private RE fleet (RE-CS-07 / RE-CS-02 / RE-SS-01, no release or device)
         description: One click starts every enabled profile in parallel (32 CPUs each, about 44 core-hours per profile) - pinned source, private overlay, full compile, image and checksum guards, private commit attachments
         event: web_trigger_re_private_build
+      # Single-target buttons: one click starts exactly one pipeline, so a model can
+      # be compiled and verified on its own (about 44 core-hours per firmware run).
+      # Same pinned source, runner contract and private attachment as its fleet twin.
+      - name: Build RE-CS-07 only (single target, no release or device)
+        description: One pipeline - RE-CS-07 firmware with pinned source and private commit attachment
+        event: web_trigger_re_build_cs07
+      - name: Build RE-CS-02 only (single target, no release or device)
+        description: One pipeline - RE-CS-02 firmware with pinned source and private commit attachment
+        event: web_trigger_re_build_cs02
+      - name: Build RE-SS-01 only (single target, no release or device)
+        description: One pipeline - RE-SS-01 firmware with pinned source and private commit attachment
+        event: web_trigger_re_build_ss01
+      - name: Build CPE-5G only (single target, no release or device)
+        description: One pipeline - CPE-5G B overlay firmware; fails closed until the device activation key exists
+        event: web_trigger_re_build_cpe5g
+      - name: Render CPE-5G config only (single target, no firmware, no upload)
+        description: One pipeline - CPE-5G WRT_TEST render; compiles nothing and uploads nothing
+        event: web_trigger_re_build_cpe5g_configonly
+      - name: Build QCA WIFI-NO only (single target, no release or device)
+        description: One pipeline - QCA-6.18 IPQ60XX-WIFI-NO firmware; fails closed until the device activation key exists
+        event: web_trigger_re_build_qca_no
+      - name: Build QCA WIFI-YES only (single target, no release or device)
+        description: One pipeline - QCA-6.18 IPQ60XX-WIFI-YES firmware; fails closed until the device activation key exists
+        event: web_trigger_re_build_qca_yes
+      - name: Build WLG-RE-CS-07 only (single target, no release or device)
+        description: One pipeline - WLG-RE-CS-07 lab-identity firmware with pinned source and private commit attachment
+        event: web_trigger_re_build_wlg

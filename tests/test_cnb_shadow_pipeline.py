@@ -8,6 +8,56 @@ import unittest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+BRANCH = "migration/cnb-shadow-20260926"
+FLEET_EVENT = "web_trigger_re_private_build"
+BUILD_CREDENTIAL = (
+    "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
+)
+# One manual event per fleet profile: a click there must start exactly one
+# pipeline, while FLEET_EVENT keeps fanning out every enabled profile at once.
+SINGLE_TARGET_EVENTS = {
+    "web_trigger_re_build_cs07": "re-cs-07",
+    "web_trigger_re_build_cs02": "re-cs-02",
+    "web_trigger_re_build_ss01": "re-ss-01",
+    "web_trigger_re_build_cpe5g": "cpe5g-b",
+    "web_trigger_re_build_cpe5g_configonly": "cpe5g-b-configonly",
+    "web_trigger_re_build_qca_no": "qca-ipq60xx-wifi-no",
+    "web_trigger_re_build_qca_yes": "qca-ipq60xx-wifi-yes",
+    "web_trigger_re_build_wlg": "wlg-re-cs-07",
+}
+NO_SECRET_EVENTS = {
+    "web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
+    "web_trigger_re_attachment_probe",
+}
+
+
+def cnb_branch_config():
+    return yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))[BRANCH]
+
+
+def replay_stage(entry):
+    for stage in entry["stages"]:
+        if "cnb_replay_core.py" in str(stage.get("script", "")):
+            return stage
+    raise AssertionError("entry without a replay stage")
+
+
+def profile_of(entry):
+    return replay_stage(entry)["script"].split()[-1]
+
+
+def is_config_only(entry):
+    return "CNB_REPLAY_WRT_TEST=1" in replay_stage(entry)["script"]
+
+
+def firmware_event_owners(branch):
+    """Events that own at least one replay (firmware or config-only) pipeline."""
+    owners = set()
+    for event, entries in branch.items():
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict) and "cnb_replay_core.py" in str(entry):
+                owners.add(event)
+    return owners
 
 
 class ShadowPipelineTest(unittest.TestCase):
@@ -17,7 +67,12 @@ class ShadowPipelineTest(unittest.TestCase):
         branch = config["migration/cnb-shadow-20260926"]
         self.assertEqual(list(branch), [
             "push", "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
-            "web_trigger_re_private_build", "vscode",
+            "web_trigger_re_private_build",
+            "web_trigger_re_build_cs07", "web_trigger_re_build_cs02",
+            "web_trigger_re_build_ss01", "web_trigger_re_build_cpe5g",
+            "web_trigger_re_build_cpe5g_configonly", "web_trigger_re_build_qca_no",
+            "web_trigger_re_build_qca_yes", "web_trigger_re_build_wlg",
+            "vscode",
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
         self.assertEqual(len(branch["push"]), 2)
@@ -41,7 +96,7 @@ class ShadowPipelineTest(unittest.TestCase):
             "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
             "vscode",
             "crontab: 0 9 * * 0"
-        })
+        } | set(SINGLE_TARGET_EVENTS))
         manual = scheduled["web_trigger_re_preflight"][0]
         self.assertEqual(manual["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
@@ -64,18 +119,6 @@ class ShadowPipelineTest(unittest.TestCase):
         # not advertise an upload. One click starts all of them concurrently.
         fleet = scheduled["web_trigger_re_private_build"]
         self.assertEqual(len(fleet), 8)
-
-        def replay_stage(entry):
-            for stage in entry["stages"]:
-                if "cnb_replay_core.py" in str(stage.get("script", "")):
-                    return stage
-            self.fail("fleet entry without a replay stage")
-
-        def profile_of(entry):
-            return replay_stage(entry)["script"].split()[-1]
-
-        def is_config_only(entry):
-            return "CNB_REPLAY_WRT_TEST=1" in replay_stage(entry)["script"]
 
         self.assertEqual([profile_of(e) for e in fleet], [
             "re-cs-07", "re-cs-02", "re-ss-01", "cpe5g-b",
@@ -132,6 +175,56 @@ class ShadowPipelineTest(unittest.TestCase):
         ])
         self.assertEqual(set(weekly), {"name", "docker", "stages"})
 
+    def test_single_target_events_trigger_exactly_one_pipeline(self):
+        branch = cnb_branch_config()
+        fleet = branch[FLEET_EVENT]
+        self.assertEqual(len(fleet), 8)
+        fleet_by_profile = {profile_of(entry): entry for entry in fleet}
+        self.assertEqual(len(fleet_by_profile), 8)
+
+        mirrored = {}
+        for event, profile in SINGLE_TARGET_EVENTS.items():
+            with self.subTest(event=event):
+                self.assertTrue(event.startswith("web_trigger_"))
+                # Exactly one pipeline per single-target event: the click cannot
+                # start a sibling target.
+                self.assertEqual(len(branch[event]), 1)
+                entry = branch[event][0]
+                self.assertEqual(profile_of(entry), profile)
+                self.assertIn("single target", entry["name"])
+                # The isolated run must compile the very same thing as its fleet
+                # twin: identical imports, runner, stages and upload semantics,
+                # with only the pipeline name marking the isolation.
+                expected = dict(fleet_by_profile[profile])
+                expected["name"] = entry["name"]
+                self.assertEqual(entry, expected)
+                # Independent of the fleet: one credential import, 32 amd64 CPUs,
+                # and an upload stage exactly for the firmware profiles.
+                self.assertEqual(entry["imports"], [BUILD_CREDENTIAL])
+                self.assertEqual(entry["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
+                uploads = any("attachments" in str(stage.get("settings", ""))
+                              for stage in entry["stages"])
+                self.assertEqual(uploads, not is_config_only(entry))
+                mirrored[profile] = entry
+
+        # Coverage: the single-target events mirror the fleet one for one.
+        self.assertEqual(set(mirrored), set(fleet_by_profile))
+        sys.path.insert(0, str(ROOT / "Scripts"))
+        import cnb_re_profile_preflight as preflight  # noqa: E402
+        disabled = {name for name, profile in preflight.PROFILES.items()
+                    if profile.get("disabled_in_fleet")}
+        self.assertEqual(disabled, {"cpe5g-a"})
+        self.assertFalse(set(mirrored) & disabled)
+
+        # Isolation: no event other than the fleet event and these single-target
+        # events may own a firmware pipeline, so the fan-out stays the only
+        # multi-target entry point.
+        self.assertEqual(firmware_event_owners(branch),
+                         {FLEET_EVENT} | set(SINGLE_TARGET_EVENTS))
+        for event in NO_SECRET_EVENTS | {"push", "crontab: 0 9 * * 0"}:
+            with self.subTest(event=event):
+                self.assertNotIn("imports", str(branch[event]))
+
     def test_devbox_long_compile_is_branch_scoped_and_bounded(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
         # The devbox must stay a branch-scoped event, never a global "$" entry.
@@ -180,9 +273,21 @@ class ShadowPipelineTest(unittest.TestCase):
         buttons = yaml.safe_load((ROOT / ".cnb/web_trigger.yml").read_text(encoding="utf-8"))
         self.assertEqual(len(buttons["branch"]), 1)
         self.assertEqual(buttons["branch"][0]["reg"], "^migration/cnb-shadow-20260926$")
-        self.assertEqual({b["event"] for b in buttons["branch"][0]["buttons"]},
-                         {"web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
-                          "web_trigger_re_attachment_probe", "web_trigger_re_private_build"})
+        button_events = [b["event"] for b in buttons["branch"][0]["buttons"]]
+        # Every button is unique and complete, and each single-target button maps
+        # to one event only.
+        self.assertEqual(sorted(button_events), sorted(
+            NO_SECRET_EVENTS | {FLEET_EVENT} | set(SINGLE_TARGET_EVENTS)))
+        branch_config = cnb_branch_config()
+        for event in button_events:
+            with self.subTest(event=event):
+                self.assertIn(event, list(branch_config))
+        for event, profile in SINGLE_TARGET_EVENTS.items():
+            with self.subTest(event=event):
+                button = next(b for b in buttons["branch"][0]["buttons"]
+                              if b["event"] == event)
+                self.assertIn("single target", button["name"])
+                self.assertEqual([profile_of(e) for e in branch_config[event]], [profile])
         for button in buttons["branch"][0]["buttons"]:
             self.assertNotIn("permissions", button)  # CNB still requires repository write permission
             self.assertNotIn("inputs", button)
