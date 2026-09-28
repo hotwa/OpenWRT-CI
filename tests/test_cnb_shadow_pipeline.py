@@ -29,6 +29,11 @@ NO_SECRET_EVENTS = {
     "web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
     "web_trigger_re_attachment_probe",
 }
+# The same single-target pipelines, reachable through the OPENAPI
+# `POST /{repo}/-/build/start` instead of a page button (event family
+# `api_trigger_*`). Kept in lockstep with SINGLE_TARGET_EVENTS on purpose.
+API_TARGET_EVENTS = {event.replace("web_trigger_", "api_trigger_"): profile
+                     for event, profile in SINGLE_TARGET_EVENTS.items()}
 
 
 def cnb_branch_config():
@@ -72,6 +77,10 @@ class ShadowPipelineTest(unittest.TestCase):
             "web_trigger_re_build_ss01", "web_trigger_re_build_cpe5g",
             "web_trigger_re_build_cpe5g_configonly", "web_trigger_re_build_qca_no",
             "web_trigger_re_build_qca_yes", "web_trigger_re_build_wlg",
+            "api_trigger_re_build_cs07", "api_trigger_re_build_cs02",
+            "api_trigger_re_build_ss01", "api_trigger_re_build_cpe5g",
+            "api_trigger_re_build_cpe5g_configonly", "api_trigger_re_build_qca_no",
+            "api_trigger_re_build_qca_yes", "api_trigger_re_build_wlg",
             "vscode",
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
@@ -96,7 +105,7 @@ class ShadowPipelineTest(unittest.TestCase):
             "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
             "vscode",
             "crontab: 0 9 * * 0"
-        } | set(SINGLE_TARGET_EVENTS))
+        } | set(SINGLE_TARGET_EVENTS) | set(API_TARGET_EVENTS))
         manual = scheduled["web_trigger_re_preflight"][0]
         self.assertEqual(manual["stages"][0]["script"],
                          "unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN; python3 Scripts/cnb_re_profile_preflight.py")
@@ -216,14 +225,66 @@ class ShadowPipelineTest(unittest.TestCase):
         self.assertEqual(disabled, {"cpe5g-a"})
         self.assertFalse(set(mirrored) & disabled)
 
-        # Isolation: no event other than the fleet event and these single-target
-        # events may own a firmware pipeline, so the fan-out stays the only
-        # multi-target entry point.
+        # Isolation: no event other than the fleet event and the reviewed
+        # single-target events may own a firmware pipeline, so the fan-out stays
+        # the only multi-target entry point.
         self.assertEqual(firmware_event_owners(branch),
-                         {FLEET_EVENT} | set(SINGLE_TARGET_EVENTS))
+                         {FLEET_EVENT} | set(SINGLE_TARGET_EVENTS) | set(API_TARGET_EVENTS))
         for event in NO_SECRET_EVENTS | {"push", "crontab: 0 9 * * 0"}:
             with self.subTest(event=event):
                 self.assertNotIn("imports", str(branch[event]))
+
+    def test_api_trigger_events_mirror_single_targets_without_a_workspace(self):
+        """The API channel must be the same build, and never a dev workspace."""
+        branch = cnb_branch_config()
+        api_seen = {}
+        for event, profile in API_TARGET_EVENTS.items():
+            with self.subTest(event=event):
+                self.assertEqual(len(branch[event]), 1)
+                entry = branch[event][0]
+                self.assertEqual(profile_of(entry), profile)
+                self.assertIn("api trigger", entry["name"])
+                # Byte-identical to the reviewed web single-target entry, name apart.
+                web_entry = branch[event.replace("api_trigger_", "web_trigger_")][0]
+                expected = dict(web_entry)
+                expected["name"] = entry["name"]
+                self.assertEqual(entry, expected)
+                self.assertEqual(entry["imports"], [BUILD_CREDENTIAL])
+                self.assertEqual(entry["runner"], {"tags": "cnb:arch:amd64", "cpus": 32})
+                # A plain build pipeline: no vscode service, so an API run can never
+                # leave an interactive workspace (and its 32 CPUs) behind.
+                self.assertNotIn("services", entry)
+                self.assertNotIn("vscode", str(entry))
+                uploads = [s for s in entry["stages"]
+                           if "attachments" in str(s.get("settings", ""))]
+                if is_config_only(entry):
+                    # Rendering only: nothing to upload, nothing to leave behind.
+                    self.assertEqual(uploads, [])
+                    self.assertIn("no firmware", entry["name"])
+                else:
+                    # The upload is the last stage, so the pipeline ends right
+                    # after the attachment upload completes.
+                    self.assertEqual(len(uploads), 1)
+                    self.assertIs(uploads[0], entry["stages"][-1])
+                    self.assertEqual(uploads[0]["settings"],
+                                     {"attachments": ["./wrt/upload/*"], "ttl": 14})
+                api_seen[profile] = entry
+
+        # Same coverage as the web channel, minus the user-disabled profile.
+        self.assertEqual(set(api_seen), set(SINGLE_TARGET_EVENTS.values()))
+        sys.path.insert(0, str(ROOT / "Scripts"))
+        import cnb_re_profile_preflight as preflight  # noqa: E402
+        disabled = {name for name, profile in preflight.PROFILES.items()
+                    if profile.get("disabled_in_fleet")}
+        self.assertEqual(disabled, {"cpe5g-a"})
+        self.assertFalse(set(api_seen) & disabled)
+
+        # Isolation: the API events add no new replay owners and no new buttons.
+        self.assertEqual(firmware_event_owners(branch),
+                         {FLEET_EVENT} | set(SINGLE_TARGET_EVENTS) | set(API_TARGET_EVENTS))
+        buttons = yaml.safe_load((ROOT / ".cnb/web_trigger.yml").read_text(encoding="utf-8"))
+        button_events = {b["event"] for b in buttons["branch"][0]["buttons"]}
+        self.assertFalse(button_events & set(API_TARGET_EVENTS))
 
     def test_devbox_long_compile_is_branch_scoped_and_bounded(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
@@ -253,10 +314,16 @@ class ShadowPipelineTest(unittest.TestCase):
         for pattern in (
             r"\binclude\s*:", r"\benv\s*:",
             r"\bpull_request\s*:",
-            r"\b(schedule|tag_push|api_trigger)\s*:",
+            r"\b(schedule|tag_push)\s*:",
             r"\b(cnb:apply|cnb:trigger|docker:cache)\b",
         ):
             self.assertNotRegex(text, pattern)
+        # api_trigger is now a reviewed channel, but only for the eight
+        # single-target events: no generic api_trigger event may appear.
+        api_keys = [line.strip()[:-1] for line in text.splitlines()
+                    if line.startswith("  api_trigger")]
+        self.assertEqual(sorted(api_keys), sorted(API_TARGET_EVENTS))
+        self.assertNotRegex(text, r"\bapi_trigger\s*:\s*$")
         self.assertIn("unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN", probe)
         branch = yaml.safe_load(text)["migration/cnb-shadow-20260926"]
         for event in ("push", "web_trigger_re_preflight", "web_trigger_re_host_runtime_probe",
