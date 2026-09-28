@@ -24,7 +24,12 @@ prefix="${lan_ip%.*}."
 [ "$prefix" != "$lan_ip" ] || exit 1
 
 (
-    flock -n 9 || exit 0
+    if [ "$mode" = event ]; then
+        # Do not lose the migration hint when a periodic send owns the lock.
+        flock -w 8 9 || exit 1
+    else
+        flock -n 9 || exit 0
+    fi
     stamp="$(date +%s)"
     temp="$(mktemp /tmp/pi-dhcp-sync.XXXXXX)"
     trap 'rm -f "$temp"' EXIT HUP INT TERM
