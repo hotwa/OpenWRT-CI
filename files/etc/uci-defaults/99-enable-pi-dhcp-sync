@@ -1,0 +1,7 @@
+#!/bin/sh
+# Enable even without a token: the init script stays idle until private
+# site credentials are restored or provisioned, then starts on the next boot.
+[ -x /etc/init.d/pi-dhcp-sync ] || exit 0
+/etc/init.d/pi-dhcp-sync enable >/dev/null 2>&1 || true
+/etc/init.d/pi-dhcp-sync start >/dev/null 2>&1 || true
+exit 0

@@ -1,0 +1,62 @@
+#!/bin/sh
+# Send a complete DHCP lease snapshot. The credential and URL live in curl.conf.
+set -eu
+
+mode="${1:-send}"
+case "$mode" in
+    loop)
+        while :; do
+            "$0" send || true
+            sleep 5
+        done
+        ;;
+    send|event) ;;
+    *) exit 2 ;;
+esac
+
+[ -r /etc/pi-dhcp-sync/curl.conf ] || exit 1
+[ -r /etc/pi-dhcp-sync/site ] || exit 1
+[ -r /tmp/dhcp.leases ] || exit 1
+site="$(cat /etc/pi-dhcp-sync/site)"
+printf '%s' "$site" | grep -Eq '^s[0-9]+$' || exit 1
+lan_ip="$(uci -q get network.lan.ipaddr)"
+prefix="${lan_ip%.*}."
+[ "$prefix" != "$lan_ip" ] || exit 1
+
+(
+    if [ "$mode" = event ]; then
+        # Do not lose the migration hint when a periodic send owns the lock.
+        flock -w 8 9 || exit 1
+    else
+        flock -n 9 || exit 0
+    fi
+    stamp="$(date +%s)"
+    temp="$(mktemp /tmp/pi-dhcp-sync.XXXXXX)"
+    trap 'rm -f "$temp"' EXIT HUP INT TERM
+    {
+        printf '{"site":"%s","timestamp":%s,"leases":[' "$site" "$stamp"
+        awk -v now="$stamp" -v prefix="$prefix" '
+            $1 ~ /^[0-9]+$/ && $1 > now &&
+            $2 ~ /^([0-9a-fA-F][0-9a-fA-F]:){5}[0-9a-fA-F][0-9a-fA-F]$/ &&
+            index($3, prefix) == 1 {
+                name = tolower($4)
+                if (name == "*" || name !~ /^[a-z0-9-]+$/) name = ""
+                if (count++) printf ","
+                printf "{\"mac\":\"%s\",\"ip\":\"%s\",\"expires\":%d,\"hostname\":\"%s\"}",
+                    tolower($2), $3, $1, name
+            }
+        ' /tmp/dhcp.leases
+        printf ']'
+        if [ "$mode" = event ]; then
+            case "${2:-}" in add|update|remove) ;; *) exit 2 ;; esac
+            printf '%s' "${3:-}" | grep -Eiq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || exit 2
+            printf '%s' "${4:-}" | grep -Eq '^[0-9.]+$' || exit 2
+            printf ',"event":{"action":"%s","mac":"%s","ip":"%s"}' \
+                "$2" "$3" "$4"
+        fi
+        printf '}'
+    } >"$temp"
+    curl -fsS --config /etc/pi-dhcp-sync/curl.conf \
+        -H 'Content-Type: application/json' --data-binary "@$temp" \
+        >/tmp/pi-dhcp-sync.last-success
+) 9>/tmp/pi-dhcp-sync.lock
