@@ -1,6 +1,9 @@
 # OpenWRT-CI
 云编译OpenWRT固件，开启内核eBPF，支持DAED 内核级透明代理
 
+三站 DHCP 租约上报与 `*.pi.jmsu.top` 私有 DNS 的固件集成说明：
+[docs/pi-dhcp-sync.md](docs/pi-dhcp-sync.md)。
+
 官方版：
 https://github.com/immortalwrt/immortalwrt.git
 

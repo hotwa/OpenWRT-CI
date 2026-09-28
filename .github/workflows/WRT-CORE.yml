@@ -375,6 +375,7 @@ jobs:
           for test_file in ./tests/test_*.sh; do
             bash "$test_file"
           done
+          python3 -m unittest tests.test_nikki_dns_overlay_patch
 
       - name: Compute Build Cache Identity
         run: |
@@ -662,7 +663,9 @@ jobs:
             ./wrt/files/etc/config \
             ./wrt/files/etc/init.d \
             ./wrt/files/etc/rc.d \
+            ./wrt/files/etc/hotplug.d/dhcp \
             ./wrt/files/etc/hotplug.d/iface \
+            ./wrt/files/lib/upgrade/keep.d \
             ./wrt/files/etc/multica \
             ./wrt/files/etc/profile.d \
             ./wrt/files/etc/rclone-data-backup \
@@ -680,6 +683,7 @@ jobs:
               echo "ERROR: Nikki subscription update must return failure when download validation fails" >&2
               exit 1
             }
+            python3 ./Scripts/patch_nikki_dns_overlay.py "$nikki_package_init"
           else
             echo "Nikki package init is absent for this target; skipping its startup-order assertion"
           fi
@@ -691,6 +695,12 @@ jobs:
           fi
           cp -f ./files/etc/config/rclone-data-backup ./wrt/files/etc/config/rclone-data-backup
           cp -f ./files/etc/config/nikki-dns-failopen ./wrt/files/etc/config/nikki-dns-failopen
+          cp -f ./files/usr/sbin/pi-dhcp-sync ./wrt/files/usr/sbin/pi-dhcp-sync
+          cp -f ./files/etc/init.d/pi-dhcp-sync ./wrt/files/etc/init.d/pi-dhcp-sync
+          cp -f ./files/etc/hotplug.d/dhcp/95-pi-dhcp-sync ./wrt/files/etc/hotplug.d/dhcp/95-pi-dhcp-sync
+          cp -f ./files/etc/uci-defaults/98-pi-service-dns ./wrt/files/etc/uci-defaults/98-pi-service-dns
+          cp -f ./files/etc/uci-defaults/99-enable-pi-dhcp-sync ./wrt/files/etc/uci-defaults/99-enable-pi-dhcp-sync
+          cp -f ./files/lib/upgrade/keep.d/pi-dhcp-sync ./wrt/files/lib/upgrade/keep.d/pi-dhcp-sync
           cp -f ./files/etc/crontabs/root ./wrt/files/etc/crontabs/root
           cp -f ./files/.npmrc ./wrt/files/.npmrc
           cp -f ./files/etc/npmrc ./wrt/files/etc/npmrc
@@ -765,6 +775,11 @@ jobs:
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
             ./wrt/files/etc/init.d/nikki-dns-failopen \
+            ./wrt/files/etc/init.d/pi-dhcp-sync \
+            ./wrt/files/etc/hotplug.d/dhcp/95-pi-dhcp-sync \
+            ./wrt/files/etc/uci-defaults/98-pi-service-dns \
+            ./wrt/files/etc/uci-defaults/99-enable-pi-dhcp-sync \
+            ./wrt/files/usr/sbin/pi-dhcp-sync \
             ./wrt/files/etc/init.d/upgrade-tmp-capacity \
             ./wrt/files/etc/init.d/nikki-subscription-bootstrap \
             ./wrt/files/etc/init.d/nikki-subscription-sync \

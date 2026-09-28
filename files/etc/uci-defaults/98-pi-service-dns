@@ -1,0 +1,38 @@
+#!/bin/sh
+# Route the private Pi zone through the Tailnet AdGuard gateway on first boot.
+set -eu
+[ -f /etc/config/nikki ] || exit 0
+command -v uci >/dev/null 2>&1 || exit 0
+
+changed=0
+ensure_option() {
+    current="$(uci -q get "$1" 2>/dev/null || true)"
+    [ "$current" = "$2" ] && return 0
+    uci set "$1=$2"
+    changed=1
+}
+
+ensure_option nikki.mixin.dns_nameserver_policy 1
+ensure_option nikki.mixin.dns_respect_rules 1
+ensure_option nikki.mixin.fake_ip_filter 1
+ensure_option nikki.pi_service_dns nameserver_policy
+ensure_option nikki.pi_service_dns.enabled 1
+ensure_option nikki.pi_service_dns.matcher '+.pi.jmsu.top'
+ensure_option nikki.pi_service_dns.nameserver 'udp://100.64.0.6:53#tailscale0'
+
+if ! uci -q get nikki.mixin.fake_ip_filters 2>/dev/null | tr ' ' '\n' | grep -Fx '+.pi.jmsu.top' >/dev/null; then
+    uci add_list nikki.mixin.fake_ip_filters='+.pi.jmsu.top'
+    changed=1
+fi
+[ "$changed" -eq 1 ] && uci commit nikki
+
+# The former one-hour minimum cache held migrated DHCP addresses stale.
+cache_changed=0
+for option in min_cache_ttl use_stale_cache; do
+    if uci -q get "dhcp.@dnsmasq[0].$option" >/dev/null 2>&1; then
+        uci -q delete "dhcp.@dnsmasq[0].$option"
+        cache_changed=1
+    fi
+done
+[ "$cache_changed" -eq 1 ] && uci commit dhcp
+exit 0

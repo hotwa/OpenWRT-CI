@@ -1,0 +1,7 @@
+#!/bin/sh
+# dnsmasq hotplug events are a fast path; the service loop repairs missed events.
+case "$ACTION" in
+    add|update|remove)
+        /usr/sbin/pi-dhcp-sync event "$ACTION" "$MACADDR" "$IPADDR" >/dev/null 2>&1 &
+        ;;
+esac
