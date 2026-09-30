@@ -119,6 +119,9 @@ jobs:
       WRT_REPO: https://github.com/${{matrix.SOURCE}}.git
       #源码分支
       WRT_BRANCH: ${{matrix.BRANCH}}
+      #显式固定源码 commit：此前该入口跟随 main，导致 GHA 与 CNB profile 不可比。
+      #该 SHA 是评审过的候选，必须在目标机型上通过 L4 真机验收后才能提升/更新。
+      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
       #源码名称
       WRT_SOURCE: ${{matrix.SOURCE}}
       #插件调整

@@ -108,14 +108,15 @@ PROFILES = {
         "allow_test": True,
         "required_secrets": ("SAMBA_DEFAULT_PASSWORD",),
     },
-    # QCA-6.18 matrix, statically expanded. The GitHub caller pins nothing, so
-    # the profile declares the reviewed ImmortalWrt commit and the replay records
-    # it as source_commit; the caller's ${{matrix.*}} values are resolved here.
+    # QCA-6.18 matrix, statically expanded. The GitHub caller now carries the
+    # reviewed WRT_COMMIT (previously it floated on main, which made GHA and CNB
+    # builds incomparable); the caller's ${{matrix.*}} values are resolved here
+    # and the pin must match this profile exactly.
     "qca-ipq60xx-wifi-no": {
         "workflow": "QCA-6.18-VIKINGYFY.yml", "job": "config",
         "config": "IPQ60XX-WIFI-NO", "device": None,
         "name": "DAE-WRT", "lan": "192.168.10.1",
-        "commit": QCA_PIN, "pin_in_caller": False, "matrix_expansion": True,
+        "commit": QCA_PIN, "matrix_expansion": True,
         "build_only": False, "emmc": False, "container_runtime_test": False,
         "expected_device": False, "expect_required_device": False, "allow_test": True,
         "required_secrets": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),
@@ -124,7 +125,7 @@ PROFILES = {
         "workflow": "QCA-6.18-VIKINGYFY.yml", "job": "config",
         "config": "IPQ60XX-WIFI-YES", "device": None,
         "name": "DAE-WRT", "lan": "192.168.10.1",
-        "commit": QCA_PIN, "pin_in_caller": False, "matrix_expansion": True,
+        "commit": QCA_PIN, "matrix_expansion": True,
         "build_only": False, "emmc": False, "container_runtime_test": False,
         "expected_device": False, "expect_required_device": False, "allow_test": True,
         "required_secrets": ("SAMBA_DEFAULT_PASSWORD", "HEADSCALE_OPENWRT_AUTHKEY"),

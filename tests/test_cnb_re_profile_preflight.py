@@ -68,11 +68,16 @@ class ReProfilePreflightTests(unittest.TestCase):
         baseline_a = preflight.job_inputs(cpe, "baseline_a")
         self.assertEqual(baseline_a["WRT_PACKAGE"], "")
         self.assertEqual(baseline_a["WRT_FEATURE_OVERLAY"], "false")
-        # The QCA caller floats on main: the profile must reject an unreviewed
-        # matrix expansion instead of guessing a pin.
-        qca = preflight.PROFILES["qca-ipq60xx-wifi-no"]
-        self.assertFalse(preflight.profile_expectations(qca)["pin_in_caller"])
-        self.assertEqual(qca["commit"], preflight.PIN)
+        # Every profile that participates in a candidate round must pin its own
+        # commit in the GitHub caller, so GHA and CNB build the same SHA.
+        for name in ("qca-ipq60xx-wifi-no", "qca-ipq60xx-wifi-yes"):
+            with self.subTest(profile=name):
+                qca = preflight.PROFILES[name]
+                self.assertTrue(preflight.profile_expectations(qca)["pin_in_caller"])
+                self.assertEqual(qca["commit"], preflight.PIN)
+                values = preflight.job_inputs(
+                    preflight.ROOT / ".github/workflows" / qca["workflow"], qca["job"])
+                self.assertEqual(values["WRT_COMMIT"], preflight.PIN)
 
 
 if __name__ == "__main__":
