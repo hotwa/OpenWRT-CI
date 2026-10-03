@@ -66,6 +66,7 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
+      WRT_ENCRYPT_ARTIFACT: true
       WRT_CPE_5G: false
       WRT_FEATURE_OVERLAY: false
       WRT_TAILSCALE_ROUTE_RECONCILE: false
@@ -113,6 +114,7 @@ jobs:
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
       WRT_CPE_IPV6: true
+      WRT_ENCRYPT_ARTIFACT: true
       WRT_EMMC_DATA_PROVISIONING: true
       WRT_HEADSCALE_HOSTNAME: cpe-5g-s13
       WRT_FEATURE_OVERLAY: true

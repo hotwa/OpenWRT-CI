@@ -44,6 +44,8 @@ OpenWrt 使用独立策略表，并将 LAN、ULA、链路本地及 Tailnet 的�
 
 B 默认设置 `ra_dns='0'`，避免把短寿命蜂窝 GUA 当作 RDNSS 地址下发，随后换前缀留下不可达的 DNS。已有 `192.168.13.x` 双栈客户端继续使用 IPv4 DHCP 提供的 dnsmasq/mosdns/Nikki DNS 管线，IPv4 DNS 同样可以解析 AAAA；这不限制 IPv6 数据连接。仅有 IPv6 的客户端需另行提供稳定 DNS 配置。新的 DNS 默认设置尚未随候选固件完成实机验收。
 
+CPE B 仅在 `network.5G.dns` 为空时补入 `223.5.5.5`、`119.29.29.29`，保持 `peerdns=0`；用户已有 DNS 值和 Nikki/mosdns 策略保留。固定 [netifd 配置读取逻辑](https://github.com/openwrt/netifd/blob/d155e4cefbd964b7c022618c1d74b549de25e8a8/interface.c#L929) 分别处理运营商 DNS 与静态 DNS，[resolv 生成逻辑](https://github.com/openwrt/netifd/blob/d155e4cefbd964b7c022618c1d74b549de25e8a8/interface-ip.c#L1559) 仅将 UP 接口的 DNS 写入自动生成文件；普通 IPv4 DNS 包沿用现有主备出口策略。现场跳板的普通 DNS 探测返回 `No route to host`，尚未证明此备用 DNS 路径可用；先前 `--resolve` 实验固定了目标地址，也不能证明普通 DNS 解析成功，仍待新镜像验收。
+
 当额度读取未知或超限时，OpenWrt 在自身防火墙阻断 USB 公网 IPv4/IPv6 出站及转发，并撤回可用的 IPv6 通告；私有 `192.168.66.0/24` 管理、DHCP 和必要 NDP 保留。额度状态不能从“USB 仍在线”推断，IPv4/IPv6 健康状态也分别判断。若已到达硬上限，WAN 再故障时就没有可用蜂窝公网备份。
 
 现场只读检查显示 `flow_offloading=1`。新 CPE reconcile 将 fw4 的 `flow_offloading` 和 `flow_offloading_hw` 设为 `0`，通过成功的 firewall reload 删除旧 flowtable，避免已加速连接绕过 forward 额度规则。固定版本的 [fw4 ruleset 模板](https://github.com/openwrt/firewall4/blob/b6e5157527d361f99ad52eaa6da273cb0f2dfd59/root/usr/share/firewall4/templates/ruleset.uc#L8-L31) 支持删除旧 flowtable，[设备选择逻辑](https://github.com/openwrt/firewall4/blob/b6e5157527d361f99ad52eaa6da273cb0f2dfd59/root/usr/share/ucode/fw4.uc#L540-L555) 在关闭 flow offloading 后返回空列表；[Linux flowtable 文档](https://docs.kernel.org/networking/nf_flowtable.html) 说明命中 flowtable 的包会绕过常规转发钩子。这项修改不改变 NSS 内核、源码 pin 或以太网配置。普通 RNDIS `usb0` 预期不注册 NSS，但本轮没有实机证明；连续 USB 流在额度未知/超限时能否及时被门禁阻断，仍需新固件实机验收。
@@ -78,6 +80,28 @@ B 默认设置 `ra_dns='0'`，避免把短寿命蜂窝 GUA 当作 RDNSS 地址�
 CPE B 开启的是受保护的 RE eMMC provisioner。它不是任意 GPT 修复或格式化授权：已有文件系统必须保留，未知/不满足审查条件的布局必须停止并诊断。当前现场观测为 **Tailscale `NeedsLogin`、没有独立 `/data` 挂载、GPT 存在异常**；因此这台设备尚不具备“刷入即可远程访问”的身份和存储前提。首次部署需先收集只读存储证据、核对精确分区和备份，再建立可用 `/data` 并完成一次注册。
 
 同一状态跨升级保留依赖具体刷写方式确实保留独立 `/data`。支持的 retained-config sysupgrade 和已审查 Factory 路径不能推广到厂刷、整盘重分区或任意 Factory 工具。用户选择的 explicit 名称也不自动成为 fleet CD 合格目标，不能复用现有 `ss01-12` 的部署记录。详见 [Headscale 自动注册](headscale-auto-enroll.md)、[eMMC 制备](emmc-data-provisioning.md) 和 [/data 运行时](data-runtime.md)。
+
+## 加密交付与本机解密
+
+GitHub 的 [artifact 下载权限说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts) 允许已登录且拥有仓库读取权限的用户下载产物；公开仓库的 artifact 名称带 `private` 后缀不会建立维护者专属权限。CPE A、B 都明确传入 `WRT_ENCRYPT_ARTIFACT=true`，包括 `TEST=true` 配置验证构建；A 的隔离固件功能不因此改变。普通 QCA 和 fleet 调用保持默认 `false`，沿用原交付格式。
+
+CORE 在打包后使用固定的 [age v1.3.2](https://github.com/FiloSottile/age/releases/tag/v1.3.2) 和 `Config/cpe5g-artifact-recipient.pub` 中的维护公钥，将完整 payload 封装后加密。CI 不接收解密所需的 SSH 维护私钥。共享秘密检测仍保留 `WRT_PRIVATE_BUILD` 原义；加密路径由独立输入决定，关闭明文上传、按设备拆分和公共 Release。唯一上传目录为 `wrt/encrypted-upload/`，名称以 `private-encrypted` 结尾，外层只含 `firmware.tar.age`、`SHA256SUMS` 和 `ENCRYPTION.json`。
+
+下载到持有对应私钥的本机后，使用 [age 的 SSH Ed25519 支持](https://github.com/FiloSottile/age/blob/v1.3.2/README.md#ssh-keys) 解密；该路径需要私钥文件，不能仅依赖 ssh-agent。以下命令在仓库根目录执行，目录应按本次候选新建：
+
+```sh
+bash Scripts/FetchAge.sh /tmp/cpe-age
+bash Scripts/DecryptFirmwareArtifact.sh \
+  /tmp/cpe-age/age \
+  /path/to/cpe-private-encrypted \
+  /root/project/OpenWrt-Config-Backup/ops/ssh/openwrt_config_backup_maintainer_ed25519 \
+  /path/to/cpe-decrypted
+(cd /path/to/cpe-decrypted && sha256sum -c SHA256SUMS)
+```
+
+`DecryptFirmwareArtifact.sh` 的参数顺序为 `AGE_BIN ENVELOPE_DIR IDENTITY_FILE OUTPUT_DIR`。这些 helper 在 Linux/WSL 中非交互运行，使用无需口令的 SSH 私钥；当前维护密钥已通过真实往返验证。解密后保留原固件文件、manifest、metadata 与原 `SHA256SUMS`；仍须核对 Action 对应的 workflow SHA、精确源码 pin、RE-SS-01 型号及 factory/sysupgrade checksum，然后进行 rootfs 静态模块检查。外层 checksum 只验证下载密文，不能代替这些候选验证。`TEST=true` 配置包缺少原 checksum 时，仅允许 helper 在私有 staging 补生成，不修改原 `wrt/upload`；正式构建缺少 checksum 必须失败。解密后的配置包仍不是可刷固件。
+
+加密保护的是 artifact 交付，不会隐藏 Actions 日志、撤回旧产物或替代设备验收。新固件刷写、首次建立有效 `/data`、注册并确认 `cpe-5g-s13.hs.jmsu.top` 连通，仍待现场完成。
 
 ## 部署与验收
 

@@ -119,6 +119,19 @@ set_network_option() {
 	network_changed=1
 }
 
+# Keep user-selected resolvers. peerdns=0 only rejects the modem's DHCP DNS;
+# these static IPv4 resolvers stay available while 5G is up and follow mwan3.
+ensure_backup_dns() {
+	local current
+	current="$(uci -q get network.5G.dns 2>/dev/null || true)"
+	[ -z "$(printf '%s' "$current" | tr -d '[:space:]')" ] || return 0
+	uci -q delete network.5G.dns 2>/dev/null || true
+	uci add_list network.5G.dns='223.5.5.5'
+	uci add_list network.5G.dns='119.29.29.29'
+	network_changed=1
+	backup_dns_added=1
+}
+
 wait_for_network_object() {
 	local interface="$1" attempt=0
 	while [ "$attempt" -lt 15 ]; do
@@ -228,6 +241,7 @@ old_wan_metric="$(uci -q get network.wan.metric 2>/dev/null || printf '__missing
 old_5g_metric="$(uci -q get network.5G.metric 2>/dev/null || printf '__missing__')"
 old_5g_defaultroute="$(uci -q get network.5G.defaultroute 2>/dev/null || printf '__missing__')"
 old_5g_peerdns="$(uci -q get network.5G.peerdns 2>/dev/null || printf '__missing__')"
+old_5g_dns="$(uci -q get network.5G.dns 2>/dev/null || printf '__missing__')"
 old_wan_ipv6="$(uci -q get network.wan.ipv6 2>/dev/null || printf '__missing__')"
 old_5g_ipv6="$(uci -q get network.5G.ipv6 2>/dev/null || printf '__missing__')"
 old_wan6_auto="$(uci -q get network.wan6.auto 2>/dev/null || printf '__missing__')"
@@ -235,6 +249,7 @@ old_wan6_disabled="$(uci -q get network.wan6.disabled 2>/dev/null || printf '__m
 wan6_exists=0
 [ "$(uci -q get network.wan6 2>/dev/null || true)" != interface ] || wan6_exists=1
 network_changed=0
+backup_dns_added=0
 
 # Ethernet provides IPv4 only, including when wan is changed to PPPoE. Native
 # cellular IPv6 is independently managed and must not spawn a DHCPv6 client.
@@ -248,6 +263,7 @@ set_network_option network.wan.metric 10
 set_network_option network.5G.metric 20
 set_network_option network.5G.defaultroute 1
 set_network_option network.5G.peerdns 0
+ensure_backup_dns
 
 uci set mwan3.wan='interface'
 uci set mwan3.wan.enabled='1'
@@ -383,6 +399,9 @@ if [ "$network_changed" -eq 1 ]; then
 		restore_network_option network.5G.metric "$old_5g_metric"
 		restore_network_option network.5G.defaultroute "$old_5g_defaultroute"
 		restore_network_option network.5G.peerdns "$old_5g_peerdns"
+		if [ "$backup_dns_added" -eq 1 ]; then
+			restore_network_option network.5G.dns "$old_5g_dns"
+		fi
 		restore_network_option network.wan.ipv6 "$old_wan_ipv6"
 		restore_network_option network.5G.ipv6 "$old_5g_ipv6"
 		if [ "$wan6_exists" -eq 1 ]; then

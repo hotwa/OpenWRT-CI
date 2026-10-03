@@ -85,6 +85,14 @@ for setting in 'WRT_EMMC_DATA_PROVISIONING: true' 'WRT_HEADSCALE_HOSTNAME: cpe-5
   fi
 done
 
+# Both controls receive private Samba credentials, independently of feature flags.
+for control in baseline_a cpe_overlay_b; do
+  yaml_mapping_block "$WORKFLOW" '  ' "$control" | grep -Fq 'WRT_ENCRYPT_ARTIFACT: true' || {
+    echo "CPE control $control must encrypt its artifact" >&2
+    exit 1
+  }
+done
+
 grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   echo "CPE-5G workflow must enable the CPE network bootstrap"
   exit 1
@@ -97,6 +105,20 @@ grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
 
 yaml_mapping_block "$CORE" '      ' WRT_CPE_5G | grep -q 'default: false' || {
   echo "reusable workflow must disable the CPE network bootstrap by default"
+  exit 1
+}
+
+encrypt_input="$(yaml_mapping_block "$CORE" '      ' WRT_ENCRYPT_ARTIFACT)"
+printf '%s\n' "$encrypt_input" | grep -q 'type: boolean' || {
+  echo "reusable workflow artifact encryption input must be boolean"
+  exit 1
+}
+printf '%s\n' "$encrypt_input" | grep -q 'default: false' || {
+  echo "reusable workflow must disable artifact encryption by default"
+  exit 1
+}
+yaml_mapping_block "$CORE" '' env | grep -Fq '  WRT_ENCRYPT_ARTIFACT: ${{inputs.WRT_ENCRYPT_ARTIFACT}}' || {
+  echo "reusable workflow does not forward the artifact encryption input"
   exit 1
 }
 

@@ -82,7 +82,7 @@ B 预设新增蜂窝 `/64` 路由延伸自动化，目标是 Ethernet 只取 IPv
 
 ## 触发构建
 
-GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
+GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。CPE A、B（包括 `TEST=true`）均使用 `WRT_ENCRYPT_ARTIFACT=true` 交付 `private-encrypted` 封装；维护公钥进入 CI，解密私钥留在本机。外层仅含 `firmware.tar.age`、`SHA256SUMS` 和 `ENCRYPTION.json`。每个可刷写候选的解密 payload 必须同时包含 RE-SS-01 factory、sysupgrade、原 `SHA256SUMS`、manifest 和 `metadata.json`，并重新验证精确源码/workflow SHA 和镜像。`private` 命名不改变公开仓库 artifact 权限，A 的功能隔离和普通 QCA/fleet 交付格式保持原样；本机解密命令见 [加密交付](cpe-ipv6-backup.md#加密交付与本机解密)。
 
 固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问。Tailscale 需要真实独立 `/data`及已有可用身份或一次已授权注册；`tailscale status`必须确认 Running，不能把固件内置组件视为已完成注册。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。
 

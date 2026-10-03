@@ -48,6 +48,8 @@ CPE-5G B 还单独内置 mwan3：以太 WAN 是主线路（network/member metric
 
 2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM，当前设备无 `/data`、NeedsLogin 且 GPT 异常，不能仅凭新镜像声称刷入即用。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。
 
+CPE A、B 产物（含配置测试包）统一使用 `private-encrypted` 加密交付，完整 payload 用固定 age v1.3.2 加密到维护公钥，SSH 维护私钥留在本机。公开仓库的 `private` 后缀不限制 artifact 下载权限；解密后仍需验证原 checksum、metadata、型号和镜像。A 功能隔离和普通 QCA/fleet 的原交付格式保持原样，命令见 [CPE 加密交付](docs/cpe-ipv6-backup.md#加密交付与本机解密)。
+
 2026-07-12 实机门禁记录：GitHub Actions run [`29160402065`](https://github.com/hotwa/OpenWRT-CI/actions/runs/29160402065) 成功；B artifact digest 为 `sha256:bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d`，B sysupgrade SHA256 为 `bb69688f6a4385e897d1cf6f9c355d22d279d94e9b9e3e87d9a15c434682485b`；A artifact digest 为 `sha256:e43afee3cb0a277e463ecb85f3ca991ea804d7dda6f56c434e30452c32dc67e7`。A、B 均已确认可启动，因此 B 现作为 CPE 功能生产基线；WiFi-YES 仍需单独测试，不能由本次 NOWIFI 结果推断。
 
 双网卡 Windows 客户端若保留 `192.168.66.0/24 via 192.168.11.247` 的旧永久路由，会从 OpenWrt WAN 进入并被正常防火墙策略拒绝；这不代表 CPE overlay 失败。应让该网段经 LAN 网关 `192.168.13.1` 进入，使用已有 `lan -> wan/5G` forwarding。

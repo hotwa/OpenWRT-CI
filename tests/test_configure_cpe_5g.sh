@@ -95,6 +95,57 @@ sh -n "$RECONCILE"
 sh -n "$GATED"
 sh -n "$INIT"
 
+# Execute the generated resolver helper: an empty 5G interface needs a usable
+# fallback, while existing user lists and subsequent runs must remain untouched.
+awk '/^ensure_backup_dns\(\) \{/ { copy=1 } copy { print } copy && /^}$/ { exit }' \
+  "$RECONCILE" >"$TMP_DIR/backup-dns-helper"
+[ -s "$TMP_DIR/backup-dns-helper" ]
+. "$TMP_DIR/backup-dns-helper"
+uci() {
+  [ "${1:-}" != -q ] || shift
+  local command="$1" argument="${2:-}"
+  case "$command" in
+    get)
+      [ "$argument" = network.5G.dns ] && [ -n "$dns_fixture" ] || return 1
+      printf '%s\n' "$dns_fixture"
+      ;;
+    delete)
+      [ "$argument" = network.5G.dns ] || return 2
+      dns_fixture=''
+      dns_writes=$((dns_writes + 1))
+      ;;
+    add_list)
+      case "$argument" in network.5G.dns=*) ;; *) return 2 ;; esac
+      dns_fixture="${dns_fixture:+$dns_fixture }${argument#*=}"
+      dns_writes=$((dns_writes + 1))
+      ;;
+    *) return 2 ;;
+  esac
+}
+dns_fixture=''
+dns_writes=0
+network_changed=0
+backup_dns_added=0
+ensure_backup_dns
+[ "$dns_fixture" = '223.5.5.5 119.29.29.29' ]
+[ "$network_changed" -eq 1 ] && [ "$backup_dns_added" -eq 1 ]
+first_dns_writes="$dns_writes"
+network_changed=0
+backup_dns_added=0
+ensure_backup_dns
+[ "$dns_writes" -eq "$first_dns_writes" ]
+[ "$network_changed" -eq 0 ] && [ "$backup_dns_added" -eq 0 ]
+dns_fixture='9.9.9.9 1.0.0.1'
+dns_writes=0
+ensure_backup_dns
+[ "$dns_fixture" = '9.9.9.9 1.0.0.1' ] && [ "$dns_writes" -eq 0 ]
+[ "$network_changed" -eq 0 ] && [ "$backup_dns_added" -eq 0 ]
+dns_fixture=$' \t '
+ensure_backup_dns
+[ "$dns_fixture" = '223.5.5.5 119.29.29.29' ]
+[ "$network_changed" -eq 1 ] && [ "$backup_dns_added" -eq 1 ]
+unset -f uci ensure_backup_dns
+
 if "$SCRIPT" "$TMP_DIR/enabled" invalid >/dev/null 2>&1; then
   echo "invalid CPE network bootstrap flag must fail"
   exit 1

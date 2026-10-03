@@ -48,6 +48,10 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_ENCRYPT_ARTIFACT:
+        required: false
+        type: boolean
+        default: false
       WRT_SPLIT_DEVICE_ARTIFACTS:
         required: false
         type: boolean
@@ -179,6 +183,7 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_BUILD_ONLY: ${{inputs.WRT_BUILD_ONLY}}
+  WRT_ENCRYPT_ARTIFACT: ${{inputs.WRT_ENCRYPT_ARTIFACT}}
   WRT_SPLIT_DEVICE_ARTIFACTS: ${{inputs.WRT_SPLIT_DEVICE_ARTIFACTS}}
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
@@ -1226,17 +1231,43 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Encrypt Firmware Artifact
+        if: inputs.WRT_ENCRYPT_ARTIFACT == true
+        run: |
+          set -euo pipefail
+          unset CPE5G_ARTIFACT_TEST_ALLOW_MISSING_SUMS
+          if [[ "$WRT_TEST" == true ]]; then
+            export CPE5G_ARTIFACT_TEST_ALLOW_MISSING_SUMS=1
+          fi
+          "$GITHUB_WORKSPACE/Scripts/FetchAge.sh" "$RUNNER_TEMP/cpe-age"
+          "$GITHUB_WORKSPACE/Scripts/EncryptFirmwareArtifact.sh" \
+            "$RUNNER_TEMP/cpe-age/age" \
+            "$GITHUB_WORKSPACE/wrt/upload" \
+            "$GITHUB_WORKSPACE/Config/cpe5g-artifact-recipient.pub" \
+            "$GITHUB_WORKSPACE/wrt/encrypted-upload"
+
+      - name: Upload Encrypted Firmware Artifact
+        if: inputs.WRT_ENCRYPT_ARTIFACT == true
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-private-encrypted
+          path: ./wrt/encrypted-upload/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: false
+
       - name: Split Public Firmware Artifacts By Device
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
           "$GITHUB_WORKSPACE/Scripts/SplitFirmwareArtifacts.sh" ./upload ./artifact-groups
 
-      # The release job receives only this immutable, public-only handoff. A
-      # private, TEST, or build-only firmware has no release contract at all.
+      # The release job receives only this immutable, public-only handoff. An
+      # encrypted, private, TEST, or build-only firmware has no release contract.
       - name: Define Public Release Input
         id: release_contract
-        if: env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         run: |
           set -euo pipefail
           artifact_name="release-input-${CI_NAME}-${WRT_CONFIG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -1252,7 +1283,7 @@ jobs:
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload Immutable Public Release Input
-        if: steps.release_contract.outputs.eligible == 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && steps.release_contract.outputs.eligible == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.release_contract.outputs.artifact_name }}
@@ -1262,7 +1293,7 @@ jobs:
           overwrite: false
 
       - name: Upload Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && (inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true')
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
@@ -1271,7 +1302,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-ss-01 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-ss-01
@@ -1280,7 +1311,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-cs-02 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-02
@@ -1289,7 +1320,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-cs-07 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-07
@@ -1298,7 +1329,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Other Device Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-other-devices
@@ -1385,7 +1416,7 @@ jobs:
     # validates this nested reusable workflow before it evaluates this guard.
     # The compiler remains the read-only `build` job above.
     needs: build
-    if: needs.build.outputs.release_eligible == 'true'
+    if: inputs.WRT_ENCRYPT_ARTIFACT != true && needs.build.outputs.release_eligible == 'true'
     uses: ./.github/workflows/WRT-RELEASE.yml
     permissions:
       contents: write

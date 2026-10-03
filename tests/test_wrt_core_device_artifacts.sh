@@ -10,8 +10,8 @@ grep -Fq 'Scripts/SplitFirmwareArtifacts.sh" ./upload ./artifact-groups' "$CORE"
 grep -Fq 'cp -f ./files/usr/sbin/openwrt-upgrade-space ./wrt/files/usr/sbin/openwrt-upgrade-space' "$CORE"
 grep -Fq 'S08upgrade-tmp-capacity' "$CORE"
 
-split_guard="inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'"
-combined_guard="inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true'"
+split_guard="inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'"
+combined_guard="inputs.WRT_ENCRYPT_ARTIFACT != true && (inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true')"
 grep -Fq "if: $split_guard" "$CORE"
 grep -Fq "if: $combined_guard" "$CORE"
 
