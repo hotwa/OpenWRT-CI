@@ -17,9 +17,9 @@ if grep -R -n -E 'secrets:[[:space:]]+inherit' "$ROOT_DIR/.github/workflows"; th
   exit 1
 fi
 
-allowed_secrets='HEADSCALE_OPENWRT_AUTHKEY HEADSCALE_CI_AUTHKEY HEADSCALE_URL MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD NIKKI_SUBSCRIPTION_URL COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL SAMBA_DEFAULT_PASSWORD'
+allowed_secrets='HEADSCALE_OPENWRT_AUTHKEY HEADSCALE_CI_AUTHKEY HEADSCALE_URL MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD NIKKI_SUBSCRIPTION_URL COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL SAMBA_DEFAULT_PASSWORD CPE_WIFI_PASSWORD'
 for secret in $allowed_secrets; do
-  grep -Fq "      $secret:" "$CORE" || {
+  grep -Fxq "      $secret:" "$CORE" || {
     echo "WRT-CORE no longer declares expected build secret: $secret" >&2
     exit 1
   }
@@ -43,6 +43,10 @@ for workflow in "$ROOT_DIR"/.github/workflows/*.yml; do
         exit 1
         ;;
     esac
+    if [ "$mapped_secret" = CPE_WIFI_PASSWORD ] && [ "$(basename "$workflow")" != CPE-5G.yml ]; then
+      echo "$(basename "$workflow") must not receive the CPE WiFi credential" >&2
+      exit 1
+    fi
   done < <(sed -n -E 's/^[[:space:]]{6}([A-Z][A-Z0-9_]*):[[:space:]]*\$\{\{[[:space:]]*secrets\..*$/\1/p' "$workflow")
 
   # GitHub validates nested reusable-workflow permissions before a conditional
@@ -50,6 +54,29 @@ for workflow in "$ROOT_DIR"/.github/workflows/*.yml; do
   # must still reduce this ceiling to read-only.
   grep -Fq 'contents: write' "$workflow" || {
     echo "$(basename "$workflow") cannot satisfy the nested release permission ceiling" >&2
+    exit 1
+  }
+done
+
+# The approved WiFi secret belongs only to the encrypted CPE B preset; the
+# isolation A and ordinary callers must not acquire it via the shared allowlist.
+CPE_WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
+wifi_secret_jobs="$(awk '
+  /^  [[:alnum:]_-]+:$/ { job=$1; sub(/:$/, "", job) }
+  /^      CPE_WIFI_PASSWORD:/ { print job }
+' "$CPE_WORKFLOW")"
+[ "$wifi_secret_jobs" = cpe_overlay_b ] || {
+  echo 'CPE WiFi credential must be mapped exactly once, by B only' >&2
+  exit 1
+}
+cpe_b="$(awk '
+  /^  cpe_overlay_b:$/ { inside=1; next }
+  inside && /^  [[:alnum:]_-]+:$/ { exit }
+  inside { print }
+' "$CPE_WORKFLOW")"
+for required in 'WRT_CPE_WIFI: true' 'WRT_CPE_5G: true' 'WRT_FEATURE_OVERLAY: true' 'WRT_ENCRYPT_ARTIFACT: true'; do
+  grep -Fxq "      $required" <<<"$cpe_b" || {
+    echo "CPE WiFi secret requires B setting $required" >&2
     exit 1
   }
 done

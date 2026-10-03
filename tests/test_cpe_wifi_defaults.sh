@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'printf "%s: fixture failed at line %s\n" "${BASH_SOURCE[0]##*/}" "$LINENO" >&2' ERR
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERATOR="$ROOT_DIR/Scripts/ConfigureCpeWifi.sh"
+REAL_STAT="$(command -v stat)"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 mkdir -p "$WORK_DIR/overlay" "$WORK_DIR/bin" "$WORK_DIR/run" "$WORK_DIR/invalid"
@@ -121,13 +123,34 @@ cat >"$WORK_DIR/bin/sleep" <<'SH'
 #!/bin/sh
 printf 'sleep %s\n' "$*" >>"$TEST_UCI_LOG"
 SH
+cat >"$WORK_DIR/bin/stat" <<'SH'
+#!/bin/sh
+set -eu
+# Firmware files are root-owned on the device, but CI fixtures are created by
+# the runner user. Model only the UID of these two exact fixture paths; keep
+# real permissions, existence checks, and every other stat operation intact.
+if [ "$#" -eq 3 ] && [ "$1" = -c ]; then
+	uid=''
+	if [ "$3" = "$TEST_WIFI_KEY_FIXTURE" ]; then uid="${TEST_WIFI_KEY_UID:-0}"; fi
+	if [ "$3" = "$TEST_WIFI_CONFIG_FIXTURE" ]; then uid="${TEST_WIFI_CONFIG_UID:-0}"; fi
+	if [ -n "$uid" ]; then
+		case "$2" in
+			%u) "$TEST_REAL_STAT" -c %u "$3" >/dev/null; printf '%s\n' "$uid"; exit 0 ;;
+			%a:%u) mode="$("$TEST_REAL_STAT" -c %a "$3")"; printf '%s:%s\n' "$mode" "$uid"; exit 0 ;;
+		esac
+	fi
+fi
+exec "$TEST_REAL_STAT" "$@"
+SH
 chmod 755 "$WORK_DIR/bin/"*
 export PATH="$WORK_DIR/bin:$PATH" TEST_UCI_STATE="$WORK_DIR/state.json" TEST_UCI_LOG="$WORK_DIR/uci.log" TEST_LOGGER_LOG="$WORK_DIR/logger.log"
+export TEST_REAL_STAT="$REAL_STAT" TEST_WIFI_KEY_FIXTURE="$KEY" TEST_WIFI_CONFIG_FIXTURE="$TEST_UCI_STATE"
 export TEST_SHOW_COUNTER="$WORK_DIR/show.counter"
 export CPE5G_WIFI_KEY_FILE="$KEY" CPE5G_WIFI_BOARD_FILE="$WORK_DIR/board" CPE5G_WIFI_RUN_DIR="$WORK_DIR/run" CPE5G_WIFI_BIN="$WORK_DIR/bin/wifi"
 export CPE5G_WIFI_CONFIG_FILE="$TEST_UCI_STATE"
 export CPE5G_WIFI_MAX_ATTEMPTS=3 CPE5G_WIFI_INTERVAL=0 CPE5G_WRTBAK_GATE_FILE="$WORK_DIR/gate.json"
 printf '%s\n' jdcloud,re-ss-01 >"$WORK_DIR/board"
+[ "$(stat -c %u "$WORK_DIR/board")" = "$("$REAL_STAT" -c %u "$WORK_DIR/board")" ]
 
 reset_fixture() {
 	: >"$TEST_UCI_LOG"; : >"$TEST_LOGGER_LOG"
@@ -232,6 +255,21 @@ reset_fixture
 chmod 644 "$KEY"
 reject_runtime
 chmod 600 "$KEY"
+
+# The root view is limited to fixture paths, and the live root ownership
+# checks must still reject each private file independently for any runner UID.
+reset_fixture
+cp "$TEST_UCI_STATE" "$WORK_DIR/before.json"
+(export TEST_WIFI_KEY_UID=1001; reject_runtime)
+cmp "$WORK_DIR/before.json" "$TEST_UCI_STATE"
+[ "$(stat -c %a "$CPE5G_WIFI_CONFIG_FILE")" = 644 ]
+grep -Fq 'root-only IoT WiFi credential is unavailable' "$TEST_LOGGER_LOG"
+reset_fixture
+cp "$TEST_UCI_STATE" "$WORK_DIR/before.json"
+(export TEST_WIFI_CONFIG_UID=1001; reject_runtime)
+cmp "$WORK_DIR/before.json" "$TEST_UCI_STATE"
+[ "$(stat -c %a "$CPE5G_WIFI_CONFIG_FILE")" = 644 ]
+grep -Fq 'root-owned wireless configuration is unavailable' "$TEST_LOGGER_LOG"
 
 # Staged changes are discarded on batch or commit failure. Neither path may
 # reload WiFi with incomplete settings or leave the private delta directory.
