@@ -292,6 +292,36 @@ grep -q '^network.wan.proto=pppoe$' "$STATE"
 grep -q '^network.wan.ipv6=0$' "$STATE"
 [ "$(printf '%s\n' "$rule_order" | tail -n 1)" = cpe5g_default ]
 
+# Enabling native IPv6 after an old restore must repair shared usb0, while
+# retaining the WAN IPv4 policy. A second reconcile must not reload netifd.
+printf '%s\n' 'cpe5g_ipv6.main.enabled=1' >>"$STATE"
+: >"$LOG"
+"$RECONCILE"
+grep -q '^network.5G.ipv6=1$' "$STATE"
+grep -q '^network.wan.ipv6=0$' "$STATE"
+grep -q '^network.wan.proto=pppoe$' "$STATE"
+[ "$(grep -c '^ubus call network reload$' "$LOG")" -eq 1 ]
+: >"$LOG"
+"$RECONCILE"
+if grep -q '^ubus call network reload$' "$LOG"; then
+  echo 'native USB IPv6 reconcile must not repeat a network reload' >&2
+  exit 1
+fi
+# Both explicit disable and absence of the native overlay keep the original
+# IPv4-only cellular interface behavior.
+sed -i 's/^cpe5g_ipv6.main.enabled=.*/cpe5g_ipv6.main.enabled=0/' "$STATE"
+: >"$LOG"
+"$RECONCILE"
+grep -q '^network.5G.ipv6=0$' "$STATE"
+[ "$(grep -c '^ubus call network reload$' "$LOG")" -eq 1 ]
+: >"$LOG"
+"$RECONCILE"
+if grep -q '^ubus call network reload$' "$LOG"; then
+  echo 'disabled native IPv6 reconcile must be idempotent' >&2
+  exit 1
+fi
+sed -i '/^cpe5g_ipv6.main.enabled=/d' "$STATE"
+
 # Current CPE images write the LAN address in CIDR form and omit a separate
 # netmask option. This must produce the same direct-network bypass as the
 # legacy ipaddr + netmask representation used above.

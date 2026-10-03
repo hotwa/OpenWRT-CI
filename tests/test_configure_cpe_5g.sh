@@ -18,7 +18,7 @@ mkdir -p "$TMP_DIR/disabled" "$TMP_DIR/enabled"
   exit 1
 }
 
-"$SCRIPT" "$TMP_DIR/enabled" true
+WRT_CPE_IPV6=false "$SCRIPT" "$TMP_DIR/enabled" true
 BOOTSTRAP="$TMP_DIR/enabled/etc/uci-defaults/92-cpe-5g-network"
 [ -x "$BOOTSTRAP" ] || {
   echo "enabled CPE network bootstrap is missing or not executable"
@@ -30,6 +30,7 @@ grep -q "uci set network.5G.device='usb0'" "$BOOTSTRAP"
 grep -q "uci set network.5G.proto='dhcp'" "$BOOTSTRAP"
 grep -q "uci set network.wan.ipv6='0'" "$BOOTSTRAP"
 grep -q "uci set network.5G.ipv6='0'" "$BOOTSTRAP"
+grep -Fxq "NATIVE_IPV6_BUILD='false'" "$BOOTSTRAP"
 grep -q "uci set network.wan6.auto='0'" "$BOOTSTRAP"
 if grep -q '^/usr/libexec/cpe5g-mwan3-reconcile$' "$BOOTSTRAP"; then
   echo "bootstrap must not race the gate-aware reconcile service"
@@ -56,6 +57,7 @@ INIT="$TMP_DIR/enabled/etc/init.d/cpe5g-mwan3-reconcile"
 grep -q 'set_network_option network.wan.metric 10' "$RECONCILE"
 grep -q 'set_network_option network.wan.ipv6 0' "$RECONCILE"
 grep -q 'set_network_option network.5G.ipv6 0' "$RECONCILE"
+grep -q 'set_network_option network.5G.ipv6 1' "$RECONCILE"
 grep -q 'set_network_option network.wan6.auto 0' "$RECONCILE"
 grep -q 'set_network_option network.wan6.disabled 1' "$RECONCILE"
 grep -q 'set_network_option network.5G.metric 20' "$RECONCILE"
@@ -145,6 +147,73 @@ ensure_backup_dns
 [ "$dns_fixture" = '223.5.5.5 119.29.29.29' ]
 [ "$network_changed" -eq 1 ] && [ "$backup_dns_added" -eq 1 ]
 unset -f uci ensure_backup_dns
+
+# Execute both generated bootstrap presets. Native IPv6 needs usb0 IPv6
+# enabled before either gate-aware reconcile runs; WAN stays IPv4-only.
+mkdir -p "$TMP_DIR/native" "$TMP_DIR/bootstrap-bin"
+WRT_CPE_IPV6=true "$SCRIPT" "$TMP_DIR/native" true >/dev/null
+grep -Fxq "NATIVE_IPV6_BUILD='true'" "$TMP_DIR/native/etc/uci-defaults/92-cpe-5g-network"
+if grep -q '@CPE5G_NATIVE_IPV6_BUILD@' "$BOOTSTRAP" "$TMP_DIR/native/etc/uci-defaults/92-cpe-5g-network"; then
+  echo "CPE bootstrap contains an unresolved native IPv6 build marker"
+  exit 1
+fi
+cat >"$TMP_DIR/bootstrap-bin/uci" <<'EOF'
+#!/usr/bin/env python3
+import json,os,sys
+from pathlib import Path
+p=Path(os.environ['BOOTSTRAP_STATE']); d=json.loads(p.read_text()); a=sys.argv[1:]
+if a[0]=='-q':a=a[1:]
+op=a[0]; key=a[1] if len(a)>1 else ''
+if op=='get':
+ if key not in d:sys.exit(1)
+ print(' '.join(d[key]) if isinstance(d[key],list) else d[key])
+elif op=='show':
+ for k,v in d.items():
+  if k==key or k.startswith(key+'.'):print(k+'='+(' '.join(v) if isinstance(v,list) else v))
+elif op in ('set','add_list'):
+ k,v=key.split('=',1)
+ if op=='set':d[k]=v
+ else:d.setdefault(k,[]).append(v)
+elif op=='commit':pass
+else:sys.exit(2)
+if op in ('set','add_list','commit'):p.write_text(json.dumps(d))
+EOF
+chmod 755 "$TMP_DIR/bootstrap-bin/uci"
+export BOOTSTRAP_STATE="$TMP_DIR/bootstrap-state.json"
+for preset in enabled native; do
+ for initial in fresh retained; do
+  # Model a retained PPPoE WAN with USB IPv6 previously disabled.
+  printf '%s' '{"network.wan":"interface","network.wan.proto":"pppoe","network.wan.password":"fixture-only","network.wan6":"interface","network.5G.ipv6":"0","firewall.wan":"zone","firewall.wan.name":"wan","firewall.wan.network":["wan"],"firewall.lanwan":"forwarding","firewall.lanwan.src":"lan","firewall.lanwan.dest":"wan"}' >"$BOOTSTRAP_STATE"
+  if [ "$initial" = fresh ]; then
+    python3 - <<'PYTEST'
+import json,os
+p=os.environ['BOOTSTRAP_STATE']; d=json.load(open(p))
+d['network.wan.proto']='dhcp'; del d['network.wan.password']; del d['network.5G.ipv6']
+json.dump(d,open(p,'w'))
+PYTEST
+  fi
+  sed 's|^/etc/init.d/cpe5g-mwan3-reconcile .*|:|' \
+    "$TMP_DIR/$preset/etc/uci-defaults/92-cpe-5g-network" >"$TMP_DIR/bootstrap-test.sh"
+  PATH="$TMP_DIR/bootstrap-bin:$PATH" sh "$TMP_DIR/bootstrap-test.sh"
+  first_bootstrap="$(cat "$BOOTSTRAP_STATE")"
+  PATH="$TMP_DIR/bootstrap-bin:$PATH" sh "$TMP_DIR/bootstrap-test.sh"
+  [ "$(cat "$BOOTSTRAP_STATE")" = "$first_bootstrap" ]
+  BOOTSTRAP_PRESET="$preset" BOOTSTRAP_INITIAL="$initial" python3 - <<'PYTEST'
+import json,os
+d=json.load(open(os.environ['BOOTSTRAP_STATE']))
+assert d['network.5G.ipv6']==('1' if os.environ['BOOTSTRAP_PRESET']=='native' else '0')
+assert d['network.wan.ipv6']=='0' and d['network.wan6.auto']=='0' and d['network.wan6.disabled']=='1'
+if os.environ['BOOTSTRAP_INITIAL']=='retained':
+ assert d['network.wan.proto']=='pppoe' and d['network.wan.password']=='fixture-only'
+else:assert d['network.wan.proto']=='dhcp' and 'network.wan.password' not in d
+assert d['firewall.wan.network']==['wan','5G']
+PYTEST
+ done
+done
+if WRT_CPE_IPV6=invalid "$SCRIPT" "$TMP_DIR/native" true >/dev/null 2>&1; then
+  echo "invalid CPE native IPv6 build flag must fail"
+  exit 1
+fi
 
 if "$SCRIPT" "$TMP_DIR/enabled" invalid >/dev/null 2>&1; then
   echo "invalid CPE network bootstrap flag must fail"

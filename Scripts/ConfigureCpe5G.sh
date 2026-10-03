@@ -28,6 +28,12 @@ esac
 
 [ "$ENABLE" = true ] || exit 0
 
+NATIVE_IPV6_BUILD="${WRT_CPE_IPV6:-false}"
+case "$NATIVE_IPV6_BUILD" in
+	true|false) ;;
+	*) echo 'ERROR: WRT_CPE_IPV6 must be true or false' >&2; exit 1 ;;
+esac
+
 mkdir -p "$(dirname "$BOOTSTRAP")" "$(dirname "$RECONCILE")" "$(dirname "$INIT_SCRIPT")"
 
 cat >"$RECONCILE" <<'EOF'
@@ -251,10 +257,15 @@ wan6_exists=0
 network_changed=0
 backup_dns_added=0
 
-# Ethernet provides IPv4 only, including when wan is changed to PPPoE. Native
-# cellular IPv6 is independently managed and must not spawn a DHCPv6 client.
+# Ethernet provides IPv4 only, including when wan is changed to PPPoE.
+# Both logical cellular interfaces share usb0. netifd ipv6=0 disables IPv6
+# on that device; ipv6=1 keeps link-local addressing without DHCPv6 autostart.
 set_network_option network.wan.ipv6 0
-set_network_option network.5G.ipv6 0
+if [ "$(uci -q get cpe5g_ipv6.main.enabled 2>/dev/null || true)" = 1 ]; then
+	set_network_option network.5G.ipv6 1
+else
+	set_network_option network.5G.ipv6 0
+fi
 if [ "$wan6_exists" -eq 1 ]; then
 	set_network_option network.wan6.auto 0
 	set_network_option network.wan6.disabled 1
@@ -504,11 +515,16 @@ cat >"$BOOTSTRAP" <<'EOF'
 #!/bin/sh
 set -eu
 
+NATIVE_IPV6_BUILD='@CPE5G_NATIVE_IPV6_BUILD@'
 uci set network.5G='interface'
 uci set network.5G.proto='dhcp'
 uci set network.5G.device='usb0'
 uci set network.wan.ipv6='0'
-uci set network.5G.ipv6='0'
+if [ "$NATIVE_IPV6_BUILD" = true ]; then
+	uci set network.5G.ipv6='1'
+else
+	uci set network.5G.ipv6='0'
+fi
 if [ "$(uci -q get network.wan6 2>/dev/null || true)" = interface ]; then
 	uci set network.wan6.auto='0'
 	uci set network.wan6.disabled='1'
@@ -553,6 +569,7 @@ uci commit firewall
 /etc/init.d/cpe5g-mwan3-reconcile start
 exit 0
 EOF
+sed -i "s/@CPE5G_NATIVE_IPV6_BUILD@/$NATIVE_IPV6_BUILD/" "$BOOTSTRAP"
 chmod 755 "$BOOTSTRAP"
 
 echo "CPE-5G network bootstrap: WAN-primary/usb0-5G-backup managed by mwan3"

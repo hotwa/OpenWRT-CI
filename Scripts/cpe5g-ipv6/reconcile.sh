@@ -21,6 +21,10 @@ fi
 lan="$(cfg lan lan)"
 case "$lan" in ''|*[!A-Za-z0-9_-]*) exit 1;; esac
 [ "$(uci -q get "network.$lan" 2>/dev/null || true)" = interface ] || exit 1
+# The DHCP and native logical interfaces share usb0. Keep device IPv6 on
+# for link-local reachability; the pinned DHCP protocol does not autostart
+# DHCPv6 for ipv6=1.
+put network.5G.ipv6 1
 put network.cpe6 interface
 put network.cpe6.proto cpe6
 put network.cpe6.device "$(cfg device usb0)"

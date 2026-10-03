@@ -82,6 +82,7 @@ import json,os
 d=json.load(open(os.environ['TEST_UCI_STATE']))
 assert d['network.lan.ip6class']==['local','cpe6']
 assert d['network.cpe6.proto']=='cpe6' and d['network.cpe6.device']=='usb0'
+assert d['network.5G.ipv6']=='1'
 assert d['dhcp.lan.ra']=='server' and d['dhcp.lan.ra_default']=='0'
 assert d['dhcp.lan.prefix_filter']=='fc00::/7'
 assert d['dhcp.lan.ra_dns']=='0'
@@ -93,6 +94,18 @@ PYTEST
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 [ ! -s "$TEST_UCI_LOG" ] || { echo 'reconcile must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# A restored DHCP interface can disable shared usb0 IPv6 while the native
+# preset remains current. Repairing only this option must reload netifd.
+uci set network.5G.ipv6=0
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get network.5G.ipv6)" = 1 ]
+[ "$(grep -c '^set ' "$TEST_UCI_LOG")" = 1 ]
+grep -Fxq 'set network.5G.ipv6=1' "$TEST_UCI_LOG"
+grep -Fxq 'network reload' "$TEST_UCI_LOG"
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ ! -s "$TEST_UCI_LOG" ] || { echo 'USB IPv6 repair must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
 # An older restore can re-enable only flow offloading while the rest of the
 # managed preset is already current. The options alone must trigger a reload.
 uci set 'firewall.@defaults[0].flow_offloading=1'
@@ -111,13 +124,26 @@ sh "$TMP_DIR/reconcile.sh"
 uci set 'firewall.@defaults[0].flow_offloading=1'
 uci set 'firewall.@defaults[0].flow_offloading_hw=1'
 uci set cpe5g_ipv6.main.enabled=0
+uci set network.5G.ipv6=0
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 grep -Fxq 'ifdown cpe6' "$TEST_UCI_LOG"
 [ "$(uci get network.cpe6.auto)" = 0 ]
+[ "$(uci get network.5G.ipv6)" = 0 ]
 [ "$(uci get 'firewall.@defaults[0].flow_offloading')" = 1 ]
 [ "$(uci get 'firewall.@defaults[0].flow_offloading_hw')" = 1 ]
 if grep -Eq '^(set firewall\.|commit firewall$|init firewall reload$)' "$TEST_UCI_LOG"; then
  echo 'disabled IPv6 preset changed global firewall offloading' >&2; exit 1
 fi
+# Enabling an existing disabled native interface must repair USB IPv6 and
+# activate cpe6 in the same committed/reloaded network configuration.
+uci set cpe5g_ipv6.main.enabled=1
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get network.cpe6.auto)" = 1 ]
+[ "$(uci get network.5G.ipv6)" = 1 ]
+grep -Fxq 'network reload' "$TEST_UCI_LOG"
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ ! -s "$TEST_UCI_LOG" ] || { echo 'native enable transition must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
 echo 'CPE native IPv6 overlay/protocol/reconcile passed'

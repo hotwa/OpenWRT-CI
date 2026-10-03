@@ -38,6 +38,8 @@ WRT_HEADSCALE_HOSTNAME: cpe-5g-s13
 
 OpenWrt 使用独立策略表，并将 LAN、ULA、链路本地及 Tailnet 的相应流量留给正确路由；mwan3 的 IPv4 主备策略不应接管 IPv6，Nikki 已标记流量也不应被蜂窝规则抢走。这里采用路由延伸，当前实现不要求在 LAN/USB 之间启用 NDP relay。相关原理见 [RFC 7278](https://datatracker.ietf.org/doc/html/rfc7278)。
 
+`5G` 与 `cpe6` 共用 `usb0`。固定 [netifd 的设备设置](https://github.com/openwrt/netifd/blob/d155e4cefbd964b7c022618c1d74b549de25e8a8/system-linux.c#L2720-L2721) 会把接口上的 `ipv6=0` 应用为内核 `disable_ipv6=1`，并非只关闭 DHCPv6。新配置在蜂窝 IPv6 功能启用时保留 `network.5G.ipv6=1`，使链路本地地址可供 worker 使用；初始配置和恢复后校准均处理这一点，启用已有的停用配置也会触发网络重载。`5G` 仍使用 IPv4 `proto=dhcp`，固定版本的 [DHCP 协议脚本](https://github.com/VIKINGYFY/immortalwrt/blob/0bad892975fe49fd180f99b414a7f168bb694dd7/package/network/config/netifd/files/lib/netifd/proto/dhcp.sh#L11) 不会因此生成 DHCPv6 子接口。以太网 `wan` 保持 `ipv6=0`，`wan6` 保持停用。
+
 ### RA 离线门禁与 DNS
 
 基线 [odhcpd 包定义](https://github.com/VIKINGYFY/immortalwrt/blob/0bad892975fe49fd180f99b414a7f168bb694dd7/package/network/services/odhcpd/Makefile#L17) 固定到 `odhcpd@68f382690bfaec56d5b1f31c3c31c48bcb642e3a`。这一版本不能用 UCI `ra_lifetime='0'` 强制关闭默认路由通告：零值会进入寿命默认计算。worker 保持 `ra_default='0'`，离线将 `prefix_filter` 置为 `fc00::/7`，在线才开放为 `::/0`。按代码逻辑推导，过滤掉公网 PIO 后没有可用的公网前缀，便进入 Router Lifetime 为零的分支；来源分别支持 [寿命默认计算](https://github.com/openwrt/odhcpd/blob/68f382690bfaec56d5b1f31c3c31c48bcb642e3a/src/router.c#L377)、[PIO 过滤](https://github.com/openwrt/odhcpd/blob/68f382690bfaec56d5b1f31c3c31c48bcb642e3a/src/router.c#L763)、[非 ULA 前缀判定](https://github.com/openwrt/odhcpd/blob/68f382690bfaec56d5b1f31c3c31c48bcb642e3a/src/router.c#L807) 和 [零寿命分支](https://github.com/openwrt/odhcpd/blob/68f382690bfaec56d5b1f31c3c31c48bcb642e3a/src/router.c#L878)。这些链接只支持 RA 过滤机制，不作为下文实机测试的证据。
