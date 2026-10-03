@@ -1,10 +1,10 @@
 // netifd owns this process. No dial, CFUN, quota-reset or enrollment commands.
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import {setTimeout as delay} from 'node:timers/promises';
 import {shell} from './adb.mjs';
 import {read} from './probe.mjs';
 import {update,withdraw,fromAddress,ipv6,stockUsbRoute} from './model.mjs';
-const delay=n=>new Promise(r=>setTimeout(r,n));
 const protocol=196,tableId=613;
 function trustedQuota(q){
  if(!q||typeof q.enabled!=='boolean'||typeof q.blocked!=='boolean'||!/^\d+$/.test(q.limit)||!/^\d+$/.test(q.used))return null;
@@ -43,12 +43,13 @@ export class Controller {
   for(const x of [interfaceName,device,lan])if(!/^[A-Za-z0-9_-]{1,32}$/.test(x))throw Error('Invalid interface name');
   if(![port,interval,lifetime,healthInterval].every(Number.isInteger)||port<1||port>65535||!['lan','router'].includes(mode)||interval<5||interval>300||lifetime<3*interval||lifetime>600||healthInterval<30||healthInterval>600)throw Error('Invalid lifetime or mode');
   Object.assign(this,{interfaceName,device,host,port,lan,mode,interval,lifetime,healthInterval,stateDir});
-  this.run=run||((bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',timeout:10000,stdio:['pipe','pipe','pipe']}));
-  this.adb=adb||(cmd=>shell(host,port,cmd));this.sense=sense||(()=>read(host,port));this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;
+  this.run=run||((bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',timeout:this.shutdownDeadline?Math.max(1,Math.min(500,this.shutdownDeadline-Date.now())):10000,killSignal:this.shutdownDeadline?'SIGKILL':'SIGTERM',stdio:['pipe','pipe','pipe']}));
+  this.adb=adb||((cmd,options)=>shell(host,port,cmd,options));this.sense=sense||(options=>read(host,port,options));this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;this.abort=new AbortController();
  }
+ running(){if(this.stopping)throw Error('CPE IPv6 controller stopping');}
  tryRun(bin,args,input){try{return this.run(bin,args,input);}catch{return '';}}
  status(phase,detail){fs.mkdirSync(this.stateDir,{recursive:true,mode:0o700});fs.writeFileSync(this.stateDir+'/status.json',JSON.stringify({phase,detail,prefix:this.current?.prefix||null,quota:this.lastTrustedQuota,updated:Date.now()}),{mode:0o600});}
- notify(body){this.run('ubus',['call','network.interface','notify_proto',JSON.stringify(body)]);}
+ notify(body){if(body['link-up'])this.running();this.run('ubus',['call','network.interface','notify_proto',JSON.stringify(body)]);}
  blockIPv4(){return !this.lastTrustedQuota||this.lastTrustedQuota.blocked;}
  acquireLock(){
   fs.mkdirSync(this.stateDir,{recursive:true,mode:0o700});const lock=this.stateDir+'/worker.lock';
@@ -95,9 +96,11 @@ export class Controller {
 }\n`);
  }
  gate(blocked,ipv6Blocked=blocked){
+  if(!ipv6Blocked)this.running();
   this.firewall();this.run('nft',['-f','-'],`flush set inet cpe6_guard blocked\n${blocked?`add element inet cpe6_guard blocked { "${this.device}" }\n`:''}flush set inet cpe6_guard ipv6_blocked\n${ipv6Blocked?`add element inet cpe6_guard ipv6_blocked { "${this.device}" }\n`:''}`);
  }
  lanGate(online){
+  if(online)this.running();
   if(this.mode!=='lan')return;
   // Reconcile/restore can reset UCI while the worker remains online. Re-read
   // the two managed options each cycle, but reload only after actual changes.
@@ -114,6 +117,7 @@ export class Controller {
  }
  localLink(){const rows=JSON.parse(this.run('ip',['-j','-6','addr','show','dev',this.device]));const a=rows.flatMap(x=>x.addr_info||[]).find(x=>x.scope==='link'&&!x.tentative&&!x.dadfailed);if(!a)throw Error('OpenWrt USB link-local unavailable');fromAddress(a.local);return a.local;}
  policy(s){
+  this.running();
   const rules=JSON.parse(this.run('ip',['-j','-6','rule','show'])),reserved=rules.filter(r=>Number(r.priority)===tableId);
   if(reserved.some(r=>!ownRule(r)||fromAddress(rulePrefix(r).split('/')[0])!==s.prefixHex+'0000000000000000'))throw Error('Reserved rule occupied');
   const routes=JSON.parse(this.run('ip',['-j','-6','route','show','table','all'])).filter(r=>Number(r.table)===tableId);
@@ -132,13 +136,15 @@ export class Controller {
   if(this.mode!=='lan')return;
   const lines=s.routes.split('\n'),owned=ownedRoutes(s.routes);
   for(const table of [181,200]){
+   this.running();
    const r={prefix:s.prefix,table,local},key=routeKey(r),mine=owned.find(x=>routeKey(x)===key&&fromAddress(x.local)===fromAddress(local));
    const base=lines.some(l=>{try{return stockUsbRoute(l,s.prefix,table);}catch{return false;}});
    if(mine){this.routes.set(key,mine);continue;}
    if(!base)throw Error('Vendor USB prefix route unavailable; refusing mutation');
    // Do not replace the vendor route. Register ownership only after success.
    const cmd=`ip -6 route add ${s.prefix} via ${local} dev usb0 table ${table} proto 196 metric 665 && printf CPE6_ROUTE_OK`;
-   if(!(await this.adb(cmd)).includes('CPE6_ROUTE_OK'))throw Error('CPE return route failed');
+   if(!(await this.adb(cmd,{signal:this.abort.signal})).includes('CPE6_ROUTE_OK'))throw Error('CPE return route failed');
+   this.running();
    this.routes.set(key,r);
   }
  }
@@ -154,12 +160,17 @@ export class Controller {
   if(owned)try{this.run('ip',['-6','route','flush','table','613','proto','196']);}catch(e){errors.push(e);}
   return errors;
  }
- async removeUpstream(){
+ async removeUpstream(shutdown=false){
   const errors=[];
   for(const [key,r] of this.routes){
    try{
+    // netifd grants only five seconds before SIGKILL. Local withdrawal has
+    // already finished; spend only the remaining shutdown budget on the CPE.
+    const remaining=shutdown?this.shutdownDeadline-Date.now():20000;
+    if(remaining<=0)throw Error('CPE cleanup deadline reached');
+    const signal=shutdown?AbortSignal.timeout(remaining):this.abort.signal;
     // A successful shell transport alone is not a successful route deletion.
-    const out=await this.adb(`ip -6 route del ${r.prefix} via ${r.local} dev usb0 table ${r.table} proto 196 metric 665 2>/dev/null; ip -6 route show table ${r.table} && printf '\\nCPE6_ROUTES_OK\\n'`);
+    const out=await this.adb(`ip -6 route del ${r.prefix} via ${r.local} dev usb0 table ${r.table} proto 196 metric 665 2>/dev/null; ip -6 route show table ${r.table} && printf '\\nCPE6_ROUTES_OK\\n'`,{signal,timeout:shutdown?Math.min(1500,remaining):20000});
     if(!out.includes('CPE6_ROUTES_OK'))throw Error('CPE route absence could not be confirmed');
     if(ownedRoutes(out,r.table).some(x=>routeKey(x)===key&&fromAddress(x.local)===fromAddress(r.local)))throw Error('CPE owned return route remains');
     this.routes.delete(key);
@@ -167,15 +178,17 @@ export class Controller {
   }
   return errors;
  }
- async down(reason,block=this.blockIPv4()){
+ async down(reason,block=this.blockIPv4(),shutdown=false){
   const errors=[];
   for(const action of [()=>this.gate(block,true),()=>this.lanGate(false),()=>this.notify(withdraw(this.interfaceName,this.device))]){try{action();}catch(e){errors.push(e);}}
-  errors.push(...this.removePolicy());this.current=null;this.lastHealth=0;errors.push(...await this.removeUpstream());
-  this.status(errors.length?'cleanup-pending':'offline',reason);return errors.length===0;
+  errors.push(...this.removePolicy());this.current=null;this.lastHealth=0;errors.push(...await this.removeUpstream(shutdown));
+  if(!this.stopping||shutdown)this.status(errors.length?'cleanup-pending':'offline',reason);return errors.length===0;
  }
  async tick(){
+  this.running();
   this.firewall();
-  let s;try{s=await this.sense();}catch{this.lastTrustedQuota=null;await this.down('quota-unavailable');return;}
+  let s;try{s=await this.sense({signal:this.abort.signal});}catch{if(this.stopping)return;this.lastTrustedQuota=null;await this.down('quota-unavailable');return;}
+  this.running();
   this.lastTrustedQuota=trustedQuota(s?.quota);
   for(const r of ownedRoutes(s?.routes))this.routes.set(routeKey(r),r);
   if(!this.lastTrustedQuota){await this.down('quota-unavailable',true);return;}
@@ -183,31 +196,47 @@ export class Controller {
   if(!this.recovered){
    // The full UDX snapshot survives process kill -9 through protocol ownership.
    if(!await this.down('restart-recovery',false))return;
+   this.running();
    this.recovered=true;
    // This pre-cleanup snapshot must not re-adopt routes just deleted above.
    s=withoutOwned(s);
   }
   if(!s.prefix||!s.prefixHex||!s.usbLinkLocal||!s.hasDefault){await this.down('cellular-ipv6-unavailable',false);return;}
-  if(this.current&&this.current.prefix!==s.prefix){if(!await this.down('prefix-transition',false))return;s=withoutOwned(s);this.lastHealth=0;}
-  if(this.routes.size&&!this.current){if((await this.removeUpstream()).length){this.status('cleanup-pending','old-return-route');return;}s=withoutOwned(s);}
+  if(this.current&&this.current.prefix!==s.prefix){if(!await this.down('prefix-transition',false))return;this.running();s=withoutOwned(s);this.lastHealth=0;}
+  if(this.routes.size&&!this.current){if((await this.removeUpstream()).length){if(!this.stopping)this.status('cleanup-pending','old-return-route');return;}this.running();s=withoutOwned(s);}
   if(Date.now()-this.lastHealth>=this.healthInterval*1000){
-   const result=await this.adb('ping6 -I sipa_eth0 -c 1 -W 3 2400:3200::1 >/dev/null 2>&1 && printf CPE6_HEALTH_OK');
+   const result=await this.adb('ping6 -I sipa_eth0 -c 1 -W 3 2400:3200::1 >/dev/null 2>&1 && printf CPE6_HEALTH_OK',{signal:this.abort.signal});
+   this.running();
    if(!result.includes('CPE6_HEALTH_OK')){await this.down('ipv6-health-failed',false);return;}
    this.lastHealth=Date.now();
   }
   const local=this.localLink();await this.upstream(s,local);
+  this.running();
   // Install the owned policy before netifd publishes a globally routable IP.
   this.policy(s);this.current=s;this.notify(update(this.interfaceName,this.device,s,{lan:this.mode==='lan',lifetime:this.lifetime}));
   this.lanGate(true);this.gate(false,false);this.status('online','native-ipv6');
  }
- async fail(reason='runtime-error'){await this.down(reason,this.blockIPv4());}
- async stop(){this.stopping=true;await this.down('stopped',this.blockIPv4());}
+ async fail(reason='runtime-error'){if(!this.stopping)await this.down(reason,this.blockIPv4());}
+ stop(){
+  if(this.stopPromise)return this.stopPromise;
+  this.stopping=true;this.shutdownDeadline=Date.now()+3500;this.abort.abort();
+  // Run local gates, RA withdrawal and owned policy removal in this signal
+  // turn, before waiting for any separately bounded remote route cleanup.
+  this.stopPromise=this.down('stopped',this.blockIPv4(),true);return this.stopPromise;
+ }
+}
+export async function runController(c){
+ c.acquireLock();const stop=()=>{c.stop().catch(e=>console.error('cpe5g-ipv6:',e.message));};
+ const signals=['SIGTERM','SIGINT','SIGHUP'];for(const signal of signals)process.on(signal,stop);
+ try{
+  while(!c.stopping){
+   try{await c.tick();}catch(e){if(!c.stopping){try{await c.fail();}catch{}console.error('cpe5g-ipv6:',e.message);}}
+   if(!c.stopping)try{await delay(c.interval*1000,undefined,{signal:c.abort.signal});}catch(e){if(!c.stopping)throw e;}
+  }
+ }finally{try{await c.stop();}finally{for(const signal of signals)process.removeListener(signal,stop);c.releaseLock();}}
 }
 if(import.meta.url===`file://${process.argv[1]}`){
  const [interfaceName,device,host,port,lan,mode,interval,lifetime]=process.argv.slice(2);
  const c=new Controller({interfaceName,device,host,port:Number(port||5555),lan,mode,interval:Number(interval||15),lifetime:Number(lifetime||180)});
- c.acquireLock();let stop=false;for(const signal of ['SIGTERM','SIGINT','SIGHUP'])process.on(signal,()=>{stop=true;c.stopping=true;});
- try{
-  while(!stop){try{await c.tick();}catch(e){try{await c.fail();}catch{}console.error('cpe5g-ipv6:',e.message);}for(let n=0;n<c.interval&&!stop;n++)await delay(1000);}
- }finally{try{await c.stop();}finally{c.releaseLock();}}
+ await runController(c);
 }

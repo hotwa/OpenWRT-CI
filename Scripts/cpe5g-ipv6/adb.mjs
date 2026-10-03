@@ -9,18 +9,23 @@ export function packet(name,a=0,b=0,payload=Buffer.alloc(0)) {
  h.writeUInt32LE(body.reduce((n,v)=>(n+v)>>>0,0),16);h.writeUInt32LE((code^0xffffffff)>>>0,20);
  return Buffer.concat([h,body]);
 }
-export function shell(host,port,command,{timeout=20000,maxBytes=1048576}={}) {
+export function shell(host,port,command,{timeout=20000,maxBytes=1048576,signal}={}) {
  return new Promise((resolve,reject)=>{
+  const cancelled=()=>Object.assign(Error('Private ADB cancelled'),{name:'AbortError'});
+  if(signal?.aborted){reject(cancelled());return;}
   const socket=net.createConnection({host,port}),out=[];let pending=Buffer.alloc(0),remote=0,finished=false,total=0;
+  const abort=()=>end(cancelled());
+  const detach=()=>signal?.removeEventListener('abort',abort);
   const end=(err,reply)=>{
    if(finished)return;finished=true;
-   if(err){socket.destroy();reject(err);return;}
+   if(err){detach();socket.destroy();reject(err);return;}
    // Complete CLSE/FIN before opening the next transport. The vendor daemon
    // accepts one host at a time and an immediate destroy can strand its stream.
    const timer=setTimeout(()=>socket.destroy(),500);
-   socket.once('close',()=>{clearTimeout(timer);resolve(Buffer.concat(out).toString());});
+   socket.once('close',()=>{clearTimeout(timer);detach();resolve(Buffer.concat(out).toString());});
    socket.end(reply);
   };
+  signal?.addEventListener('abort',abort,{once:true});
   socket.setTimeout(timeout,()=>end(Error('Private ADB timeout')));
   socket.on('error',()=>end(Error('Private ADB unavailable')));
   socket.on('close',()=>{if(!finished)end(Error('Private ADB closed prematurely'));});

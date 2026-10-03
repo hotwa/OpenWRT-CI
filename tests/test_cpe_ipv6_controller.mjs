@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {spawn} from 'node:child_process';
 import {Controller} from '../Scripts/cpe5g-ipv6/worker.mjs';
 import {fromAddress} from '../Scripts/cpe5g-ipv6/model.mjs';
 const local='fe80::13:2',remote='fe80::66:1',prefixA='2001:db8:13:1::/64',prefixB='2001:db8:13:2::/64';
@@ -202,4 +203,49 @@ test('conflicting rule source lengths stay foreign even with protocol 196',async
 test('duplicate process lock refuses live owner and recovers a dead owner',t=>{
  const {c,net,stateDir}=setup(t);c.acquireLock();const duplicate=new Controller({run:net.run,adb:net.adb,sense:net.sense,stateDir});assert.throws(()=>duplicate.acquireLock(),/already running/);c.releaseLock();
  fs.mkdirSync(stateDir+'/worker.lock');fs.writeFileSync(stateDir+'/worker.lock/pid','99999999');duplicate.acquireLock();assert.equal(fs.readFileSync(stateDir+'/worker.lock/pid','utf8'),String(process.pid));duplicate.releaseLock();
+});
+
+test('shutdown commands enforce their deadline even when a child ignores SIGTERM',t=>{
+ const {stateDir}=setup(t),c=new Controller({stateDir});c.shutdownDeadline=Date.now()+3500;const started=Date.now();
+ assert.throws(()=>c.run(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},100);setTimeout(()=>process.exit(),2500);']),e=>e.signal==='SIGKILL');
+ assert.ok(Date.now()-started<1500,'an ignored TERM must not exhaust netifd teardown');
+});
+
+test('real SIGTERM interrupts pending probe/health/add and idle delay before netifd SIGKILL',async t=>{
+ for(const stage of ['sense','health','add','idle','cleanup']){
+  const {stateDir}=setup(t),worker=new URL('../Scripts/cpe5g-ipv6/worker.mjs',import.meta.url).href,transport=new URL('../Scripts/cpe5g-ipv6/adb.mjs',import.meta.url).href,probe=new URL('../Scripts/cpe5g-ipv6/probe.mjs',import.meta.url).href,model=new URL('../Scripts/cpe5g-ipv6/model.mjs',import.meta.url).href;
+  // Reuse the network fixture, but hold an actual TCP ADB transport and run
+  // the same signal entry point as the production worker in another process.
+  const source=`import assert from 'node:assert/strict';import fs from 'node:fs';import net from 'node:net';
+import {Controller,runController} from ${JSON.stringify(worker)};import {shell,packet} from ${JSON.stringify(transport)};import {read} from ${JSON.stringify(probe)};import {fromAddress} from ${JSON.stringify(model)};
+const local=${JSON.stringify(local)},remote=${JSON.stringify(remote)},prefixA=${JSON.stringify(prefixA)},prefixB=${JSON.stringify(prefixB)};
+const equalAddress=${equalAddress.toString()};${Network.toString()}
+const stage=${JSON.stringify(stage)},emit=x=>{if(x.event==='pending')n.withdrawFails=true;console.log(JSON.stringify(x));},sockets=new Set();
+const server=net.createServer(socket=>{sockets.add(socket);socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));let bytes=Buffer.alloc(0);
+socket.on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);while(bytes.length>=24){const size=bytes.readUInt32LE(12);if(bytes.length<24+size)return;const name=bytes.subarray(0,4).toString();bytes=bytes.subarray(24+size);
+if(name==='CNXN')socket.write(packet('CNXN',0x01000000,4096,'device::\\0'));if(name==='OPEN'){socket.write(packet('OKAY',7,1));emit({event:stage==='cleanup'?'cleanup-held':'pending'});if(stage==='cleanup'){const heartbeat=setInterval(()=>socket.write(packet('WRTE',7,1,'still-held')),200);socket.once('close',()=>clearInterval(heartbeat));}}}});});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));const n=new Network();let ticks=0,c;
+const run=(bin,args,input)=>{emit({event:'call',bin,args,input});return n.run(bin,args,input);};
+const sense=async options=>{ticks++;if(ticks===2&&stage==='sense')return read('127.0.0.1',server.address().port,options);if(ticks===2&&stage==='health')c.lastHealth=0;if(ticks===2&&stage==='add'){n.prefix=prefixB;n.addVendor(prefixB);}return n.sense();};
+const adb=(cmd,options)=>(stage==='cleanup'&&cmd.startsWith('ip -6 route del '))||(ticks===2&&((stage==='health'&&cmd.startsWith('ping6 '))||(stage==='add'&&cmd.startsWith('ip -6 route add '))))?shell('127.0.0.1',server.address().port,cmd,options):n.adb(cmd);
+c=new Controller({run,adb,sense,stateDir:${JSON.stringify(stateDir)}});if(!['idle','cleanup'].includes(stage))c.interval=0.01;
+const status=c.status.bind(c);c.status=(phase,detail)=>{status(phase,detail);if(phase==='online'&&['idle','cleanup'].includes(stage))emit({event:'pending'});};
+try{await runController(c);emit({event:'final',gate:n.gates.at(-1),prefix:n.uci.get('dhcp.lan.prefix_filter'),rules:n.rules,routes:n.routes,current:c.current,pendingRoutes:c.routes.size,locked:fs.existsSync(c.stateDir+'/worker.lock')});}
+finally{for(const socket of sockets)socket.destroy();await new Promise(r=>server.close(r));}`;
+  const events=[];let stderr='',signalTime=0,tail='';
+  const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','pipe','pipe']});
+  const result=await new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{child.kill('SIGKILL');reject(Error(stage+' shutdown exceeded netifd grace period'));},7000);
+   child.stdout.on('data',chunk=>{tail+=chunk;let at;while((at=tail.indexOf('\n'))>=0){const line=tail.slice(0,at);tail=tail.slice(at+1);const event=JSON.parse(line);events.push(event);if(event.event==='pending'&&!signalTime){signalTime=Date.now();child.kill('SIGTERM');}}});
+   child.stderr.on('data',chunk=>{stderr+=chunk;});child.once('error',e=>{clearTimeout(timer);reject(e);});child.once('exit',(code,signal)=>{clearTimeout(timer);resolve({code,signal});});
+  });
+  assert.deepEqual(result,{code:0,signal:null},stage+': '+stderr);assert.ok(signalTime,stage+' reached the in-flight phase');assert.ok(Date.now()-signalTime<(stage==='cleanup'?4500:3000),stage+' did not withdraw promptly');
+  const pendingAt=events.findIndex(x=>x.event==='pending'),later=events.slice(pendingAt+1),final=events.find(x=>x.event==='final');
+  assert.ok(final,stage+' completed cleanup');assert.deepEqual(final.gate,{ipv4:false,ipv6:true});assert.equal(final.prefix,'fc00::/7');assert.equal(final.rules.length,0);assert.equal(final.routes.length,0);assert.equal(final.current,null);assert.equal(final.locked,false);
+  if(stage==='cleanup'){assert.equal(final.pendingRoutes,2);assert.equal(later.filter(x=>x.event==='cleanup-held').length,1);assert.ok(later.findIndex(x=>x.event==='call'&&x.bin==='ip'&&x.args.includes('flush'))<later.findIndex(x=>x.event==='cleanup-held'),'local owned policy must be removed before remote wait');}
+  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ip'&&(x.args.includes('replace')||x.args.includes('add')))),stage+' installed a policy after stop');
+  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ubus'&&x.args[2]==='notify_proto'&&JSON.parse(x.args[3])['link-up'])),stage+' published after stop');
+  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='uci'&&x.args.includes('dhcp.lan.prefix_filter=::/0'))),stage+' enabled LAN RA after stop');
+  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='nft'&&x.input?.startsWith('flush set')&&!x.input.includes('add element inet cpe6_guard ipv6_blocked'))),stage+' reopened IPv6 after stop');
+ }
 });

@@ -25,4 +25,16 @@ await assert.rejects(scenario('corrupt'),/checksum/);
 await assert.rejects(scenario('wrong'),/Wrong ADB stream/);
 await assert.rejects(scenario('closed'),/prematurely/);
 assert.throws(()=>packet('BOGUS'),/Invalid ADB frame/);
+// Cancellation must interrupt a silent transport; an idle socket timeout can
+// otherwise outlive netifd's five-second teardown grace period.
+const controller=new AbortController();let closed;
+const closure=new Promise(r=>{closed=r;});
+const held=net.createServer(socket=>{socket.on('error',()=>{});socket.on('close',closed);socket.resume();});
+await new Promise(r=>held.listen(0,'127.0.0.1',r));
+const started=Date.now(),pending=shell('127.0.0.1',held.address().port,'held',{signal:controller.signal});
+setTimeout(()=>controller.abort(),25);
+await assert.rejects(pending,{name:'AbortError'});await closure;
+assert.ok(Date.now()-started<1000,'abort must close the socket promptly');
+await new Promise(r=>held.close(r));
+await assert.rejects(shell('127.0.0.1',1,'never-connect',{signal:controller.signal}),{name:'AbortError'});
 console.log('CPE private ADB transport passed');

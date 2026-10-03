@@ -34,6 +34,8 @@ WRT_HEADSCALE_HOSTNAME: cpe-5g-s13
 
 服务从 UDX710 的当前 `sipa_eth0` 读取有效 `/64`，不取 USB 上残留的第一个公网地址。它为本机配置独立地址，并维护 UDX710 表 `181`、`200` 经 OpenWrt USB 链路本地地址的回程路由。托管路由使用独立 metric，避免覆盖厂商原有路由；在前缀变化或停止时只清理自己的项。
 
+固定版本的 [netifd 停止流程](https://github.com/openwrt/netifd/blob/d155e4cefbd964b7c022618c1d74b549de25e8a8/proto-ext.c#L762-L781) 只给协议进程 5 秒清理。worker 收到停止信号后取消正在等待的 ADB 请求，先关闭本机 IPv6 门禁、撤回 RA 并清理托管策略，再在 3.5 秒总预算内尝试远端清理；停止中的异步结果不能继续发布地址或开放门禁。若 UDX710 不可达，远端自有路由可能留待下一次启动按所有权标记回收。五种实际 SIGTERM 子进程测试已覆盖探测、健康检查、路由添加、空闲等待和卡住的远端清理；这不代替实机停止验收。
+
 OpenWrt 使用独立策略表，并将 LAN、ULA、链路本地及 Tailnet 的相应流量留给正确路由；mwan3 的 IPv4 主备策略不应接管 IPv6，Nikki 已标记流量也不应被蜂窝规则抢走。这里采用路由延伸，当前实现不要求在 LAN/USB 之间启用 NDP relay。相关原理见 [RFC 7278](https://datatracker.ietf.org/doc/html/rfc7278)。
 
 ### RA 离线门禁与 DNS
