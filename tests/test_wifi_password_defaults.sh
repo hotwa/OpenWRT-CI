@@ -43,7 +43,9 @@ EOF
 
 (
 	cd "$WORK_DIR"
-	WRT_THEME=argon WRT_IP=192.168.12.1 WRT_DATE=2026-08-29 WRT_SSID=mesh-ssid \
+	# This is an ordinary-device fixture, even when the enclosing CI job is CPE B.
+	WRT_CPE_WIFI=false WRT_TARGET='' WRT_CONFIG='' WRT_PACKAGE='' WRT_NAME=fixture-router \
+		WRT_THEME=argon WRT_IP=192.168.12.1 WRT_DATE=2026-08-29 WRT_SSID=mesh-ssid \
 		bash "$SETTINGS"
 )
 
