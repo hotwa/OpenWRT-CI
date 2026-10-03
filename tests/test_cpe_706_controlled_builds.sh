@@ -7,12 +7,23 @@ CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIG="$ROOT_DIR/Config/IPQ60XX-706-NOWIFI.txt"
 SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
 
-grep -A5 '^      BUILD_BASELINE_A:' "$WORKFLOW" | grep -Eq "default: ('false'|false)" || {
+# Select one mapping and stop at the next sibling or ancestor key. Extra
+# inputs/comments must not make a valid field fall outside a line-count window.
+yaml_mapping_block() {
+  local file="$1" indent="$2" key="$3"
+  sed -n "/^${indent}${key}:\$/,/^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/p" "$file" |
+    sed "1b; /^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/d"
+}
+
+baseline_block="$(yaml_mapping_block "$WORKFLOW" '  ' baseline_a)"
+cpe_block="$(yaml_mapping_block "$WORKFLOW" '  ' cpe_overlay_b)"
+
+yaml_mapping_block "$WORKFLOW" '      ' BUILD_BASELINE_A | grep -Eq "default: ('false'|false)" || {
   echo 'CPE workflow must default BUILD_BASELINE_A to false'
   exit 1
 }
 
-grep -A3 '^  baseline_a:' "$WORKFLOW" | grep -q 'if:.*inputs.BUILD_BASELINE_A' || {
+printf '%s\n' "$baseline_block" | grep -q 'if:.*inputs.BUILD_BASELINE_A' || {
   echo 'A must run only when BUILD_BASELINE_A is explicitly enabled'
   exit 1
 }
@@ -45,27 +56,27 @@ done
   exit 1
 }
 
-grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: false' || {
+printf '%s\n' "$baseline_block" | grep -q 'WRT_CPE_5G: false' || {
   echo 'A must not include the CPE network overlay'
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: true' || {
+printf '%s\n' "$cpe_block" | grep -q 'WRT_CPE_5G: true' || {
   echo 'B must include the CPE network overlay'
   exit 1
 }
 
-grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: false' || {
+printf '%s\n' "$baseline_block" | grep -q 'WRT_FEATURE_OVERLAY: false' || {
   echo 'A must disable Lucky/Tailscale/Headscale/wrtbak feature overlays'
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: true' || {
+printf '%s\n' "$cpe_block" | grep -q 'WRT_FEATURE_OVERLAY: true' || {
   echo 'B must enable Lucky/Tailscale/Headscale/wrtbak feature overlays'
   exit 1
 }
 
-grep -A4 '^      WRT_FEATURE_OVERLAY:' "$CORE" | grep -q 'type: boolean' || {
+yaml_mapping_block "$CORE" '      ' WRT_FEATURE_OVERLAY | grep -q 'type: boolean' || {
   echo 'WRT-CORE must expose a boolean feature-overlay control'
   exit 1
 }

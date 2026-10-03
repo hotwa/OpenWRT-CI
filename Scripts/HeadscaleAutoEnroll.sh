@@ -4,6 +4,7 @@ set -euo pipefail
 TARGET_FILES="${1:-${GITHUB_WORKSPACE:-$(pwd)}/wrt/files}"
 CONFIG_FILE="$TARGET_FILES/etc/config/headscale_auto_enroll"
 AUTH_KEY_FILE="$TARGET_FILES/etc/tailscale/headscale.authkey"
+HOSTNAME_MIGRATION="$TARGET_FILES/etc/uci-defaults/93-headscale-explicit-hostname"
 
 HEADSCALE_LOGIN_SERVER="${HEADSCALE_LOGIN_SERVER:-https://headscale.jmsu.top}"
 HEADSCALE_OPENWRT_HOSTNAME_PREFIX="${HEADSCALE_OPENWRT_HOSTNAME_PREFIX:-}"
@@ -101,6 +102,35 @@ sanitize_hostname() {
 		sed -e 's/^-*//' -e 's/-*$//' -e 's/--*/-/g'
 }
 
+write_explicit_hostname_migration() {
+	local hostname="$1" prefix="$2"
+	mkdir -p "$(dirname "$HOSTNAME_MIGRATION")"
+	{
+		printf '%s\n' '#!/bin/sh' 'set -eu'
+		printf "chosen_hostname='%s'\n" "$hostname"
+		printf "chosen_prefix='%s'\n" "$prefix"
+		cat <<'MIGRATION'
+# Apply this build's explicit operator choice before 94 starts enrollment.
+# OpenWrt removes this one-shot after success; later UCI renames stay local.
+[ "$(uci -q get headscale_auto_enroll.main 2>/dev/null || true)" = enroll ] || exit 1
+put_hostname_option() {
+	local key="headscale_auto_enroll.main.$1" wanted="$2" current
+	current="$(uci -q get "$key" 2>/dev/null || true)"
+	[ "$current" = "$wanted" ] || uci -q set "$key=$wanted"
+}
+put_hostname_option hostname_mode explicit
+put_hostname_option hostname_override "$chosen_hostname"
+put_hostname_option hostname_model ''
+put_hostname_option hostname_prefix "$chosen_prefix"
+# Commit even after a no-op retry: a previous failed commit can leave the
+# desired values visible in RAM without having persisted them to the overlay.
+uci -q commit headscale_auto_enroll
+exit 0
+MIGRATION
+	} >"$HOSTNAME_MIGRATION"
+	chmod 755 "$HOSTNAME_MIGRATION"
+}
+
 derive_headscale_model() {
 	local model
 
@@ -109,37 +139,28 @@ derive_headscale_model() {
 	printf '%s' "$model" | tr -cd 'a-z0-9'
 }
 
-if [ -z "${HEADSCALE_OPENWRT_AUTHKEY:-}" ]; then
-	echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY is empty; leaving firmware auto-enroll disabled"
-	exit 0
-fi
-
-case "$HEADSCALE_OPENWRT_AUTHKEY" in
-	hskey-auth-*) ;;
-	*)
-		echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY does not look like a Headscale preauth key" >&2
-		exit 1
-		;;
-esac
-
 [ -f "$CONFIG_FILE" ] || {
 	echo "headscale auto-enroll: missing $CONFIG_FILE" >&2
 	exit 1
 }
 
-mkdir -p "$(dirname "$AUTH_KEY_FILE")"
-chmod 700 "$(dirname "$AUTH_KEY_FILE")" 2>/dev/null || true
-umask 077
-printf '%s\n' "$HEADSCALE_OPENWRT_AUTHKEY" >"$AUTH_KEY_FILE"
-
-set_config_option enabled 1
+# Identity and public preferences must survive a keyless build as well. A
+# restored /data state can reconnect without baking credentials into an image.
 set_config_option login_server "$HEADSCALE_LOGIN_SERVER"
 set_config_option hostname_prefix "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX"
 if [ -n "$HEADSCALE_OPENWRT_HOSTNAME" ]; then
+	chosen_hostname="$(sanitize_hostname "$HEADSCALE_OPENWRT_HOSTNAME")"
+	[ -n "$chosen_hostname" ] || { echo 'headscale auto-enroll: explicit hostname is empty after sanitization' >&2; exit 1; }
+	chosen_prefix="$(sanitize_hostname "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX")"
+	write_explicit_hostname_migration "$chosen_hostname" "$chosen_prefix"
+	set_config_option hostname_prefix "$chosen_prefix"
 	set_config_option hostname_mode explicit
 	set_config_option hostname_model ''
-	set_config_option hostname_override "$(sanitize_hostname "$HEADSCALE_OPENWRT_HOSTNAME")"
+	set_config_option hostname_override "$chosen_hostname"
 else
+	# A reused build root must not carry a previous explicit naming migration
+	# into a build which did not choose an explicit hostname.
+	rm -f "$HOSTNAME_MIGRATION"
 	# The build-time WRT_IP is only a LuCI/login default.  The router derives
 	# the suffix from its validated, active LAN at boot so a retained sysupgrade
 	# and a LAN renumber cannot leave a stale MagicDNS identity behind.
@@ -156,5 +177,28 @@ set_config_option accept_dns 0
 set_config_option advertise_routes ''
 set_config_option auth_key_file /etc/tailscale/headscale.authkey
 set_config_option delete_auth_key_file 1
+
+if [ -z "${HEADSCALE_OPENWRT_AUTHKEY:-}" ]; then
+	set_config_option enabled 0
+	# Build roots can be reused for configuration-only runs. An empty secret must
+	# never accidentally retain a credential left by an earlier private build.
+	rm -f "$AUTH_KEY_FILE"
+	echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY is empty; leaving firmware auto-enroll disabled"
+	exit 0
+fi
+
+case "$HEADSCALE_OPENWRT_AUTHKEY" in
+	hskey-auth-*) ;;
+	*)
+		echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY does not look like a Headscale preauth key" >&2
+		exit 1
+		;;
+esac
+
+mkdir -p "$(dirname "$AUTH_KEY_FILE")"
+chmod 700 "$(dirname "$AUTH_KEY_FILE")" 2>/dev/null || true
+umask 077
+printf '%s\n' "$HEADSCALE_OPENWRT_AUTHKEY" >"$AUTH_KEY_FILE"
+set_config_option enabled 1
 
 echo "headscale auto-enroll: enabled for $HEADSCALE_LOGIN_SERVER with auth key redacted"

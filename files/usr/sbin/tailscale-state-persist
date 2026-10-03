@@ -40,7 +40,11 @@ release_lock() {
 }
 
 main() {
+	local current need_stop=0
 	[ -x "$INIT" ] || exit 0
+	# A duplicate block event must not remove another worker's readiness marker.
+	mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+	trap release_lock EXIT HUP INT TERM
 	rm -f "$READY_FILE"
 	data_is_persistent_mount || {
 		"$INIT" stop >/dev/null 2>&1 || true
@@ -48,28 +52,53 @@ main() {
 		exit 0
 	}
 
-	mkdir "$LOCK_DIR" 2>/dev/null || exit 0
-	trap release_lock EXIT HUP INT TERM
 	mkdir -p "$STATE_DIR"
 	chmod 700 "$STATE_DIR"
 
 	# The data copy is authoritative once present. Never overwrite it: copying a
 	# newer but unknown legacy state could clone or replace the live node identity.
-	if [ ! -s "$STATE_FILE" ] && [ -s "$LEGACY_STATE_FILE" ]; then
-		"$INIT" stop >/dev/null 2>&1 || true
+	if [ -e "$STATE_FILE" ] && [ ! -s "$STATE_FILE" ]; then
+		log "empty persistent state; refusing to replace the existing identity"
+		exit 1
+	fi
+	current="$(uci -q get "$CONFIG.state_file" 2>/dev/null || true)"
+	[ "$current" = "$STATE_FILE" ] || need_stop=1
+	if [ ! -e "$STATE_FILE" ] && [ -s "$LEGACY_STATE_FILE" ]; then
+		need_stop=1
+	fi
+	if [ "$need_stop" = 1 ]; then
+		# start on an existing daemon is a no-op. Stop it before a state-path
+		# change so it cannot keep writing its legacy identity under /etc.
+		if ! "$INIT" stop >/dev/null 2>&1; then
+			log "failed to stop tailscaled before persistent-state migration; enrollment is held"
+			exit 1
+		fi
+	fi
+	if [ ! -e "$STATE_FILE" ] && [ -s "$LEGACY_STATE_FILE" ]; then
 		umask 077
 		tmp="$STATE_FILE.new.$$"
 		cp "$LEGACY_STATE_FILE" "$tmp"
 		chmod 600 "$tmp"
-		mv -f "$tmp" "$STATE_FILE"
-		log "migrated existing Tailnet state into $STATE_DIR"
+		# Publish without replacing a state that another daemon created while
+		# this migration was in progress. Both paths are on the same filesystem.
+		if ln "$tmp" "$STATE_FILE" 2>/dev/null; then
+			log "migrated existing Tailnet state into $STATE_DIR"
+		else
+			rm -f "$tmp"
+			log "persistent state appeared during migration; identity retained and enrollment held"
+			exit 1
+		fi
+		rm -f "$tmp"
 	fi
 
 	set_state_file
+	"$INIT" enable >/dev/null 2>&1 || true
+	if ! "$INIT" start >/dev/null 2>&1; then
+		log "failed to start tailscaled with persistent state; enrollment is held"
+		exit 1
+	fi
 	: >"$READY_FILE"
 	chmod 600 "$READY_FILE"
-	"$INIT" enable >/dev/null 2>&1 || true
-	"$INIT" start >/dev/null 2>&1 || true
 	[ -s "$STATE_FILE" ] || log "no existing Tailnet state; a new enrollment may create one"
 }
 

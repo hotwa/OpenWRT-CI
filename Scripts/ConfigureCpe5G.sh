@@ -28,6 +28,12 @@ esac
 
 [ "$ENABLE" = true ] || exit 0
 
+NATIVE_IPV6_BUILD="${WRT_CPE_IPV6:-false}"
+case "$NATIVE_IPV6_BUILD" in
+	true|false) ;;
+	*) echo 'ERROR: WRT_CPE_IPV6 must be true or false' >&2; exit 1 ;;
+esac
+
 mkdir -p "$(dirname "$BOOTSTRAP")" "$(dirname "$RECONCILE")" "$(dirname "$INIT_SCRIPT")"
 
 cat >"$RECONCILE" <<'EOF'
@@ -41,6 +47,7 @@ LOCK_DIR="${CPE5G_RECONCILE_LOCK_DIR:-/var/run/cpe5g-mwan3-reconcile.lock}"
 IPTABLES_SAVE="${CPE5G_IPTABLES_SAVE:-/usr/sbin/iptables-save}"
 IP6TABLES_SAVE="${CPE5G_IP6TABLES_SAVE:-/usr/sbin/ip6tables-save}"
 NFT="${CPE5G_NFT:-/usr/sbin/nft}"
+IP="${CPE5G_IP:-ip}"
 
 log() {
 	logger -t "$TAG" "$*" 2>/dev/null || true
@@ -118,6 +125,19 @@ set_network_option() {
 	network_changed=1
 }
 
+# Keep user-selected resolvers. peerdns=0 only rejects the modem's DHCP DNS;
+# these static IPv4 resolvers stay available while 5G is up and follow mwan3.
+ensure_backup_dns() {
+	local current
+	current="$(uci -q get network.5G.dns 2>/dev/null || true)"
+	[ -z "$(printf '%s' "$current" | tr -d '[:space:]')" ] || return 0
+	uci -q delete network.5G.dns 2>/dev/null || true
+	uci add_list network.5G.dns='223.5.5.5'
+	uci add_list network.5G.dns='119.29.29.29'
+	network_changed=1
+	backup_dns_added=1
+}
+
 wait_for_network_object() {
 	local interface="$1" attempt=0
 	while [ "$attempt" -lt 15 ]; do
@@ -154,6 +174,38 @@ cleanup_incompatible_mangle_table() {
 	done
 	$NFT delete table "$family" mangle
 	log "removed incompatible mwan3-owned $family mangle table"
+}
+
+# Some mwan3 versions delete all policy rules in priorities 1000-3999 on
+# stop. Preserve only these existing Nikki signatures, without inventing new
+# proxy rules or restarting Nikki. Extra selectors are deliberately excluded.
+snapshot_nikki_rules() {
+	local family="$1"
+	command -v "$IP" >/dev/null 2>&1 || return 0
+	"$IP" -"$family" rule show 2>/dev/null | awk '
+		NF == 7 && $1 ~ /^[0-9]+:$/ && $2 == "from" && $3 == "all" &&
+		$4 == "fwmark" && $6 == "lookup" &&
+		(($5 == "0x80/0xff" && $7 == "80") ||
+		 ($5 == "0x81/0xff" && $7 == "81")) {
+			sub(/:$/, "", $1); print $1, $5, $7
+		}' || true
+}
+
+restore_nikki_rules() {
+	local family="$1" snapshot="$2" priority mark table present
+	[ -n "$snapshot" ] || return 0
+	while read -r priority mark table; do
+		[ -n "$priority" ] || continue
+		present="$(snapshot_nikki_rules "$family")"
+		if ! printf '%s\n' "$present" | grep -Fqx "$priority $mark $table"; then
+			"$IP" -"$family" rule add pref "$priority" from all fwmark "$mark" lookup "$table" || {
+				log "could not restore existing Nikki IPv$family policy rule at $priority"
+				return 1
+			}
+		fi
+	done <<RULES
+$snapshot
+RULES
 }
 
 # Validate every required input before making or committing any change. This is
@@ -195,12 +247,34 @@ old_wan_metric="$(uci -q get network.wan.metric 2>/dev/null || printf '__missing
 old_5g_metric="$(uci -q get network.5G.metric 2>/dev/null || printf '__missing__')"
 old_5g_defaultroute="$(uci -q get network.5G.defaultroute 2>/dev/null || printf '__missing__')"
 old_5g_peerdns="$(uci -q get network.5G.peerdns 2>/dev/null || printf '__missing__')"
+old_5g_dns="$(uci -q get network.5G.dns 2>/dev/null || printf '__missing__')"
+old_wan_ipv6="$(uci -q get network.wan.ipv6 2>/dev/null || printf '__missing__')"
+old_5g_ipv6="$(uci -q get network.5G.ipv6 2>/dev/null || printf '__missing__')"
+old_wan6_auto="$(uci -q get network.wan6.auto 2>/dev/null || printf '__missing__')"
+old_wan6_disabled="$(uci -q get network.wan6.disabled 2>/dev/null || printf '__missing__')"
+wan6_exists=0
+[ "$(uci -q get network.wan6 2>/dev/null || true)" != interface ] || wan6_exists=1
 network_changed=0
+backup_dns_added=0
 
+# Ethernet provides IPv4 only, including when wan is changed to PPPoE.
+# Both logical cellular interfaces share usb0. netifd ipv6=0 disables IPv6
+# on that device; ipv6=1 keeps link-local addressing without DHCPv6 autostart.
+set_network_option network.wan.ipv6 0
+if [ "$(uci -q get cpe5g_ipv6.main.enabled 2>/dev/null || true)" = 1 ]; then
+	set_network_option network.5G.ipv6 1
+else
+	set_network_option network.5G.ipv6 0
+fi
+if [ "$wan6_exists" -eq 1 ]; then
+	set_network_option network.wan6.auto 0
+	set_network_option network.wan6.disabled 1
+fi
 set_network_option network.wan.metric 10
 set_network_option network.5G.metric 20
 set_network_option network.5G.defaultroute 1
 set_network_option network.5G.peerdns 0
+ensure_backup_dns
 
 uci set mwan3.wan='interface'
 uci set mwan3.wan.enabled='1'
@@ -249,7 +323,17 @@ uci add_list mwan3.cpe5g_failover.use_member='cpe5g_wan_m10'
 uci add_list mwan3.cpe5g_failover.use_member='cpe5g_5g_m20'
 uci set mwan3.cpe5g_failover.last_resort='unreachable'
 
-# Remove the IPv4 examples only while their routing signature is still stock.
+# Keep the Tailscale accepted-route table alongside the stock lookup table;
+# add_list preserves all operator-supplied entries and repeat runs are stable.
+if [ -z "$(uci -q get mwan3.globals 2>/dev/null || true)" ]; then
+	uci set mwan3.globals='globals'
+fi
+case " $(uci -q get mwan3.globals.rt_table_lookup 2>/dev/null || true) " in
+	*' 52 '*) ;;
+	*) uci add_list mwan3.globals.rt_table_lookup='52' ;;
+esac
+
+# Remove the examples only while their routing signature is still stock.
 # A locally modified section is user policy and is deliberately preserved.
 if stock_rule_equals https rule sticky 1 dest_port 443 proto tcp use_policy balanced; then
 	uci -q delete mwan3.https 2>/dev/null || true
@@ -257,9 +341,12 @@ fi
 if stock_rule_equals default_rule_v4 rule dest_ip 0.0.0.0/0 use_policy balanced family ipv4; then
 	uci -q delete mwan3.default_rule_v4 2>/dev/null || true
 fi
+if stock_rule_equals default_rule_v6 rule dest_ip ::/0 use_policy balanced family ipv6; then
+	uci -q delete mwan3.default_rule_v6 2>/dev/null || true
+fi
 
 for rule in $(uci -q show mwan3 2>/dev/null | sed -n 's/^mwan3\.\([^.=]*\)=rule$/\1/p'); do
-	case "$rule" in cpe5g_cpe|cpe5g_lan|cpe5g_default) continue ;; esac
+	case "$rule" in cpe5g_cpe|cpe5g_lan|cpe5g_tailnet|cpe5g_private|cpe5g_v6|cpe5g_default) continue ;; esac
 	if [ "$(uci -q get "mwan3.$rule.family" 2>/dev/null || true)" != 'ipv6' ] &&
 	   [ "$(uci -q get "mwan3.$rule.dest_ip" 2>/dev/null || true)" = '0.0.0.0/0' ]; then
 		log "user IPv4 catch-all rule may override CPE failover: $rule"
@@ -280,14 +367,37 @@ uci set mwan3.cpe5g_lan.proto='all'
 uci set "mwan3.cpe5g_lan.dest_ip=$lan_cidr"
 uci set mwan3.cpe5g_lan.use_policy='default'
 
+reset_managed_section cpe5g_tailnet rule
+uci set mwan3.cpe5g_tailnet.family='ipv4'
+uci set mwan3.cpe5g_tailnet.proto='all'
+uci set mwan3.cpe5g_tailnet.dest_ip='100.64.0.0/10'
+uci set mwan3.cpe5g_tailnet.use_policy='default'
+
+reset_managed_section cpe5g_private rule
+uci set mwan3.cpe5g_private.family='ipv4'
+uci set mwan3.cpe5g_private.proto='all'
+uci set mwan3.cpe5g_private.dest_ip='192.168.0.0/16'
+uci set mwan3.cpe5g_private.use_policy='default'
+
+# The IPv4 failover policy has no IPv6 members. Keep all IPv6 on its ordinary
+# policy routing path so an empty stock balanced policy cannot mark it dead.
+reset_managed_section cpe5g_v6 rule
+uci set mwan3.cpe5g_v6.family='ipv6'
+uci set mwan3.cpe5g_v6.proto='all'
+uci set mwan3.cpe5g_v6.dest_ip='::/0'
+uci set mwan3.cpe5g_v6.use_policy='default'
+
 reset_managed_section cpe5g_default rule
 uci set mwan3.cpe5g_default.family='ipv4'
 uci set mwan3.cpe5g_default.proto='all'
 uci set mwan3.cpe5g_default.dest_ip='0.0.0.0/0'
 uci set mwan3.cpe5g_default.use_policy='cpe5g_failover'
 
-# mwan3 evaluates rules in UCI order and has no priority option. Put the two
-# safety bypasses first; the newly recreated catch-all remains last.
+# mwan3 evaluates rules in UCI order and has no priority option. Put these
+# safety bypasses first; the newly recreated IPv4 catch-all remains last.
+uci reorder mwan3.cpe5g_v6=0
+uci reorder mwan3.cpe5g_private=0
+uci reorder mwan3.cpe5g_tailnet=0
 uci reorder mwan3.cpe5g_lan=0
 uci reorder mwan3.cpe5g_cpe=0
 
@@ -300,6 +410,15 @@ if [ "$network_changed" -eq 1 ]; then
 		restore_network_option network.5G.metric "$old_5g_metric"
 		restore_network_option network.5G.defaultroute "$old_5g_defaultroute"
 		restore_network_option network.5G.peerdns "$old_5g_peerdns"
+		if [ "$backup_dns_added" -eq 1 ]; then
+			restore_network_option network.5G.dns "$old_5g_dns"
+		fi
+		restore_network_option network.wan.ipv6 "$old_wan_ipv6"
+		restore_network_option network.5G.ipv6 "$old_5g_ipv6"
+		if [ "$wan6_exists" -eq 1 ]; then
+			restore_network_option network.wan6.auto "$old_wan6_auto"
+			restore_network_option network.wan6.disabled "$old_wan6_disabled"
+		fi
 		uci commit network
 		"$UBUS" call network reload >/dev/null 2>&1 || true
 		log 'network reload failed; restored prior network options'
@@ -311,16 +430,24 @@ fi
 
 if [ -x "$MWAN3_INIT" ]; then
 	"$MWAN3_INIT" enable
+	nikki_rules4="$(snapshot_nikki_rules 4)"
+	nikki_rules6="$(snapshot_nikki_rules 6)"
 	"$MWAN3_INIT" stop >/dev/null 2>&1 || true
 	cleanup_ok=1
 	cleanup_incompatible_mangle_table ip "$IPTABLES_SAVE" || cleanup_ok=0
 	cleanup_incompatible_mangle_table ip6 "$IP6TABLES_SAVE" || cleanup_ok=0
 	if [ "$cleanup_ok" -ne 1 ]; then
 		"$MWAN3_INIT" start >/dev/null 2>&1 || true
+		restore_nikki_rules 4 "$nikki_rules4" || true
+		restore_nikki_rules 6 "$nikki_rules6" || true
 		log 'mwan3 table cleanup was unsafe; service start attempted without deleting foreign state'
 		exit 1
 	fi
-	"$MWAN3_INIT" start
+	start_ok=1
+	"$MWAN3_INIT" start || start_ok=0
+	restore_nikki_rules 4 "$nikki_rules4"
+	restore_nikki_rules 6 "$nikki_rules6"
+	[ "$start_ok" -eq 1 ] || exit 1
 else
 	log "mwan3 init script is unavailable; configuration was committed"
 fi
@@ -388,9 +515,20 @@ cat >"$BOOTSTRAP" <<'EOF'
 #!/bin/sh
 set -eu
 
+NATIVE_IPV6_BUILD='@CPE5G_NATIVE_IPV6_BUILD@'
 uci set network.5G='interface'
 uci set network.5G.proto='dhcp'
 uci set network.5G.device='usb0'
+uci set network.wan.ipv6='0'
+if [ "$NATIVE_IPV6_BUILD" = true ]; then
+	uci set network.5G.ipv6='1'
+else
+	uci set network.5G.ipv6='0'
+fi
+if [ "$(uci -q get network.wan6 2>/dev/null || true)" = interface ]; then
+	uci set network.wan6.auto='0'
+	uci set network.wan6.disabled='1'
+fi
 
 wan_zone=''
 for section in $(uci show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p'); do
@@ -431,6 +569,7 @@ uci commit firewall
 /etc/init.d/cpe5g-mwan3-reconcile start
 exit 0
 EOF
+sed -i "s/@CPE5G_NATIVE_IPV6_BUILD@/$NATIVE_IPV6_BUILD/" "$BOOTSTRAP"
 chmod 755 "$BOOTSTRAP"
 
 echo "CPE-5G network bootstrap: WAN-primary/usb0-5G-backup managed by mwan3"

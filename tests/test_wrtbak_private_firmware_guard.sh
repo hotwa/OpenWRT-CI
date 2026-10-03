@@ -16,8 +16,8 @@ grep -q 'Scripts/PrivateFirmwareGuard.sh' "$WORKFLOW" || {
 	exit 1
 }
 
-grep -q "if: env.WRT_PRIVATE_BUILD != 'true'" "$WORKFLOW" || {
-	echo "Release Firmware step is not gated for private builds"
+grep -Fq "if: inputs.WRT_ENCRYPT_ARTIFACT != true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$WORKFLOW" || {
+	echo "public release input is not gated for encrypted or private builds"
 	exit 1
 }
 
@@ -50,8 +50,8 @@ grep -Fq 'if [ "$credential_supplied" = true ]; then' "$WORKFLOW" || {
 	echo "secret injection is not fail-closed when guard classification disagrees"
 	exit 1
 }
-grep -Fq "if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true'" "$WORKFLOW" || {
-	echo "public split artifacts are not gated against secret-bearing firmware"
+grep -Fq "if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$WORKFLOW" || {
+	echo "public split artifacts are not gated against encrypted or secret-bearing firmware"
 	exit 1
 }
 

@@ -30,12 +30,11 @@ CPE 公网动态 IPv6:外部端口
 
 Lucky 监听 `192.168.66.2` 或 `0.0.0.0` 即可接收 CPE relay；不是让每个 LAN 服务主动转发到 `192.168.66.2`。CPE 和 OpenWrt 防火墙只开放列入清单的入口端口，Lucky 只配置明确目标，避免公开整个 LAN。
 
-## RA、PD 与 NDP 实验边界
+## 原生 IPv6 与验证边界
 
-- 最理想的是运营商向 CPE提供 DHCPv6-PD，CPE再把独立前缀委派给 OpenWrt；目前没有观察到 PD 证据。
-- CPE 自己拥有公网 `/64` 地址，不等于可以把这个 `/64` 直接下发给 OpenWrt LAN。
-- 无 PD 时需要 RA relay + NDP proxy/relay，并维护邻居发现、回程路径、前缀变化和 IPv6 firewall；蜂窝重拨换前缀后必须自动重建状态。
-- 该方案开发难度中高、强依赖 CPE 内核能力和运营商网络行为。生产默认继续使用已验证的 IPv6 端口转发；实验必须放在独立插件/分支，并保留 A/B 与 U-Boot 回滚路径。
+2026-10-03 已在现有 UDX710 固件和 USB 硬件上验证 OpenWrt 本机及隔离 LAN 节点独立 `/128` 出站，并从三个公网探测点获得 LAN 节点 HTTP 200。无需为了这项能力升级 UDX710。后续有界 600 秒、双端回滚实验还验证了真实 Mac `en8` 无手配地址/路由的 SLAAC 与 HTTPS 出站；在线 RA 为蜂窝 `/64` onlink/auto、Router Lifetime 120 秒，离线 prefix filter 门禁抓到 0 秒。运营商 DHCPv6-PD 仍未证明；新 netifd 自动化和更多 LAN 设备未因此完成验收。
+
+B 预设新增蜂窝 `/64` 路由延伸自动化，目标是 Ethernet 只取 IPv4、USB 为一个 LAN 提供原生 IPv6 并作为 IPv4 备份。服务读取额度但不修改现场 40 GiB 上限，额度未知或超限时关闭 USB 公网路径。平时 IPv6 仍消耗 SIM，完整自动化、更多客户端、换前缀、重启及限额门禁仍须实机验收。默认 `ra_dns=0` 保留双栈客户端既有 IPv4 DHCP DNS 管线，IPv6-only 客户端需另行配置稳定 DNS。配置、身份持久化与部署条件见 [CPE IPv6 与备份网络](cpe-ipv6-backup.md)。原有 Lucky relay 可继续作为特定已授权服务的入口方式；原生地址也必须按服务限制公网入站。
 
 ## 2026-07-12 实机结果
 
@@ -72,19 +71,19 @@ Lucky 监听 `192.168.66.2` 或 `0.0.0.0` 即可接收 CPE relay；不是让每�
 - 首次启动创建 DHCP 接口 `5G`（设备 `usb0`），将其加入 `wan` 防火墙区域，并确保存在 `lan -> wan` 转发。`wan` 路由 metric 为 `10`，`5G` 为 `20`；两者均可提供候选默认路由，但 mwan3 只在 WAN 连续探测失败后把新连接切到 5G，WAN 连续恢复后自动切回。
 - WAN 每 5 秒、5G 每 60 秒分别探测 `223.5.5.5`、`119.29.29.29`、`1.1.1.1`，至少两个成功才视为在线；连续失败 3 次下线、连续成功 5 次恢复。5G 禁用 peer DNS。5G 空闲时仍有少量健康探测流量，并非绝对零流量。
 - `192.168.66.0/24` 与运行时从 `network.lan.ipaddr/netmask` 计算出的 LAN 前缀使用 mwan3 `default` 旁路规则，CPE→Lucky 入站连接的响应应继续经 usb0 直连返回。已有连接不会在链路切换时无缝迁移，验收以新连接为准。
-- reconcile 管理 `wan`/`5G` 必要探测项及 `cpe5g_` 前缀成员、策略和规则。mwan3 软件包自带的 `https`、`default_rule_v4` 只有在名称、字段和值仍完整匹配出厂签名时才删除，避免 stock `balanced` 提前截获 IPv4；任何新增/修改字段都视为用户策略并保留，用户命名规则与 IPv6 默认规则同样保留。
+- reconcile 管理 `wan`/`5G` 必要探测项及 `cpe5g_` 前缀成员、策略和规则。mwan3 软件包自带的 `https`、`default_rule_v4` 只有在名称、字段和值仍完整匹配出厂签名时才删除，避免 stock `balanced` 提前截获 IPv4；任何新增/修改字段都视为用户策略并保留，用户命名规则及自定义 IPv6 规则保留；完整匹配出厂签名的 `default_rule_v6` 删除，并加入独立 IPv6 `default` 旁路，防止没有 IPv6成员的 balanced 策略截获蜂窝 IPv6。
 - bootstrap 不直接运行 reconcile，只启用并启动唯一的 gate-aware procd 服务，保证 factory 首启本轮即可收敛。服务持有进程锁，等待 wrtbak `gate.json` 终态后幂等修复；network 值改变时受控 reload netifd，reload 失败恢复修改前的 metric/defaultroute/peerdns 并返回失败。用户保留的 IPv4 `0.0.0.0/0` 规则属于显式 override，可能先于 CPE failover 匹配，运行日志会告警。
 - Nikki 位于策略路由上层，但不同 TUN/规则模式对 fwmark 和出口选择的实际兼容性必须在设备上验证，不能仅凭固件配置断言。
 - `tailscale` 与 `luci-app-tailscale-community` 已内置。私有构建中只有在注入 `HEADSCALE_OPENWRT_AUTHKEY` Secret 时才会首启自动加入 Headscale；该密钥不写入仓库。
 - CPE-5G B 私有功能预设启用双向 LAN/Tailnet Mesh 转发；A 隔离基线不含该功能覆盖层。`tailscale` 区仍保持 `forward=REJECT`，仅由两条显式 forwarding 放行，Headscale ACL 继续决定哪些 Tailnet 节点和站点网段可访问 CPE LAN。
 - `luci-app-wrtbak` 固定使用经过审查的提交。日常 R2 上传继续按 LAN/IP 推导站点代理；首启恢复通过 `WRTBAK_S3_FORCE_DIRECT` 强制直连 R2，避免依赖代理链路。
-- `WRTBAK_FIRSTBOOT_AUTO_ENABLED` 只在 CPE-5G 工作流中提供，默认 `0`。只有已确认恢复来源和回滚路径时才应设为 `1`；恢复完成后该上游功能会按配置重启设备。
+- CPE-5G工作流不暴露独立 wrtbak恢复开关；恢复是否启用遵循已审查的 overlay 与运行时配置。启用前仍须确认恢复来源与回滚路径，恢复完成可能按配置重启设备。
 - B 预设启用 wrtbak 首启恢复时，Headscale 自动注册受 `/root/wrtbak/firstboot/gate.json` 门禁约束：必须先复用恢复的 `tailscaled.state`，确认没有备份或恢复最终失败后才允许消耗 auth key 注册新节点。该规则来自共享 feature overlay，已随 `main` 的 CPE-5G B 构建生效。
 
 ## 触发构建
 
-GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。每个可刷写 artifact 必须同时包含 RE-SS-01 factory、sysupgrade、`SHA256SUMS` 和 `metadata.json`。
+GitHub Actions 选择 **CPE-5G**。日常保持 `BUILD_BASELINE_A=false`，先以 `TEST=true` 验证 B 配置，再以 `TEST=false` 生成 B artifact；需要故障隔离时才打开 A。CPE A、B（包括 `TEST=true`）均使用 `WRT_ENCRYPT_ARTIFACT=true` 交付 `private-encrypted` 封装；维护公钥进入 CI，解密私钥留在本机。外层仅含 `firmware.tar.age`、`SHA256SUMS` 和 `ENCRYPTION.json`。每个可刷写候选的解密 payload 必须同时包含 RE-SS-01 factory、sysupgrade、原 `SHA256SUMS`、manifest 和 `metadata.json`，并重新验证精确源码/workflow SHA 和镜像。`private` 命名不改变公开仓库 artifact 权限，A 的功能隔离和普通 QCA/fleet 交付格式保持原样；本机解密命令见 [加密交付](cpe-ipv6-backup.md#加密交付与本机解密)。
 
-固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问、以及 `tailscale status` 已加入 Headscale。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。
+固件刷入后，先确认 `usb0`/5G 接口自动获得 `192.168.66.2`，再从 `192.168.13.x` LAN 客户端访问 `http://192.168.66.1:6677/`，并确认 Lucky 页面可访问。Tailscale 需要真实独立 `/data`及已有可用身份或一次已授权注册；`tailscale status`必须确认 Running，不能把固件内置组件视为已完成注册。普通 QCA 工作流默认关闭该首启配置，不受此预设影响。
 
 真实拔线/断 WAN 测试可能切断远程维护路径，只有现场 LAN、串口或 U-Boot 救援可用且已设置定时回滚时才能执行。上线前先备份 network/firewall/mwan3/Nikki/Tailscale 状态；再验证 WAN 正常出口、5G 探测流量、WAN 故障后的新连接出口、WAN 恢复自动切回、Lucky 正确/错误 SNI、Tailnet 与 Nikki。未满足现场救援条件时只完成固件和非破坏性验证，不远程模拟断网。
