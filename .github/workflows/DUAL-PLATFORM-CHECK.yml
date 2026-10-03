@@ -1,0 +1,19 @@
+name: Dual platform contract check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    container: python:3.13-bookworm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install --no-cache-dir -r ci/firmware-requirements.txt
+      - run: python3 Scripts/dual_ci_contract.py
+      - run: python3 -m pytest -q tests/test_dual_ci.py tests/test_cnb_replay_core.py tests/test_cnb_re_profile_preflight.py

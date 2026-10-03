@@ -42,7 +42,7 @@ def cnb_branch_config():
 
 def replay_stage(entry):
     for stage in entry["stages"]:
-        if "cnb_replay_core.py" in str(stage.get("script", "")):
+        if re.search(r"python3 (?:-u )?Scripts/cnb_replay_core\.py ", str(stage.get("script", ""))):
             return stage
     raise AssertionError("entry without a replay stage")
 
@@ -60,7 +60,7 @@ def firmware_event_owners(branch):
     owners = set()
     for event, entries in branch.items():
         for entry in entries if isinstance(entries, list) else []:
-            if isinstance(entry, dict) and "cnb_replay_core.py" in str(entry):
+            if isinstance(entry, dict) and re.search(r"python3 (?:-u )?Scripts/cnb_replay_core\.py ", str(entry)):
                 owners.add(event)
     return owners
 
@@ -68,7 +68,7 @@ def firmware_event_owners(branch):
 class ShadowPipelineTest(unittest.TestCase):
     def test_branch_scoped_profiles_and_weekly_upstream_report(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
-        self.assertEqual(list(config), ["migration/cnb-shadow-20260926"])
+        self.assertEqual(set(config), {"migration/cnb-shadow-20260926", ".dual_platform_quality", "main", "$"})
         branch = config["migration/cnb-shadow-20260926"]
         self.assertEqual(list(branch), [
             "push", "web_trigger_re_host_runtime_probe", "web_trigger_re_attachment_probe",
@@ -84,7 +84,7 @@ class ShadowPipelineTest(unittest.TestCase):
             "vscode",
             "web_trigger_re_preflight", "crontab: 0 9 * * 0"
         ])
-        self.assertEqual(len(branch["push"]), 2)
+        self.assertEqual(len(branch["push"]), 3)
         pipeline = branch["push"][0]
         self.assertEqual(set(pipeline), {"name", "docker", "stages"})
         self.assertEqual(pipeline["docker"], {"image": "ubuntu:24.04"})
@@ -153,8 +153,8 @@ class ShadowPipelineTest(unittest.TestCase):
                     "https://cnb.cool/b2233/cloud-secret/-/blob/main/projects/openwrt-ci/env.build.yml"
                 ])
                 self.assertEqual(len(entry["stages"]), 7)
-                self.assertEqual(entry["stages"][0]["script"],
-                                 "bash Scripts/cnb_re_private_input_gate.sh")
+                self.assertIn("bash Scripts/cnb_re_private_input_gate.sh", entry["stages"][0]["script"])
+                self.assertIn("python3 Scripts/firmware_secret_gate.py " + profile_of(entry), entry["stages"][0]["script"])
                 self.assertEqual(entry["stages"][1]["script"],
                                  "bash Scripts/cnb_bootstrap_environment.sh")
                 self.assertEqual(entry["stages"][2]["script"],
@@ -289,7 +289,8 @@ class ShadowPipelineTest(unittest.TestCase):
     def test_devbox_long_compile_is_branch_scoped_and_bounded(self):
         config = yaml.safe_load((ROOT / ".cnb.yml").read_text(encoding="utf-8"))
         # The devbox must stay a branch-scoped event, never a global "$" entry.
-        self.assertNotIn("$", config)
+        self.assertNotIn("vscode", config["$"])
+        self.assertNotIn("vscode", config["main"])
         devbox = config["migration/cnb-shadow-20260926"]["vscode"][0]
         self.assertEqual(set(devbox), {"name", "imports", "runner", "services", "docker", "stages"})
         self.assertEqual(devbox["imports"], [
@@ -313,15 +314,13 @@ class ShadowPipelineTest(unittest.TestCase):
         probe = (ROOT / "Scripts/cnb_shadow_probe.sh").read_text(encoding="utf-8")
         for pattern in (
             r"\binclude\s*:", r"\benv\s*:",
-            r"\bpull_request\s*:",
             r"\b(schedule|tag_push)\s*:",
             r"\b(cnb:apply|cnb:trigger|docker:cache)\b",
         ):
             self.assertNotRegex(text, pattern)
         # api_trigger is now a reviewed channel, but only for the eight
         # single-target events: no generic api_trigger event may appear.
-        api_keys = [line.strip()[:-1] for line in text.splitlines()
-                    if line.startswith("  api_trigger")]
+        api_keys = [key for key in cnb_branch_config() if key.startswith("api_trigger")]
         self.assertEqual(sorted(api_keys), sorted(API_TARGET_EVENTS))
         self.assertNotRegex(text, r"\bapi_trigger\s*:\s*$")
         self.assertIn("unset CNB_TOKEN GITHUB_TOKEN GH_TOKEN", probe)
@@ -338,7 +337,7 @@ class ShadowPipelineTest(unittest.TestCase):
             self.assertNotIn(command, probe)
         self.assertRegex(probe, re.compile(r"bash \"\$test_script\""))
         buttons = yaml.safe_load((ROOT / ".cnb/web_trigger.yml").read_text(encoding="utf-8"))
-        self.assertEqual(len(buttons["branch"]), 1)
+        self.assertEqual(len(buttons["branch"]), 2)
         self.assertEqual(buttons["branch"][0]["reg"], "^migration/cnb-shadow-20260926$")
         button_events = [b["event"] for b in buttons["branch"][0]["buttons"]]
         # Every button is unique and complete, and each single-target button maps

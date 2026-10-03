@@ -1,0 +1,91 @@
+name: Dual platform firmware build
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        type: choice
+        default: re-ss-01
+        options:
+          - re-cs-07
+          - re-cs-02
+          - re-ss-01
+          - wlg-re-cs-07
+          - cpe5g-b
+          - cpe5g-b-configonly
+          - qca-ipq60xx-wifi-no
+          - qca-ipq60xx-wifi-yes
+      execute_build:
+        description: Compile only after this host has the required private build secrets
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: dual-firmware-${{ inputs.profile }}
+  cancel-in-progress: false
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    container: python:3.13-bookworm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install --no-cache-dir -r ci/firmware-requirements.txt
+      - run: python3 Scripts/dual_ci_contract.py
+  build:
+    needs: contract
+    if: ${{ inputs.execute_build }}
+    runs-on: ubuntu-latest
+    container: python:3.13-bookworm
+    timeout-minutes: 360
+    env:
+      BUILD_PROFILE: ${{ inputs.profile }}
+      CNB_REPLAY_CPU_PIN: native
+      SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+      HEADSCALE_OPENWRT_AUTHKEY: ${{ secrets.HEADSCALE_OPENWRT_AUTHKEY }}
+      MULTICA_TOKEN: ${{ secrets.MULTICA_TOKEN }}
+      MULTICA_SERVER_URL: ${{ secrets.MULTICA_SERVER_URL }}
+      MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
+      MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
+      NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+      CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
+      CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install --no-cache-dir -r ci/firmware-requirements.txt
+      - name: Check required build credentials before installing dependencies
+        run: |
+          python3 Scripts/firmware_secret_gate.py "$BUILD_PROFILE"
+      - name: Prepare shared build container and pinned host tools
+        run: |
+          bash Scripts/cnb_bootstrap_environment.sh
+          bash Scripts/cnb_host_runtime.sh
+          bash Scripts/cnb_re_builder_user.sh
+      - name: Compile with the shared GitHub and CNB engine
+        run: |
+          case "$BUILD_PROFILE" in *-configonly) export CNB_REPLAY_WRT_TEST=1 ;; esac
+          runuser --preserve-environment -u cnbbuild -- env HOME=/home/cnbbuild python3 -u Scripts/firmware_build.py "$BUILD_PROFILE" --platform github
+      - name: Retain private firmware only in a private GitHub repository
+        if: ${{ github.event.repository.private && inputs.profile != 'cpe5g-b-configonly' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: private-firmware-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: wrt/upload/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain non-secret provenance on a public GitHub repository
+        if: ${{ !github.event.repository.private && inputs.profile != 'cpe5g-b-configonly' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: firmware-receipt-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: wrt/upload/build-receipt.json
+          if-no-files-found: error
+          retention-days: 14

@@ -43,3 +43,22 @@ branch:
       - name: Build WLG-RE-CS-07 only (single target, no release or device)
         description: One pipeline - WLG-RE-CS-07 lab-identity firmware with pinned source and private commit attachment
         event: web_trigger_re_build_wlg
+
+  - reg: ^main$
+    buttons:
+      - name: "Build re-cs-07 (no deployment)"
+        event: web_trigger_re_build_cs07
+      - name: "Build re-cs-02 (no deployment)"
+        event: web_trigger_re_build_cs02
+      - name: "Build re-ss-01 (no deployment)"
+        event: web_trigger_re_build_ss01
+      - name: "Build wlg-re-cs-07 (no deployment)"
+        event: web_trigger_re_build_wlg
+      - name: "Build cpe5g-b (no deployment)"
+        event: web_trigger_re_build_cpe5g
+      - name: "Build cpe5g-b-configonly (no deployment)"
+        event: web_trigger_re_build_cpe5g_configonly
+      - name: "Build qca-ipq60xx-wifi-no (no deployment)"
+        event: web_trigger_re_build_qca_no
+      - name: "Build qca-ipq60xx-wifi-yes (no deployment)"
+        event: web_trigger_re_build_qca_yes

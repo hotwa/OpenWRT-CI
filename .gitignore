@@ -3,3 +3,6 @@
 /.worktrees
 /.playwright-mcp/
 /artifacts/
+
+__pycache__/
+.pytest_cache/
