@@ -7,6 +7,14 @@ WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 DOC="$ROOT_DIR/docs/cpe-5g-preset.md"
 
+# Select one mapping and stop at the next sibling or ancestor key. Extra
+# inputs/comments must not make a valid field fall outside a line-count window.
+yaml_mapping_block() {
+  local file="$1" indent="$2" key="$3"
+  sed -n "/^${indent}${key}:\$/,/^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/p" "$file" |
+    sed "1b; /^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/d"
+}
+
 grep -q '^CONFIG_PACKAGE_luci-app-lucky=y$' "$GENERAL" || {
   echo "Lucky is not enabled in the shared firmware package selection"
   exit 1
@@ -22,7 +30,9 @@ grep -q "name: CPE-5G" "$WORKFLOW" || {
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_IP: 192.168.13.1' || {
+baseline_block="$(yaml_mapping_block "$WORKFLOW" '  ' baseline_a)"
+cpe_block="$(yaml_mapping_block "$WORKFLOW" '  ' cpe_overlay_b)"
+printf '%s\n' "$cpe_block" | grep -q 'WRT_IP: 192.168.13.1' || {
   echo "CPE-5G B control does not use 192.168.13.1"
   exit 1
 }
@@ -32,8 +42,6 @@ grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
   exit 1
 }
 
-baseline_block="$(sed -n '/^  baseline_a:/,/^  cpe_overlay_b:/p' "$WORKFLOW")"
-cpe_block="$(sed -n '/^  cpe_overlay_b:/,$p' "$WORKFLOW")"
 printf '%s\n' "$cpe_block" | grep -q 'CONFIG_PACKAGE_mwan3=y' || {
   echo "CPE-5G B does not install mwan3"
   exit 1
@@ -87,7 +95,7 @@ grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   exit 1
 }
 
-grep -A4 'WRT_CPE_5G:' "$CORE" | grep -q 'default: false' || {
+yaml_mapping_block "$CORE" '      ' WRT_CPE_5G | grep -q 'default: false' || {
   echo "reusable workflow must disable the CPE network bootstrap by default"
   exit 1
 }
