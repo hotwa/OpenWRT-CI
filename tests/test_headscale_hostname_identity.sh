@@ -27,6 +27,11 @@ HEADSCALE_AUTO_ENROLL_LIBRARY_ONLY=1
 	exit 1
 }
 
+[ "$(build_hostname explicit 'cpe-5g-s13' '' '' 192.168.13.1)" = 'cpe-5g-s13' ] || {
+	echo "operator-selected CPE hostname must not become a model-derived name" >&2
+	exit 1
+}
+
 if build_hostname lan-site '' '' re-cs-07 203.0.113.1 >/dev/null 2>&1; then
 	echo "public address must not produce a LAN-derived hostname" >&2
 	exit 1

@@ -109,30 +109,13 @@ derive_headscale_model() {
 	printf '%s' "$model" | tr -cd 'a-z0-9'
 }
 
-if [ -z "${HEADSCALE_OPENWRT_AUTHKEY:-}" ]; then
-	echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY is empty; leaving firmware auto-enroll disabled"
-	exit 0
-fi
-
-case "$HEADSCALE_OPENWRT_AUTHKEY" in
-	hskey-auth-*) ;;
-	*)
-		echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY does not look like a Headscale preauth key" >&2
-		exit 1
-		;;
-esac
-
 [ -f "$CONFIG_FILE" ] || {
 	echo "headscale auto-enroll: missing $CONFIG_FILE" >&2
 	exit 1
 }
 
-mkdir -p "$(dirname "$AUTH_KEY_FILE")"
-chmod 700 "$(dirname "$AUTH_KEY_FILE")" 2>/dev/null || true
-umask 077
-printf '%s\n' "$HEADSCALE_OPENWRT_AUTHKEY" >"$AUTH_KEY_FILE"
-
-set_config_option enabled 1
+# Identity and public preferences must survive a keyless build as well. A
+# restored /data state can reconnect without baking credentials into an image.
 set_config_option login_server "$HEADSCALE_LOGIN_SERVER"
 set_config_option hostname_prefix "$HEADSCALE_OPENWRT_HOSTNAME_PREFIX"
 if [ -n "$HEADSCALE_OPENWRT_HOSTNAME" ]; then
@@ -156,5 +139,28 @@ set_config_option accept_dns 0
 set_config_option advertise_routes ''
 set_config_option auth_key_file /etc/tailscale/headscale.authkey
 set_config_option delete_auth_key_file 1
+
+if [ -z "${HEADSCALE_OPENWRT_AUTHKEY:-}" ]; then
+	set_config_option enabled 0
+	# Build roots can be reused for configuration-only runs. An empty secret must
+	# never accidentally retain a credential left by an earlier private build.
+	rm -f "$AUTH_KEY_FILE"
+	echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY is empty; leaving firmware auto-enroll disabled"
+	exit 0
+fi
+
+case "$HEADSCALE_OPENWRT_AUTHKEY" in
+	hskey-auth-*) ;;
+	*)
+		echo "headscale auto-enroll: HEADSCALE_OPENWRT_AUTHKEY does not look like a Headscale preauth key" >&2
+		exit 1
+		;;
+esac
+
+mkdir -p "$(dirname "$AUTH_KEY_FILE")"
+chmod 700 "$(dirname "$AUTH_KEY_FILE")" 2>/dev/null || true
+umask 077
+printf '%s\n' "$HEADSCALE_OPENWRT_AUTHKEY" >"$AUTH_KEY_FILE"
+set_config_option enabled 1
 
 echo "headscale auto-enroll: enabled for $HEADSCALE_LOGIN_SERVER with auth key redacted"

@@ -112,6 +112,9 @@ jobs:
         CONFIG_PACKAGE_luci-app-mwan3=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
+      WRT_CPE_IPV6: true
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRT_HEADSCALE_HOSTNAME: cpe-5g-s13
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_LAN_TAILNET: true

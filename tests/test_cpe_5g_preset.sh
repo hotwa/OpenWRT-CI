@@ -66,6 +66,17 @@ printf '%s\n' "$cpe_block" | grep -q 'WRT_LAN_TAILNET: true' || {
 	exit 1
 }
 
+for setting in 'WRT_EMMC_DATA_PROVISIONING: true' 'WRT_HEADSCALE_HOSTNAME: cpe-5g-s13' 'WRT_CPE_IPV6: true'; do
+  printf '%s\n' "$cpe_block" | grep -Fq "$setting" || {
+    echo "CPE B is missing $setting" >&2
+    exit 1
+  }
+  if printf '%s\n' "$baseline_block" | grep -Fq "$setting"; then
+    echo "CPE isolation A must not include B setting $setting" >&2
+    exit 1
+  fi
+done
+
 grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   echo "CPE-5G workflow must enable the CPE network bootstrap"
   exit 1

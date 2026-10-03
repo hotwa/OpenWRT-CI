@@ -46,7 +46,7 @@ CPE-5G B 还单独内置 mwan3：以太 WAN 是主线路（network/member metric
 
 当前推荐公网服务链路为：`CPE 公网动态 IPv6:外部端口 -> CPE IPv6-to-IPv4 relay -> OpenWrt usb0 192.168.66.2:Lucky入口端口 -> Lucky反向代理 -> 192.168.13.x:服务端口`。Lucky 应监听 `192.168.66.2` 或 `0.0.0.0` 的指定入口端口；LAN 服务本身无需“转发到 192.168.66.2”。只开放明确需要的端口和 Host 规则，避免把整个 `192.168.13.0/24` 暴露给公网。
 
-蜂窝网络当前只观察到 CPE 自身获得运营商 `/64` 地址，尚未证明运营商提供 DHCPv6-PD。仅发送 RA 不能把同一个 `/64` 正常路由给 OpenWrt LAN；若无可委派前缀，需要 RA relay/NDP proxy、邻居缓存维护、回程路由和 IPv6 防火墙协同，重启换前缀时还要重新收敛，属于中高难度且运营商相关的实验功能。生产环境继续采用 CPE IPv6 端口转发；PD/RA/NDP 只在独立实验分支和可回滚设备上开发。
+2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM，当前设备无 `/data`、NeedsLogin 且 GPT 异常，不能仅凭新镜像声称刷入即用。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。
 
 2026-07-12 实机门禁记录：GitHub Actions run [`29160402065`](https://github.com/hotwa/OpenWRT-CI/actions/runs/29160402065) 成功；B artifact digest 为 `sha256:bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d`，B sysupgrade SHA256 为 `bb69688f6a4385e897d1cf6f9c355d22d279d94e9b9e3e87d9a15c434682485b`；A artifact digest 为 `sha256:e43afee3cb0a277e463ecb85f3ca991ea804d7dda6f56c434e30452c32dc67e7`。A、B 均已确认可启动，因此 B 现作为 CPE 功能生产基线；WiFi-YES 仍需单独测试，不能由本次 NOWIFI 结果推断。
 

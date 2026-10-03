@@ -277,7 +277,7 @@ grep -q 'set_config_option hostname_model' "$CI_INJECTOR" || {
 }
 
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
+trap 'rm -rf "$WORK_DIR" "${SECOND_WORK_DIR:-}" "${KEYLESS_WORK_DIR:-}"' EXIT
 mkdir -p "$WORK_DIR/etc/config"
 cp "$CONFIG" "$WORK_DIR/etc/config/headscale_auto_enroll"
 TEST_AUTH_KEY="hskey-auth-""testredacted"
@@ -347,6 +347,29 @@ grep -q "option hostname_override 'lab-router-12'" "$SECOND_WORK_DIR/etc/config/
 grep -q "option hostname_mode 'explicit'" "$SECOND_WORK_DIR/etc/config/headscale_auto_enroll" || {
 	echo "CI injector does not mark an explicit hostname as explicit"
 	exit 1
+}
+
+# The chosen CPE name is public build configuration, independent of whether
+# a private first-enrollment credential is supplied. Existing state stays out
+# of the image and registration remains disabled for a keyless artifact.
+KEYLESS_WORK_DIR="$(mktemp -d)"
+mkdir -p "$KEYLESS_WORK_DIR/etc/config" "$KEYLESS_WORK_DIR/etc/tailscale"
+cp "$CONFIG" "$KEYLESS_WORK_DIR/etc/config/headscale_auto_enroll"
+sed -i "s/option enabled '0'/option enabled '1'/" "$KEYLESS_WORK_DIR/etc/config/headscale_auto_enroll"
+printf '%s\n' "$TEST_AUTH_KEY" >"$KEYLESS_WORK_DIR/etc/tailscale/headscale.authkey"
+HEADSCALE_OPENWRT_AUTHKEY='' \
+HEADSCALE_OPENWRT_HOSTNAME=cpe-5g-s13 \
+WRT_NAME=CPE-5G \
+bash "$CI_INJECTOR" "$KEYLESS_WORK_DIR" >/dev/null
+for expected in "option enabled '0'" "option hostname_mode 'explicit'" "option hostname_override 'cpe-5g-s13'"; do
+  grep -Fq "$expected" "$KEYLESS_WORK_DIR/etc/config/headscale_auto_enroll" || {
+    echo "keyless CPE configuration is missing $expected" >&2
+    exit 1
+  }
+done
+[ ! -e "$KEYLESS_WORK_DIR/etc/tailscale/headscale.authkey" ] || {
+  echo 'keyless build retained an earlier enrollment credential' >&2
+  exit 1
 }
 
 grep -q "headscale_auto_enroll.main.hostname_mode=lan-site" "$IDENTITY_MIGRATION" || {

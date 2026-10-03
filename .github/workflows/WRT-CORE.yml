@@ -76,6 +76,14 @@ on:
         required: false
         type: string
         default: ''
+      WRT_CPE_IPV6:
+        required: false
+        type: boolean
+        default: false
+      WRT_HEADSCALE_HOSTNAME:
+        required: false
+        type: string
+        default: ''
       WRT_CPE_5G:
         required: false
         type: boolean
@@ -178,6 +186,8 @@ env:
   WRT_CONTAINER_RUNTIME_TEST: ${{inputs.WRT_CONTAINER_RUNTIME_TEST}}
   WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
+  WRT_CPE_IPV6: ${{inputs.WRT_CPE_IPV6}}
+  WRT_HEADSCALE_HOSTNAME: ${{inputs.WRT_HEADSCALE_HOSTNAME}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_TAILSCALE_ROUTE_RECONCILE: ${{inputs.WRT_TAILSCALE_ROUTE_RECONCILE}}
@@ -417,6 +427,11 @@ jobs:
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
+          add_value cpe/ipv6                    "${WRT_CPE_IPV6:-false}"
+          if [ "${WRT_CPE_IPV6:-false}" = true ]; then
+            add_file cpe/ipv6-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh"
+            printf '%s\t%s\n' cpe/ipv6-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6")" >> "$manifest"
+          fi
           add_value container/test              "${WRT_CONTAINER_RUNTIME_TEST:-false}"
           add_value container/mode              "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}"
           add_value container/version           "${WRT_CONTAINER_RUNTIME_VERSION:-latest}"
@@ -611,6 +626,7 @@ jobs:
               chmod +x ./wrt/files/etc/init.d/containerd-test ./wrt/files/etc/uci-defaults/97-containerd-test-enable
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_IPV6:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
@@ -877,7 +893,7 @@ jobs:
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
             [ "${WRT_WAN_PROTOCOL:-dhcp}" = pppoe ] && credential_supplied=true
-            $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
+            HEADSCALE_OPENWRT_HOSTNAME="${WRT_HEADSCALE_HOSTNAME:-}" $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/MulticaAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/CommandCodeProviderConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             bash "$GITHUB_WORKSPACE/Scripts/PiCliProxyApiProviderConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
@@ -1192,7 +1208,11 @@ jobs:
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
               --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
-              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
+              --arg cpe_5g "${WRT_CPE_5G:-false}" \
+              --arg cpe_ipv6 "${WRT_CPE_IPV6:-false}" \
+              --arg emmc_data_provisioning "${WRT_EMMC_DATA_PROVISIONING:-false}" \
+              --arg headscale_hostname "${WRT_HEADSCALE_HOSTNAME:-}" \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt
