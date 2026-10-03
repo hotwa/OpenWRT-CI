@@ -7,6 +7,15 @@ CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIG="$ROOT_DIR/Config/IPQ60XX-706-NOWIFI.txt"
 SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
 
+# Check the entire job rather than an offset that shifts when secrets are added.
+job_block() {
+  awk -v name="$1" '
+    $0 == "  " name ":" { active = 1; next }
+    active && /^  [A-Za-z0-9_-]+:/ { exit }
+    active { print }
+  ' "$WORKFLOW"
+}
+
 grep -A5 '^      BUILD_BASELINE_A:' "$WORKFLOW" | grep -Eq "default: ('false'|false)" || {
   echo 'CPE workflow must default BUILD_BASELINE_A to false'
   exit 1
@@ -45,22 +54,22 @@ done
   exit 1
 }
 
-grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: false' || {
+job_block baseline_a | grep -q 'WRT_CPE_5G: false' || {
   echo 'A must not include the CPE network overlay'
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_CPE_5G: true' || {
+job_block cpe_overlay_b | grep -q 'WRT_CPE_5G: true' || {
   echo 'B must include the CPE network overlay'
   exit 1
 }
 
-grep -A35 '^  baseline_a:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: false' || {
+job_block baseline_a | grep -q 'WRT_FEATURE_OVERLAY: false' || {
   echo 'A must disable Lucky/Tailscale/Headscale/wrtbak feature overlays'
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_FEATURE_OVERLAY: true' || {
+job_block cpe_overlay_b | grep -q 'WRT_FEATURE_OVERLAY: true' || {
   echo 'B must enable Lucky/Tailscale/Headscale/wrtbak feature overlays'
   exit 1
 }

@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "auto_adopt": true,
+  "targets": [
+    {"mac": "20:76:93:40:56:45", "id": "GCOAP-M1708-23F77-222F9-9D498"},
+    {"mac": "DC:D8:7C:24:FC:86", "id": "GCOAP-M113D-FA19A-826AB-20197"}
+  ],
+  "fallback_ssid": "RE-AP",
+  "fallback_key": "",
+  "ac_password": "admin"
+}
