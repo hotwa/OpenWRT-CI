@@ -322,6 +322,11 @@ grep -q "option hostname_override ''" "$WORK_DIR/etc/config/headscale_auto_enrol
 	exit 1
 }
 
+[ ! -e "$WORK_DIR/etc/uci-defaults/93-headscale-explicit-hostname" ] || {
+  echo 'LAN-derived build must not stage an explicit naming migration' >&2
+  exit 1
+}
+
 [ "$(cat "$WORK_DIR/etc/tailscale/headscale.authkey")" = "$TEST_AUTH_KEY" ] || {
   echo "CI injector does not write the auth key file"
   exit 1
@@ -367,6 +372,12 @@ for expected in "option enabled '0'" "option hostname_mode 'explicit'" "option h
     exit 1
   }
 done
+[ -x "$KEYLESS_WORK_DIR/etc/uci-defaults/93-headscale-explicit-hostname" ] || {
+  echo 'keyless explicit CPE build must stage its one-shot naming migration' >&2
+  exit 1
+}
+sh -n "$KEYLESS_WORK_DIR/etc/uci-defaults/93-headscale-explicit-hostname"
+
 [ ! -e "$KEYLESS_WORK_DIR/etc/tailscale/headscale.authkey" ] || {
   echo 'keyless build retained an earlier enrollment credential' >&2
   exit 1

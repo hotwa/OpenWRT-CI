@@ -57,6 +57,11 @@ for z in $(uci show firewall | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p'); do
  [ "$(uci -q get "firewall.$z.name" 2>/dev/null || true)" != wan ] || zone="$z"
 done
 [ -n "$zone" ] || exit 1
+# Established Linux flowtable flows bypass the forward quota guard. Keep
+# packets on the hooked path for this CPE preset, including restored configs.
+# These fw4 switches do not change the separate Ethernet NSS configuration.
+put 'firewall.@defaults[0].flow_offloading' 0
+put 'firewall.@defaults[0].flow_offloading_hw' 0
 case " $(uci -q get "firewall.$zone.network" || true) " in
  *' cpe6 '*) ;;
  *) uci add_list "firewall.$zone.network=cpe6"; changed=1;;

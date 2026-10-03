@@ -46,6 +46,8 @@ B 默认设置 `ra_dns='0'`，避免把短寿命蜂窝 GUA 当作 RDNSS 地址�
 
 当额度读取未知或超限时，OpenWrt 在自身防火墙阻断 USB 公网 IPv4/IPv6 出站及转发，并撤回可用的 IPv6 通告；私有 `192.168.66.0/24` 管理、DHCP 和必要 NDP 保留。额度状态不能从“USB 仍在线”推断，IPv4/IPv6 健康状态也分别判断。若已到达硬上限，WAN 再故障时就没有可用蜂窝公网备份。
 
+现场只读检查显示 `flow_offloading=1`。新 CPE reconcile 将 fw4 的 `flow_offloading` 和 `flow_offloading_hw` 设为 `0`，通过成功的 firewall reload 删除旧 flowtable，避免已加速连接绕过 forward 额度规则。固定版本的 [fw4 ruleset 模板](https://github.com/openwrt/firewall4/blob/b6e5157527d361f99ad52eaa6da273cb0f2dfd59/root/usr/share/firewall4/templates/ruleset.uc#L8-L31) 支持删除旧 flowtable，[设备选择逻辑](https://github.com/openwrt/firewall4/blob/b6e5157527d361f99ad52eaa6da273cb0f2dfd59/root/usr/share/ucode/fw4.uc#L540-L555) 在关闭 flow offloading 后返回空列表；[Linux flowtable 文档](https://docs.kernel.org/networking/nf_flowtable.html) 说明命中 flowtable 的包会绕过常规转发钩子。这项修改不改变 NSS 内核、源码 pin 或以太网配置。普通 RNDIS `usb0` 预期不注册 NSS，但本轮没有实机证明；连续 USB 流在额度未知/超限时能否及时被门禁阻断，仍需新固件实机验收。
+
 公网原生地址不等于允许公网登录。默认入站保护先于地址发布，保留必要 ICMPv6、已建立连接和受控的 Tailnet 连通性；SSH、代理和其它业务仍需逐项审核目标、端口、来源及认证。ADB `5555`、CPE 管理 `6677`、LuCI 和 Dropbear 不应因新增地址而自动公开。优先通过 Tailscale SSH/ACL 维护；公网业务 DDNS 应另行配置，MagicDNS 名称与动态蜂窝公网前缀是两种地址体系。
 
 ## 实测证据与未验证范围
@@ -67,7 +69,9 @@ B 默认设置 `ra_dns='0'`，避免把短寿命蜂窝 GUA 当作 RDNSS 地址�
 
 ## eMMC 与 Tailscale 身份
 
-名称配置不依赖 AuthKey 是否存在：无 key 的构建也保存 `hostname_mode='explicit'` 和 `hostname_override='cpe-5g-s13'`，但 `headscale_auto_enroll.main.enabled` 保持 `0`，不会擅自注册新节点。此时已有 `/data` state 可由 tailscaled 重新连接原节点，控制端名称不会仅因写入 UCI 就自动改变；首次注册或应用新名称仍需一次已授权的注册/偏好应用。
+名称配置不依赖 AuthKey 是否存在：无 key 的构建也保存 `hostname_mode='explicit'` 和 `hostname_override='cpe-5g-s13'`，镜像默认 `headscale_auto_enroll.main.enabled='0'`，不会擅自注册新节点。此时已有 `/data` state 可由 tailscaled 重新连接原节点，控制端名称不会仅因写入 UCI 就自动改变；首次注册或应用新名称仍需一次已授权的注册/偏好应用。
+
+显式名称构建还生成一次性的 `/etc/uci-defaults/93-headscale-explicit-hostname`，在 `94-headscale-auto-enroll` 启动服务前将保留配置中的名称改为 `cpe-5g-s13`。它只写四个 hostname 字段，使用本次构建规范化后的名称和可选 prefix；CPE 的空 prefix 会清理旧值。它保留原来的 enabled 值，不读取或修改 key/state；因此当前设备保留的 `openwrt-cpe-5g-13` 名称不会遮住用户选择。UCI 写入或提交失败会留待重试，成功后脚本按 OpenWrt 首启规则删除。之后在 UCI hostname 设置中主动更名不会被该迁移每次轮询覆盖；再次安装显式名称固件时会应用那次构建的名称。空 hostname 构建不生成此迁移，沿用原来的 LAN 派生命名。
 
 `/data/tailscale/tailscaled.state` 是本机生成的密码学身份，绝不从其它机器复制到镜像、写入 Git 或注入 CI。`tailscale-state-persist` 只接受独立的真实块设备 `/data` 挂载。已有 `/data` state 为权威，不被旧 `/etc` state覆盖；迁移改变 `state_file` 时真正 stop/start tailscaled，启动成功后才发布 ready。空的已有 state、迁移冲突或启动失败都会保持注册门禁关闭。
 

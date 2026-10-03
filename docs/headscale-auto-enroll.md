@@ -15,6 +15,7 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 ## Files
 
 - `/etc/config/headscale_auto_enroll` controls enrollment.
+- An explicit build hostname generates `/etc/uci-defaults/93-headscale-explicit-hostname`, which applies that name once before `94-headscale-auto-enroll` starts enrollment, including with a retained configuration.
 - `/data/tailscale/tailscaled.state` is the persistent Tailnet identity. The
   `tailscale-state-persist` service migrates an existing legacy state from
   `/etc/tailscale/` only when `/data` is a real block-backed mount; it never
@@ -133,6 +134,20 @@ explicit label even when the auth key is empty, while keeping registration
 MagicDNS name is `cpe-5g-s13.hs.jmsu.top` after registration and preferences are
 applied. A keyless disabled auto-enroll service does not rename an existing
 control-plane node just because UCI contains the new label.
+
+For a retained-config upgrade, the generated
+`93-headscale-explicit-hostname` applies this explicit build choice before
+`94-headscale-auto-enroll` starts the service. It changes only
+`hostname_mode`, `hostname_override`, `hostname_model` and `hostname_prefix`;
+it preserves the retained `enabled` setting and never reads a key or state
+file. The four fields use this build's sanitized explicit label and optional
+prefix; CPE's empty prefix clears any retained legacy prefix. Thus the current CPE's retained `openwrt-cpe-5g-13` label becomes
+`cpe-5g-s13` without changing its enrollment policy. Successful uci-defaults
+execution removes the migration; failed UCI writes or commits leave it for a
+later retry. Later operator renames made in the UCI hostname settings remain
+local choices until another explicit-name firmware upgrade is installed.
+An empty build hostname generates no such migration and retains the existing
+LAN-derived naming behavior.
 
 The CPE preset also explicitly enables the guarded RE eMMC provisioner. The
 2026-10-03 device observation still showed `NeedsLogin`, no independent `/data`

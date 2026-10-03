@@ -73,7 +73,7 @@ printf 'ifdown %s\n' "$*" >>"$TEST_UCI_LOG"
 EOF
 chmod 755 "$TMP_DIR/bin/"*
 export TEST_UCI_STATE="$TMP_DIR/state.json" TEST_UCI_LOG="$TMP_DIR/log" PATH="$TMP_DIR/bin:$PATH"
-printf '%s' '{"network.5G":"interface","network.lan":"interface","network.wan.proto":"pppoe","network.wan.password":"fixture-only","dhcp.lan":"dhcp","firewall.wan":"zone","firewall.wan.name":"wan","firewall.wan.network":["wan","5G"],"network.lan.ip6class":"local cpe6"}' >"$TEST_UCI_STATE"
+printf '%s' '{"network.5G":"interface","network.lan":"interface","network.wan.proto":"pppoe","network.wan.password":"fixture-only","dhcp.lan":"dhcp","firewall.@defaults[0]":"defaults","firewall.@defaults[0].flow_offloading":"1","firewall.@defaults[0].flow_offloading_hw":"1","firewall.wan":"zone","firewall.wan.name":"wan","firewall.wan.network":["wan","5G"],"network.lan.ip6class":"local cpe6"}' >"$TEST_UCI_STATE"
 # Substitute only absolute init calls, preserving the actual reconcile behavior.
 sed "s|/etc/init.d/odhcpd|$TMP_DIR/bin/init-mock odhcpd|; s|/etc/init.d/firewall|$TMP_DIR/bin/init-mock firewall|" "$TMP_DIR/on/usr/libexec/cpe5g-ipv6-reconcile" >"$TMP_DIR/reconcile.sh"
 sh "$TMP_DIR/reconcile.sh"
@@ -87,13 +87,37 @@ assert d['dhcp.lan.prefix_filter']=='fc00::/7'
 assert d['dhcp.lan.ra_dns']=='0'
 assert d['network.wan.proto']=='pppoe' and d['network.wan.password']=='fixture-only'
 assert d['firewall.wan.network']==['wan','5G','cpe6']
+assert d['firewall.@defaults[0].flow_offloading']=='0'
+assert d['firewall.@defaults[0].flow_offloading_hw']=='0'
 PYTEST
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 [ ! -s "$TEST_UCI_LOG" ] || { echo 'reconcile must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# An older restore can re-enable only flow offloading while the rest of the
+# managed preset is already current. The options alone must trigger a reload.
+uci set 'firewall.@defaults[0].flow_offloading=1'
+uci set 'firewall.@defaults[0].flow_offloading_hw=1'
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get 'firewall.@defaults[0].flow_offloading')" = 0 ]
+[ "$(uci get 'firewall.@defaults[0].flow_offloading_hw')" = 0 ]
+[ "$(grep -c '^set ' "$TEST_UCI_LOG")" = 2 ]
+grep -Fxq 'init firewall reload' "$TEST_UCI_LOG"
+grep -Fxq 'commit firewall' "$TEST_UCI_LOG"
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ ! -s "$TEST_UCI_LOG" ] || { echo 'zero offloading must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# A disabled feature must not rewrite global firewall acceleration choices.
+uci set 'firewall.@defaults[0].flow_offloading=1'
+uci set 'firewall.@defaults[0].flow_offloading_hw=1'
 uci set cpe5g_ipv6.main.enabled=0
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 grep -Fxq 'ifdown cpe6' "$TEST_UCI_LOG"
 [ "$(uci get network.cpe6.auto)" = 0 ]
+[ "$(uci get 'firewall.@defaults[0].flow_offloading')" = 1 ]
+[ "$(uci get 'firewall.@defaults[0].flow_offloading_hw')" = 1 ]
+if grep -Eq '^(set firewall\.|commit firewall$|init firewall reload$)' "$TEST_UCI_LOG"; then
+ echo 'disabled IPv6 preset changed global firewall offloading' >&2; exit 1
+fi
 echo 'CPE native IPv6 overlay/protocol/reconcile passed'
