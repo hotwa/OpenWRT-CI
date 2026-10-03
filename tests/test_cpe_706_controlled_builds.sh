@@ -28,8 +28,12 @@ printf '%s\n' "$baseline_block" | grep -q 'if:.*inputs.BUILD_BASELINE_A' || {
   exit 1
 }
 
-[ "$(grep -c 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW")" -eq 2 ] || {
-  echo 'CPE A/B controls must both use the 7.06 IPQ60XX-NOWIFI config'
+printf '%s\n' "$baseline_block" | grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' || {
+  echo 'A must retain the known bootable NOWIFI isolation profile'
+  exit 1
+}
+printf '%s\n' "$cpe_block" | grep -q 'WRT_CONFIG: IPQ60XX-706-WIFI' || {
+  echo 'CPE B must select the single-device Wi-Fi candidate'
   exit 1
 }
 
@@ -43,6 +47,29 @@ grep -q 'QCA-6.18-VIKINGYFY-IPQ60XX-NOWIFI_26.07.06-12.47.00' "$CONFIG" || {
   echo 'controlled config must build only jdcloud_re-ss-01'
   exit 1
 }
+
+WIFI_CONFIG="$ROOT_DIR/Config/IPQ60XX-706-WIFI.txt"
+[ -s "$WIFI_CONFIG" ] || { echo 'CPE WiFi config is missing'; exit 1; }
+[ "$(grep -c '^CONFIG_TARGET_DEVICE_.*=y$' "$WIFI_CONFIG")" -eq 1 ] &&
+  grep -Fxq 'CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y' "$WIFI_CONFIG" || {
+  echo 'WiFi config must build only RE-SS-01'; exit 1;
+}
+for package in kmod-ath11k-ahb kmod-mac80211 kmod-cfg80211 \
+  ath11k-firmware-ipq6018-ddwrt ipq-wifi-jdcloud_re-ss-01 \
+  wifi-scripts wireless-regdb wpad-openssl hostapd-common iw iwinfo; do
+  grep -Fxq "CONFIG_PACKAGE_${package}=y" "$WIFI_CONFIG" || {
+    echo "WiFi config is missing $package"; exit 1;
+  }
+done
+# Wireless capability must not change the controlled kernel/memory/NSS policy.
+diff -u <(sed -n '/^CONFIG_TARGET_qualcommax=y$/,/^CONFIG_ATH11K_MEM_PROFILE_512M=y$/p' "$CONFIG") \
+  <(sed -n '/^CONFIG_TARGET_qualcommax=y$/,/^CONFIG_ATH11K_MEM_PROFILE_512M=y$/p' "$WIFI_CONFIG")
+for option in ATH11K_NSS_SUPPORT NSS_DRV_WIFI_EXT_VDEV_ENABLE; do
+  grep -Fxq "# CONFIG_${option} is not set" "$WIFI_CONFIG" || {
+    echo "WiFi NSS policy changed: $option"; exit 1;
+  }
+done
+[[ IPQ60XX-706-WIFI != *NOWIFI* && IPQ60XX-706-WIFI != *WIFI-NO* ]] || exit 1
 
 for job in baseline_a cpe_overlay_b; do
   grep -q "^  $job:" "$WORKFLOW" || {
@@ -88,4 +115,4 @@ for required in 'missing ${WRT_REQUIRED_DEVICE} factory image' 'missing ${WRT_RE
   }
 done
 
-echo 'CPE 7.06 controlled A/B build test passed'
+echo 'CPE pinned NOWIFI isolation and Wi-Fi candidate build test passed'

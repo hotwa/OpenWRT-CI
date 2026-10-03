@@ -51,7 +51,7 @@
 - Retain 2026-06-25 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35` as the historical known-bootable fallback. 回退源码时不得撤销无关 hotwa 功能提交。
 - Keep `.github/workflows/CPE-5G.yml` pinned to the full 40-character preferred SHA and preserve exact fetch, detached checkout and SHA mismatch failure.
 - `davidtall/immortalwrt:stable` is a candidate upstream only, never an automatic production baseline.
-- Controlled NOWIFI A remains the no-feature-overlay isolation baseline; B is promoted for CPE use. WiFi-YES still requires a separate real-device gate.
+- Controlled NOWIFI A remains the no-feature-overlay isolation baseline; historical NOWIFI B is the verified CPE fallback. The 2026-10-03 user-requested B Wi-Fi candidate uses single-device `IPQ60XX-706-WIFI` at the same exact source SHA; it requires a separate real-device gate and must not be called a promoted production baseline. Keep CPE A unchanged and keep Wi-Fi credentials in encrypted private CI injection only.
 - Normal CPE-5G dispatches must leave `BUILD_BASELINE_A=false` and build only B. Enable A only to isolate source/kernel/NSS boot failures from the CPE/Lucky/Tailscale/Headscale/wrtbak overlay; do not promote A as the daily firmware.
 - mwan3 is a CPE-5G B-only package and overlay. Keep Ethernet `wan` primary and `5G`/usb0 backup, preserve the explicit CPE/LAN bypass rules, and run the post-wrtbak managed reconcile. Do not enable mwan3 in `Config/GENERAL.txt`, CPE A, or ordinary QCA workflows.
 - Never perform a real WAN-loss test remotely without an independent local/serial/UBoot rescue path and a timed rollback. Existing sessions do not migrate across mwan3 failover; validate new connections plus Lucky usb0 return symmetry, Nikki marks, Tailnet, and SIM probe counters.

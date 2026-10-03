@@ -37,8 +37,8 @@ printf '%s\n' "$cpe_block" | grep -q 'WRT_IP: 192.168.13.1' || {
   exit 1
 }
 
-grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
-  echo "CPE-5G A/B controls must build the IPQ60XX no-WiFi profile"
+printf '%s\n' "$baseline_block" | grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' || {
+  echo "CPE-5G A must retain the IPQ60XX no-WiFi isolation profile"
   exit 1
 }
 
@@ -74,7 +74,7 @@ printf '%s\n' "$cpe_block" | grep -q 'WRT_LAN_TAILNET: true' || {
 	exit 1
 }
 
-for setting in 'WRT_EMMC_DATA_PROVISIONING: true' 'WRT_HEADSCALE_HOSTNAME: cpe-5g-s13' 'WRT_CPE_IPV6: true'; do
+for setting in 'WRT_CPE_WIFI: true' 'WRT_CONFIG: IPQ60XX-706-WIFI' 'WRT_EMMC_DATA_PROVISIONING: true' 'WRT_HEADSCALE_HOSTNAME: cpe-5g-s13' 'WRT_CPE_IPV6: true'; do
   printf '%s\n' "$cpe_block" | grep -Fq "$setting" || {
     echo "CPE B is missing $setting" >&2
     exit 1
@@ -138,7 +138,7 @@ done
   exit 1
 }
 
-grep -q 'CI_NAME: CPE-706-B-6.18-MANUAL' "$WORKFLOW" || {
+grep -q 'CI_NAME: CPE-5G-RE-SS-01-WIFI-B-6.18' "$WORKFLOW" || {
   echo "CPE-5G workflow must be pinned to the QCA-6.18 build track"
   exit 1
 }

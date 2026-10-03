@@ -80,6 +80,10 @@ on:
         required: false
         type: string
         default: ''
+      WRT_CPE_WIFI:
+        required: false
+        type: boolean
+        default: false
       WRT_CPE_IPV6:
         required: false
         type: boolean
@@ -138,6 +142,8 @@ on:
         type: boolean
         default: false
     secrets:
+      CPE_WIFI_PASSWORD:
+        required: false
       HEADSCALE_OPENWRT_AUTHKEY:
         required: false
       HEADSCALE_CI_AUTHKEY:
@@ -191,6 +197,7 @@ env:
   WRT_CONTAINER_RUNTIME_TEST: ${{inputs.WRT_CONTAINER_RUNTIME_TEST}}
   WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
+  WRT_CPE_WIFI: ${{inputs.WRT_CPE_WIFI}}
   WRT_CPE_IPV6: ${{inputs.WRT_CPE_IPV6}}
   WRT_HEADSCALE_HOSTNAME: ${{inputs.WRT_HEADSCALE_HOSTNAME}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
@@ -321,6 +328,20 @@ jobs:
       - name: Check Go
         run: go version
 
+      - name: Guard CPE WiFi Inputs
+        run: |
+          set -euo pipefail
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            [ "${WRT_CPE_5G:-false}" = true ] &&
+              [ "${WRT_FEATURE_OVERLAY:-false}" = true ] &&
+              [ "${WRT_ENCRYPT_ARTIFACT:-false}" = true ] &&
+              [ "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 ] &&
+              [ "${WRT_CONFIG:-}" = IPQ60XX-706-WIFI ] || {
+              echo 'ERROR: CPE IoT WiFi requires the encrypted RE-SS-01 feature preset' >&2
+              exit 1
+            }
+          fi
+
       - name: Initialization Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
@@ -432,6 +453,10 @@ jobs:
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
+          add_value cpe/wifi                    "${WRT_CPE_WIFI:-false}"
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            add_file cpe/wifi-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh"
+          fi
           add_value cpe/ipv6                    "${WRT_CPE_IPV6:-false}"
           if [ "${WRT_CPE_IPV6:-false}" = true ]; then
             add_file cpe/ipv6-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh"
@@ -875,6 +900,7 @@ jobs:
       - name: Inject Private Firmware Configuration
         if: inputs.WRT_FEATURE_OVERLAY == true
         env:
+          CPE_WIFI_PASSWORD: ${{secrets.CPE_WIFI_PASSWORD}}
           HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
           MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
           MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
@@ -892,7 +918,7 @@ jobs:
             trap 'rm -f "$guard_env"' EXIT
             credential_supplied=false
             for credential_name in \
-              HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
+              CPE_WIFI_PASSWORD HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
               NIKKI_SUBSCRIPTION_URL \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
@@ -905,6 +931,7 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
             [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
             [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]
@@ -988,6 +1015,33 @@ jobs:
           printf '%s\n' '# CONFIG_PACKAGE_luci-app-wrtbak is not set' >> .config
 
           make defconfig -j$(nproc)
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            for package in kmod-ath11k-ahb kmod-mac80211 kmod-cfg80211 \
+              ath11k-firmware-ipq6018-ddwrt ipq-wifi-jdcloud_re-ss-01 \
+              wifi-scripts wireless-regdb wpad-openssl hostapd-common iw iwinfo; do
+              grep -Fxq "CONFIG_PACKAGE_${package}=y" .config || {
+                echo "ERROR: CPE WiFi package was dropped by defconfig: $package" >&2
+                exit 1
+              }
+            done
+            [ "$(grep -c '^CONFIG_TARGET_DEVICE_.*=y$' .config)" -eq 1 ] &&
+              grep -Fxq 'CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y' .config || {
+              echo 'ERROR: CPE WiFi config must retain exactly the RE-SS-01 target' >&2
+              exit 1
+            }
+            ! grep -Eq '^CONFIG_(ATH11K_NSS_SUPPORT|NSS_DRV_WIFI_EXT_VDEV_ENABLE)=y$' .config || {
+              echo 'ERROR: CPE WiFi must retain the controlled WiFi NSS offload policy' >&2
+              exit 1
+            }
+            grep -Fxq "set \${si}.disabled='1'" package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc || {
+              echo 'ERROR: fresh CPE stock APs must remain disabled until the private IoT preset is applied' >&2
+              exit 1
+            }
+            ! grep -q 'ipq6018-nowifi.dtsi' target/linux/qualcommax/dts/ipq6000-re-ss-01.dts || {
+              echo 'ERROR: NOWIFI DTS reached the wireless CPE candidate' >&2
+              exit 1
+            }
+          fi
           # zram-swap only sets a UCI preference.  Verify that the target
           # kernel actually exposes lz4 before building an image; otherwise
           # the device silently starts with its lzo-rle fallback.

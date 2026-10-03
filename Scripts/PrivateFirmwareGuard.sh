@@ -63,6 +63,13 @@ if [ -s "$headscale_authkey" ]; then
 	add_reason headscale-authkey
 fi
 
+# The CPE IoT PSK is a root-only raw file consumed by a guarded firstboot
+# service. It remains recoverable from immutable ROM, so encrypted delivery
+# and private classification are required even after the running copy is used.
+if [ -s "$TARGET_FILES/etc/cpe5g/wifi.key" ]; then
+	add_reason cpe-wifi-credential
+fi
+
 # The subscription URL is written only by the private build injector, as base64
 # in a one-shot UCI-defaults file. It remains recoverable from a firmware image.
 nikki_subscription_defaults="$TARGET_FILES/etc/uci-defaults/98-nikki-subscription"

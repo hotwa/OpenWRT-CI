@@ -11,8 +11,9 @@
 ## A/B 隔离顺序
 
 - A：`0bad892...` + 从 7.06 CI tag 保存的 `IPQ60XX-706-NOWIFI`，关闭 CPE 网络及 Lucky/Tailscale/Headscale/wrtbak feature overlay，LAN `192.168.10.1`。
-- B：同一 SHA、同一 NOWIFI 配置，只开启当前 CPE overlay，LAN `192.168.13.1`。
-- 只有 A 可启动而 B 不可启动，才归因并继续排查 overlay；A、B 都可启动后才新增 WiFi-YES 测试。
+- 历史 B：同一 SHA、同一 NOWIFI 配置，开启 CPE overlay，LAN `192.168.13.1`；该版本仍是已验证回退基线。
+- 当前 B 无线候选：同一完整 SHA，单机型 `IPQ60XX-706-WIFI`，保留原内核/NSS 配置及 CPE 功能，加入 2.4 GHz IoT AP。无线仍须独立实机验收，见 [无线预设](cpe-wifi.md)。
+- A、历史 B 已于 2026-07-12 启动成功，因此可以构建无线候选；新无线候选失败时继续用已验证 NOWIFI B 对照，不能直接归因于 feature overlay。
 
 日常 Action 触发保持 `BUILD_BASELINE_A=false`，只构建 B。仅当需要隔离底层 kernel/NSS/设备树问题与 feature overlay 问题时设为 `true`，让 A 与 B 同时生成；完成诊断后恢复默认关闭。
 
