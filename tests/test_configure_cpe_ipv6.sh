@@ -15,6 +15,14 @@ for path in lib/netifd/proto/cpe6.sh usr/sbin/cpe5g-ipv6 usr/libexec/cpe5g-ipv6-
  [ -x "$TMP_DIR/on/$path" ]; sh -n "$TMP_DIR/on/$path"
 done
 for module in adb model probe worker audit-bootstrap quota-logger local-failover; do node --check "$TMP_DIR/on/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+grep -Fxq ' procd_set_param respawn 3600 5 0' "$TMP_DIR/on/etc/init.d/cpe6-route-audit-bootstrap"
+node - "$TMP_DIR/on/www/luci-static/resources/protocol/cpe6.js" <<'JS'
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const protocol=new Function('network','_',fs.readFileSync(process.argv[2],'utf8'))({
+ registerProtocol(name,options){assert.equal(name,'cpe6');return options;}
+},value=>value);
+assert.equal(protocol.getI18n(),'SIM IPv6 (usb0)');
+JS
 # Run the custom protocol against helper mocks; validate every configured value.
 INCLUDE_ONLY=1 . "$TMP_DIR/on/lib/netifd/proto/cpe6.sh"
 proto_config_add_string(){ printf 's:%s\n' "$@"; }

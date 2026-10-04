@@ -35,22 +35,32 @@ export async function provision({body,transport=shell,signal,nft=args=>execFileS
   finally{if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}}
  }
 }
+// A slow or unavailable modem must not postpone the router's IPv4 fallback.
+// Each loop awaits its own work, so neither reconciliation nor maintenance
+// can overlap with another invocation of the same operation.
+export async function monitor({signal,localReconcile=reconcile,maintenance,sleep=wait,localInterval=5000,maintenanceInterval=30000,report=(label,e)=>console.error(`CPE ${label} deferred:`,e.message)}={}){
+ const loop=async(work,interval,label)=>{
+  while(!signal.aborted){
+   try{await work();}catch(e){if(!signal.aborted)report(label,e);}
+   try{await sleep(interval,undefined,{signal});}catch(e){if(!signal.aborted)throw e;}
+  }
+ };
+ await Promise.all([
+  loop(localReconcile,localInterval,'local IPv4 reconciliation'),
+  loop(maintenance,maintenanceInterval,'modem maintenance')
+ ]);
+}
 export async function main(){
  if(fs.readFileSync('/tmp/sysinfo/board_name','utf8').trim()!=='jdcloud,re-ss-01')throw Error('CPE board mismatch');
  const body=fs.readFileSync(firmwarePath),abort=new AbortController();
  const stop=()=>abort.abort();for(const s of ['SIGTERM','SIGINT','SIGHUP'])process.on(s,stop);
- let nextMaintenance=0;
  try{
-  while(!abort.signal.aborted){
-   try{reconcile();}catch(e){console.error('CPE local IPv4 reconciliation deferred:',e.message);}
-   if(Date.now()>=nextMaintenance){
-   nextMaintenance=Date.now()+30000;
+  await monitor({signal:abort.signal,maintenance:async()=>{
    try{await ensureLogger({signal:abort.signal});}catch(e){if(!abort.signal.aborted)console.error('CPE quota logger recovery deferred:',e.message);}
+   if(abort.signal.aborted)return;
    try{if(await provision({body,signal:abort.signal}))console.log('CPE route audit provisioned');}
    catch(e){if(!abort.signal.aborted)console.error('CPE route audit provisioning deferred:',e.message);}
-   }
-   try{await wait(5000,undefined,{signal:abort.signal});}catch{}
-  }
+  }});
  }finally{for(const s of ['SIGTERM','SIGINT','SIGHUP'])process.removeListener(s,stop);}
 }
 if(import.meta.url===`file://${process.argv[1]}`)main().catch(e=>{console.error('cpe6-route-audit:',e.message);process.exitCode=1;});

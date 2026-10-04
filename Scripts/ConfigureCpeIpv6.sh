@@ -8,10 +8,20 @@ case "$ENABLE" in true|false) ;; *) exit 1;; esac
 [ "$ENABLE" = true ] || exit 0
 [ -x "$FILES/usr/libexec/cpe5g-mwan3-gated-reconcile" ] || { echo 'CPE IPv6 requires the CPE-only network overlay' >&2; exit 1; }
 SOURCE="$(CDPATH= cd -- "$(dirname "$0")/cpe5g-ipv6" && pwd)"
-mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/lib/netifd/proto" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config"
+mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/lib/netifd/proto" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config" "$FILES/www/luci-static/resources/protocol"
 for module in adb model probe worker audit-bootstrap quota-logger local-failover; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 cp "$SOURCE/proto.sh" "$FILES/lib/netifd/proto/cpe6.sh"
 cp "$SOURCE/reconcile.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile"
+cat > "$FILES/www/luci-static/resources/protocol/cpe6.js" <<'EOF'
+'use strict';
+'require network';
+
+// This is the native IPv6 companion of 5G/usb0, not another WAN uplink.
+return network.registerProtocol('cpe6', {
+ getI18n: function() { return _('SIM IPv6 (usb0)'); },
+ renderFormOptions: function() {}
+});
+EOF
 cat > "$FILES/etc/config/cpe5g_ipv6" <<'EOF'
 config native 'main'
  option enabled '1'
@@ -53,6 +63,7 @@ start_service() {
  procd_set_param stdout 1
  procd_set_param stderr 1
  procd_set_param term_timeout 5
+ procd_set_param respawn 3600 5 0
  procd_close_instance
 }
 EOF

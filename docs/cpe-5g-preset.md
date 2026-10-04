@@ -19,6 +19,8 @@
 
 ## Lucky 与公网 IPv6 服务
 
+当前接口职责、统一认证入口及 ESA/Lucky/网页 SSH 的具体部署清单见 [CPE 远程管理与主备网络](cpe-remote-management.md)。`cpe6` 是必要的 SIM IPv6 控制接口，不能作为第三个冗余 WAN 删除。
+
 推荐链路：
 
 ```text
