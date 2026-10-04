@@ -121,6 +121,7 @@ jobs:
         CONFIG_PACKAGE_haproxy=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
       WRT_CONTAINER_RUNTIME_TEST: true
       WRT_CONTAINER_RUNTIME_MODE: prebuilt
       WRT_CONTAINER_RUNTIME_VERSION: '2.4.1'
