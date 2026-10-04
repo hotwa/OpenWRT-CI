@@ -38,7 +38,7 @@ Lucky 配置目录 `localips` 非空会替换其默认内网名单。若通过 T
 
 真实浏览器经 Mac 跳板临时隧道及直接 MagicDNS 两条路径均通过 Lucky 登录并到达 UDX 登录页；Cookie 请求能读取 UDX 的未登录状态，错误 Bearer 得到 UDX 未授权响应。无认证/错误 BasicAuth 的根页面、API、静态资源返回 401；有效账号加错误 Host 被关闭。没有输入 UDX 密码或更改其登录。
 
-临时账号、规则快照和变更前备份存于 CPE `/data/cpe5g-lucky`，访问凭据另存本机 Downloads 的私有文件，均不入 Git。`/etc/lucky/` 和相应 eMMC 凭据/规则文件已加入现场 sysupgrade 保留清单。该认证为设备配置，不含于正在构建镜像；保留配置升级会继承，清空配置刷机不应宣称自动恢复。尚未为该新监听做重启验收。
+临时账号、规则快照和变更前备份存于 CPE `/data/cpe5g-lucky`，访问凭据另存本机 Downloads 的私有文件，均不入 Git。`/etc/lucky/` 和相应 eMMC 凭据/规则文件已加入现场 sysupgrade 保留清单。该认证为设备配置，不含于正在构建镜像；保留配置升级会继承，清空配置刷机不应宣称自动恢复。Lucky 服务重启后监听及规则已恢复，有效账号返回 UDX 页面和登录状态，错误密码与未认证 API 仍返回 401；整机冷启动验收仍待完成。
 
 ## ESA 回源与 IPv6 门禁
 
