@@ -11,3 +11,4 @@ grep -Fq -- '-static' "$ROOT_DIR/Scripts/cpe5g-ipv6/route-audit-package/Makefile
 grep -Fq 'CONFIG_PACKAGE_cpe6-route-audit=y' "$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 echo 'CPE route audit build checks passed'
 node --test "$ROOT_DIR/tests/test_cpe_route_audit_bootstrap.mjs"
+node --test "$ROOT_DIR/tests/test_cpe_quota_logger.mjs"

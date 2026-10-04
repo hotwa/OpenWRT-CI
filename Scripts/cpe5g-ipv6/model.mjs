@@ -16,7 +16,10 @@ export function snapshot(raw){
  const rows=Object.fromEntries(section(text,'QUOTA').split('\n').map(l=>l.split('|')).filter(p=>p.length===2));
  if(!['0','1'].includes(rows.traffic_switch)||!/^\d+$/.test(rows.traffic_much||''))throw Error('Quota settings unavailable');
  const usage=JSON.parse(section(text,'USAGE'));if(usage.jsonversion!=='2')throw Error('Unsupported traffic counter units');
- const counters=usage.interfaces?.find(i=>i.name==='sipa_eth0')?.traffic?.total;
+ const iface=usage.interfaces?.find(i=>i.name==='sipa_eth0');
+ const updated=iface?.updated?.timestamp;
+ if(!Number.isSafeInteger(updated)||updated<Date.now()/1000-600||updated>Date.now()/1000+300)throw Error('Quota counter timestamp is stale or invalid');
+ const counters=iface?.traffic?.total;
  if(!counters||!Number.isSafeInteger(counters.rx)||!Number.isSafeInteger(counters.tx)||counters.rx<0||counters.tx<0)throw Error('Quota counters unavailable');
  const used=BigInt(counters.rx)+BigInt(counters.tx),limit=BigInt(rows.traffic_much),enabled=rows.traffic_switch==='1';
  const routes=section(text,'ROUTE');

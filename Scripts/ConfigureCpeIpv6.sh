@@ -9,7 +9,7 @@ case "$ENABLE" in true|false) ;; *) exit 1;; esac
 [ -x "$FILES/usr/libexec/cpe5g-mwan3-gated-reconcile" ] || { echo 'CPE IPv6 requires the CPE-only network overlay' >&2; exit 1; }
 SOURCE="$(CDPATH= cd -- "$(dirname "$0")/cpe5g-ipv6" && pwd)"
 mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/lib/netifd/proto" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config"
-for module in adb model probe worker audit-bootstrap; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap quota-logger; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 cp "$SOURCE/proto.sh" "$FILES/lib/netifd/proto/cpe6.sh"
 cp "$SOURCE/reconcile.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile"
 cat > "$FILES/etc/config/cpe5g_ipv6" <<'EOF'
