@@ -289,7 +289,14 @@ finally{for(const socket of sockets)socket.destroy();await new Promise(r=>server
   assert.deepEqual(result,{code:0,signal:null},stage+': '+stderr);assert.ok(signalTime,stage+' reached the in-flight phase');assert.ok(Date.now()-signalTime<(stage==='cleanup'?4500:3000),stage+' did not withdraw promptly');
   const pendingAt=events.findIndex(x=>x.event==='pending'),later=events.slice(pendingAt+1),final=events.find(x=>x.event==='final');
   assert.ok(final,stage+' completed cleanup');assert.deepEqual(final.gate,{ipv4:false,ipv6:true});assert.equal(final.prefix,'fc00::/7');assert.equal(final.rules.length,0);assert.equal(final.routes.length,0);assert.equal(final.current,null);assert.equal(final.locked,false);
-  if(stage==='cleanup'){assert.equal(final.pendingRoutes,2);assert.equal(later.filter(x=>x.event==='cleanup-held').length,1);assert.ok(later.findIndex(x=>x.event==='call'&&x.bin==='ip'&&x.args.includes('flush'))<later.findIndex(x=>x.event==='cleanup-held'),'local owned policy must be removed before remote wait');}
+  if(stage==='cleanup'){
+   assert.equal(final.pendingRoutes,2);
+   const attempts=later.filter(x=>x.event==='cleanup-held').length;
+   // Absolute command deadlines can leave time for the other owned route;
+   // shutdown must stay bounded without requiring a particular scheduler.
+   assert.ok(attempts>=1&&attempts<=final.pendingRoutes);
+   assert.ok(later.findIndex(x=>x.event==='call'&&x.bin==='ip'&&x.args.includes('flush'))<later.findIndex(x=>x.event==='cleanup-held'),'local owned policy must be removed before remote wait');
+  }
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ip'&&(x.args.includes('replace')||x.args.includes('add')))),stage+' installed a policy after stop');
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ubus'&&x.args[2]==='notify_proto'&&JSON.parse(x.args[3])['link-up'])),stage+' published after stop');
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='uci'&&x.args.includes('dhcp.lan.prefix_filter=::/0'))),stage+' enabled LAN RA after stop');

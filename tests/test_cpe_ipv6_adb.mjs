@@ -38,3 +38,5 @@ assert.ok(Date.now()-started<1000,'abort must close the socket promptly');
 await new Promise(r=>held.close(r));
 await assert.rejects(shell('127.0.0.1',1,'never-connect',{signal:controller.signal}),{name:'AbortError'});
 console.log('CPE private ADB transport passed');
+// Include real cross-process serialization in the existing CPE smoke entry.
+await import('./test_cpe_adb_lock.mjs');
