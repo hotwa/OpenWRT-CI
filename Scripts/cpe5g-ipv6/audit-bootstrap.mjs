@@ -7,6 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {setTimeout as wait} from 'node:timers/promises';
 import {shell} from './adb.mjs';
 import {ensureLogger} from './quota-logger.mjs';
+import {reconcile} from './local-failover.mjs';
 export const remotePath='/tmp/cpe6-maint/route-audit';
 export const firmwarePath='/usr/libexec/cpe5g-ipv6/route-audit';
 export const hashOf=b=>createHash('sha256').update(b).digest('hex');
@@ -38,12 +39,17 @@ export async function main(){
  if(fs.readFileSync('/tmp/sysinfo/board_name','utf8').trim()!=='jdcloud,re-ss-01')throw Error('CPE board mismatch');
  const body=fs.readFileSync(firmwarePath),abort=new AbortController();
  const stop=()=>abort.abort();for(const s of ['SIGTERM','SIGINT','SIGHUP'])process.on(s,stop);
+ let nextMaintenance=0;
  try{
   while(!abort.signal.aborted){
+   try{reconcile();}catch(e){console.error('CPE local IPv4 reconciliation deferred:',e.message);}
+   if(Date.now()>=nextMaintenance){
+   nextMaintenance=Date.now()+30000;
    try{await ensureLogger({signal:abort.signal});}catch(e){if(!abort.signal.aborted)console.error('CPE quota logger recovery deferred:',e.message);}
    try{if(await provision({body,signal:abort.signal}))console.log('CPE route audit provisioned');}
    catch(e){if(!abort.signal.aborted)console.error('CPE route audit provisioning deferred:',e.message);}
-   try{await wait(30000,undefined,{signal:abort.signal});}catch{}
+   }
+   try{await wait(5000,undefined,{signal:abort.signal});}catch{}
   }
  }finally{for(const s of ['SIGTERM','SIGINT','SIGHUP'])process.removeListener(s,stop);}
 }
