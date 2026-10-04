@@ -24,7 +24,7 @@ python3 scripts/cpe5g.py api-status --profile /root/.config/cpe-5g/profile.json
 
 先读 [references/publishing.md](references/publishing.md)。用户提出具体发布任务时，沿用其已有授权；缺少内网地址/端口、精确公网域名或应用鉴权引用时，只补齐这些必要信息，继续做不依赖它们的工作。以用户明确给出的端点为对象，不发现并发布其他 LAN 服务。
 
-仓库已实现 CPE B 独立 headless CLIProxyAPI v8.0.13 ARM64 容器（nerdctl 2.4.1、`127.0.0.1:8317`）及 `ai.lucky.jmsu.top` 的三个精确 API 路由，经 Lucky `16802`、HAProxy `18443` 与 ESA mTLS。2026-10-04 实机 CPA 容器已启动，鉴权 `/v1/models` 返回 200 空列表；尚未 OAuth/provider 登录，公网 AI 链路及冷启动仍待验收。代码与 fixture 成功不代表这些后续 gate 通过。`api-status` 仅检查固定运行时/容器资源与独立 `api-ready.json`，不读取 config、keys 或 auth，不证明公网推理。私有管理 SSH forward、全新 OAuth 与明确 upstream 配置读发布参考。脚本无 `publish` 命令，离线规格也不是固定 CPA 的运行注册格式。
+仓库已实现 CPE B 独立 headless CLIProxyAPI v8.0.13 ARM64 容器（nerdctl 2.4.1、`127.0.0.1:8317`）及 `ai.lucky.jmsu.top` 的三个精确 API 路由，经 Lucky `16802`、HAProxy `18443` 与 ESA mTLS。2026-10-04：源提交 `c605fcf` 已推送，实机 CPA 正确运行且无 OAuth/provider。经 LG SOCKS 与固定 ESA A 入口，公网 `/v1/models` 已观测有效 Bearer 200 空列表、无/错误 Bearer 401；仍间歇出现 522，不能称为稳定上线。公网 JSON/SSE 推理、取消、无缓存与冷启动仍未通过实际验收。`api-status` 仅检查固定运行时/容器资源与独立 `api-ready.json`，不读取 config、keys 或 auth，不证明公网推理。私有管理 SSH forward、全新 OAuth 与明确 upstream 配置读发布参考。脚本无 `publish` 命令，离线规格也不是固定 CPA 的运行注册格式。
 
 ```bash
 python3 scripts/cpe5g.py validate --service /path/to/service.json
