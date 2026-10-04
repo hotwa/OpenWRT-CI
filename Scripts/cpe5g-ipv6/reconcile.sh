@@ -5,9 +5,11 @@ put() {
  local key="$1" wanted="$2" actual
  actual="$(uci -q get "$key" 2>/dev/null || true)"
  [ "$actual" = "$wanted" ] && return 0
- uci set "$key=$wanted"; changed=1
+ uci set "$key=$wanted"
+ case "$key" in nikki.*) nikki_changed=1;; *) changed=1;; esac
 }
 changed=0
+nikki_changed=0
 enabled="$(cfg enabled 1)"
 if [ "$enabled" != 1 ]; then
  if [ "$(uci -q get network.cpe6 2>/dev/null || true)" = interface ]; then
@@ -70,9 +72,50 @@ case " $(uci -q get "firewall.$zone.network" || true) " in
  *' cpe6 '*) ;;
  *) uci add_list "firewall.$zone.network=cpe6"; changed=1;;
 esac
+# The static fw4 fence drops ungranted packets even if the native guard is
+# absent. Explicit inclusion also works with restored auto_includes=0.
+put firewall.cpe5g_origin_fence include
+put firewall.cpe5g_origin_fence.type nftables
+put firewall.cpe5g_origin_fence.path /usr/share/cpe5g-origin/input-fence.nft
+put firewall.cpe5g_origin_fence.position table-append
+put firewall.cpe5g_origin_fence.enabled 1
+# Native controller grants precede fw4's IPv6-only input exception.
+put firewall.cpe5g_lucky_origin rule
+put firewall.cpe5g_lucky_origin.name CPE-Lucky-authenticated-origin
+put firewall.cpe5g_lucky_origin.src wan
+put firewall.cpe5g_lucky_origin.family ipv6
+put firewall.cpe5g_lucky_origin.proto tcp
+put firewall.cpe5g_lucky_origin.dest_port 18443
+put firewall.cpe5g_lucky_origin.target ACCEPT
+put firewall.cpe5g_lucky_origin.enabled 1
+# Management replies must keep their native source route and avoid Nikki
+# interception. Use a CPE-owned first section, preserving every user rule.
+if [ "$(uci -q get nikki.config 2>/dev/null || true)" = config ]; then
+ put nikki.cpe5g_management_direct router_access_control
+ put nikki.cpe5g_management_direct.enabled 1
+ put nikki.cpe5g_management_direct.dns 0
+ put nikki.cpe5g_management_direct.proxy 0
+ for group in services/lucky services/cpe5g-lucky-origin; do
+  case " $(uci -q get nikki.cpe5g_management_direct.cgroup 2>/dev/null || true) " in
+   *" $group "*) ;;
+   *) uci add_list "nikki.cpe5g_management_direct.cgroup=$group"; nikki_changed=1;;
+  esac
+ done
+ # Repair a restored ordering too; skip a no-op reorder to keep reconcile
+ # idempotent and avoid needless proxy reloads.
+ first_nikki="$(uci show nikki | sed -n 's/^nikki\.\([^.=]*\)=router_access_control$/\1/p' | head -n 1)"
+ if [ "$first_nikki" != cpe5g_management_direct ]; then
+  uci reorder nikki.cpe5g_management_direct=0
+  nikki_changed=1
+ fi
+fi
 if [ "$changed" = 1 ]; then
  uci commit network; uci commit dhcp; uci commit firewall
  ubus call network reload >/dev/null
  /etc/init.d/odhcpd reload
  /etc/init.d/firewall reload
+fi
+if [ "$nikki_changed" = 1 ]; then
+ uci commit nikki
+ [ ! -x /etc/init.d/nikki ] || /etc/init.d/nikki reload
 fi

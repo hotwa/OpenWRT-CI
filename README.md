@@ -46,6 +46,8 @@ CPE-5G B 还单独内置 mwan3：以太 WAN 是主线路（network/member metric
 
 ### CPE IPv6 入站与 Lucky
 
+CPE-5G B 的受管原生 SIM IPv6、ESA 回源认证和 Lucky 原生 DDNS/ACME 配置见 [CPE Lucky 公网入口](docs/cpe-lucky-public-origin.md)。该私有配置仅进入加密产物；固件刷写及冷启动验收须另行记录。
+
 当前推荐公网服务链路为：`CPE 公网动态 IPv6:外部端口 -> CPE IPv6-to-IPv4 relay -> OpenWrt usb0 192.168.66.2:Lucky入口端口 -> Lucky反向代理 -> 192.168.13.x:服务端口`。Lucky 应监听 `192.168.66.2` 或 `0.0.0.0` 的指定入口端口；LAN 服务本身无需“转发到 192.168.66.2”。只开放明确需要的端口和 Host 规则，避免把整个 `192.168.13.0/24` 暴露给公网。
 
 2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM，当前设备无 `/data`、NeedsLogin 且 GPT 异常，不能仅凭新镜像声称刷入即用。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。

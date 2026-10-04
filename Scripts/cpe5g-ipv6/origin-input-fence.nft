@@ -1,0 +1,12 @@
+# Static fw4 fence: every public-origin packet needs a fresh controller grant.
+# Clear the reserved packet bit before the separate -15 guard. It cannot come
+# from an earlier mark or conntrack restore. Loopback remains usable for probes.
+chain cpe5g_origin_mark_reset {
+ type filter hook input priority -20; policy accept;
+ meta nfproto ipv6 tcp dport 18443 iifname != "lo" meta mark set meta mark & 0xbfffffff
+}
+chain cpe5g_origin_mark_enforce {
+ type filter hook input priority -5; policy accept;
+ meta nfproto ipv6 tcp dport 18443 iifname != "lo" meta mark & 0x40000000 != 0x40000000 counter drop
+ meta nfproto ipv6 tcp dport 18443 iifname != "lo" meta mark set meta mark & 0xbfffffff
+}

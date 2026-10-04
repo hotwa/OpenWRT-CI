@@ -23,6 +23,12 @@ for term in \
   'Scripts/Packages.sh' \
   'Scripts/Handles.sh' \
   'Scripts/Settings.sh' \
+  'cpe/lucky-private-generator' \
+  'Scripts/ConfigureCpeLuckyRemote.sh' \
+  'cpe/mwan3-compat-patcher' \
+  'Scripts/patch_mwan3_nft_compat.py' \
+  'cpe/mwan3-compat-runtime' \
+  'Scripts/cpe5g-mwan3-nft-compat' \
   'WRT_CACHE_SCOPE=${cache_keys[0]}' \
   'WRT_CACHE_RESTORE_PREFIX=${cache_keys[1]}' \
   'WRT_CACHE_SAVE_KEY=${cache_keys[2]}' \
@@ -52,6 +58,20 @@ cp "$TMP/a.bin" "$TMP/deep/nested/b.bin"
 h1="$(bash "$LIB" file-digest "$TMP/a.bin")"
 h2="$(bash "$LIB" file-digest "$TMP/deep/nested/b.bin")"
 [ "$h1" = "$h2" ] || fail "file digest changed with the path: $h1 != $h2"
+
+# Changing the chunk boundary changes a required CPE-only generator's digest;
+# private values never enter this public compatibility scope.
+cp "$ROOT_DIR/Scripts/ConfigureCpeLuckyRemote.sh" "$TMP/cpe-generator.sh"
+before="$(bash "$LIB" file-digest "$TMP/cpe-generator.sh")"
+python3 - "$TMP/cpe-generator.sh" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1]);source=path.read_text()
+assert source.count('len(chunk) <= 35000') == 1
+path.write_text(source.replace('len(chunk) <= 35000', 'len(chunk) <= 34000'))
+PY
+after="$(bash "$LIB" file-digest "$TMP/cpe-generator.sh")"
+[ "$before" != "$after" ] || fail "CPE private generator limit did not affect cache identity"
 
 # Tree digest is stable across different absolute parent locations.
 mkdir -p "$TMP/loc1/overlay/etc" "$TMP/loc2/overlay/etc"

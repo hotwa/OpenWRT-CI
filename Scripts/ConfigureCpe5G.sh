@@ -35,6 +35,8 @@ case "$NATIVE_IPV6_BUILD" in
 esac
 
 mkdir -p "$(dirname "$BOOTSTRAP")" "$(dirname "$RECONCILE")" "$(dirname "$INIT_SCRIPT")"
+cp "$(dirname "$0")/cpe5g-mwan3-nft-compat" "$FILES_DIR/usr/libexec/cpe5g-mwan3-nft-compat"
+chmod 755 "$FILES_DIR/usr/libexec/cpe5g-mwan3-nft-compat"
 
 cat >"$RECONCILE" <<'EOF'
 #!/bin/sh
@@ -47,6 +49,7 @@ LOCK_DIR="${CPE5G_RECONCILE_LOCK_DIR:-/var/run/cpe5g-mwan3-reconcile.lock}"
 IPTABLES_SAVE="${CPE5G_IPTABLES_SAVE:-/usr/sbin/iptables-save}"
 IP6TABLES_SAVE="${CPE5G_IP6TABLES_SAVE:-/usr/sbin/ip6tables-save}"
 NFT="${CPE5G_NFT:-/usr/sbin/nft}"
+MWAN3_COMPAT="${CPE5G_MWAN3_COMPAT:-/usr/libexec/cpe5g-mwan3-nft-compat}"
 IP="${CPE5G_IP:-ip}"
 
 log() {
@@ -149,31 +152,21 @@ wait_for_network_object() {
 	return 1
 }
 
-cleanup_incompatible_mangle_table() {
-	local family="$1" saver="$2" table chains chain
+check_mangle_compatibility() {
+	local family="$1" saver="$2"
+	if [ -x "$MWAN3_COMPAT" ]; then
+		"$MWAN3_COMPAT" check "$family" || {
+			log "$family mangle compatibility view failed; preserving all rules"
+			return 1
+		}
+		return 0
+	fi
 	[ -x "$saver" ] || return 0
 	"$saver" -t mangle >/dev/null 2>&1 && return 0
-	[ -x "$NFT" ] || {
-		log "$family mangle is incompatible and nft is unavailable"
-		return 1
-	}
-	table="$($NFT list table "$family" mangle 2>/dev/null || true)"
-	[ -n "$table" ] || {
-		log "$family mangle is incompatible but cannot be inspected"
-		return 1
-	}
-	chains="$(printf '%s\n' "$table" | sed -n 's/^[[:space:]]*chain \([^ {]*\).*/\1/p')"
-	for chain in $chains; do
-		case "$chain" in
-			PREROUTING|OUTPUT|mwan3_*) ;;
-			*)
-				log "refusing to delete $family mangle with foreign chain: $chain"
-				return 1
-				;;
-		esac
-	done
-	$NFT delete table "$family" mangle
-	log "removed incompatible mwan3-owned $family mangle table"
+	# Base chain names do not prove ownership: tailscaled inserts native
+	# connmark rules there. Never delete their shared table to repair mwan3.
+	log "$family mangle is incompatible and the CPE compatibility helper is unavailable"
+	return 1
 }
 
 # Some mwan3 versions delete all policy rules in priorities 1000-3999 on
@@ -430,17 +423,19 @@ fi
 
 if [ -x "$MWAN3_INIT" ]; then
 	"$MWAN3_INIT" enable
+	check_mangle_compatibility ip "$IPTABLES_SAVE" || exit 1
+	check_mangle_compatibility ip6 "$IP6TABLES_SAVE" || exit 1
 	nikki_rules4="$(snapshot_nikki_rules 4)"
 	nikki_rules6="$(snapshot_nikki_rules 6)"
 	"$MWAN3_INIT" stop >/dev/null 2>&1 || true
-	cleanup_ok=1
-	cleanup_incompatible_mangle_table ip "$IPTABLES_SAVE" || cleanup_ok=0
-	cleanup_incompatible_mangle_table ip6 "$IP6TABLES_SAVE" || cleanup_ok=0
-	if [ "$cleanup_ok" -ne 1 ]; then
+	compat_ok=1
+	check_mangle_compatibility ip "$IPTABLES_SAVE" || compat_ok=0
+	check_mangle_compatibility ip6 "$IP6TABLES_SAVE" || compat_ok=0
+	if [ "$compat_ok" -ne 1 ]; then
 		"$MWAN3_INIT" start >/dev/null 2>&1 || true
 		restore_nikki_rules 4 "$nikki_rules4" || true
 		restore_nikki_rules 6 "$nikki_rules6" || true
-		log 'mwan3 table cleanup was unsafe; service start attempted without deleting foreign state'
+		log 'mwan3 compatibility view failed; service start attempted while preserving foreign state'
 		exit 1
 	fi
 	start_ok=1

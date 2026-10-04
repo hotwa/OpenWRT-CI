@@ -11,10 +11,14 @@ if "$ROOT_DIR/Scripts/ConfigureCpeIpv6.sh" "$TMP_DIR/wrong" true >/dev/null 2>&1
 fi
 "$ROOT_DIR/Scripts/ConfigureCpe5G.sh" "$TMP_DIR/on" true >/dev/null
 "$ROOT_DIR/Scripts/ConfigureCpeIpv6.sh" "$TMP_DIR/on" true >/dev/null
-for path in lib/netifd/proto/cpe6.sh usr/sbin/cpe5g-ipv6 usr/libexec/cpe5g-ipv6-reconcile etc/init.d/cpe5g-ipv6-reconcile etc/init.d/cpe6-route-audit-bootstrap etc/uci-defaults/93-cpe-5g-ipv6; do
+for path in lib/netifd/proto/cpe6.sh usr/sbin/cpe5g-ipv6 usr/libexec/cpe5g-ipv6-reconcile usr/libexec/cpe5g-lucky-origin-start usr/libexec/cpe5g-ipv6/select-origin-ipv6 usr/libexec/cpe5g-ipv6/deploy-origin-certificate etc/init.d/cpe5g-lucky-origin etc/init.d/cpe5g-ipv6-reconcile etc/init.d/cpe6-route-audit-bootstrap etc/uci-defaults/93-cpe-5g-ipv6; do
  [ -x "$TMP_DIR/on/$path" ]; sh -n "$TMP_DIR/on/$path"
 done
-for module in adb model probe worker audit-bootstrap quota-logger local-failover; do node --check "$TMP_DIR/on/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap quota-logger local-failover public-access select-origin-ipv6 lucky-origin deploy-origin-certificate; do node --check "$TMP_DIR/on/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+grep -Fxq '{"enabled":false}' "$TMP_DIR/on/etc/cpe5g/public-origin.json"
+grep -Fxq '/etc/lucky/' "$TMP_DIR/on/lib/upgrade/keep.d/cpe5g-lucky"
+test -s "$TMP_DIR/on/usr/share/cpe5g-origin/input-fence.nft"
+grep -Fxq ' procd_set_param respawn 3600 5 0' "$TMP_DIR/on/etc/init.d/cpe5g-lucky-origin"
 grep -Fxq ' procd_set_param respawn 3600 5 0' "$TMP_DIR/on/etc/init.d/cpe6-route-audit-bootstrap"
 node - "$TMP_DIR/on/www/luci-static/resources/protocol/cpe6.js" <<'JS'
 const fs=require('node:fs'),assert=require('node:assert/strict');
@@ -62,8 +66,13 @@ elif op=='delete':
  if key not in d:sys.exit(1)
  del d[key]
 elif op=='commit':pass
+elif op=='reorder':
+ k,pos=key.split('=',1)
+ if pos!='0':sys.exit(2)
+ prefix=k+'.'
+ d=dict([(x,v) for x,v in d.items() if x==k or x.startswith(prefix)]+[(x,v) for x,v in d.items() if x!=k and not x.startswith(prefix)])
 else:sys.exit(2)
-if op in ('set','delete','add_list','commit'):
+if op in ('set','delete','add_list','commit','reorder'):
  p.write_text(json.dumps(d));open(os.environ['TEST_UCI_LOG'],'a').write(op+' '+key+'\n')
 EOF
 cat >"$TMP_DIR/bin/ubus" <<'EOF'
@@ -79,11 +88,15 @@ cat >"$TMP_DIR/bin/ifdown" <<'EOF'
 #!/bin/sh
 printf 'ifdown %s\n' "$*" >>"$TEST_UCI_LOG"
 EOF
+cat >"$TMP_DIR/bin/nikki-mock" <<'EOF'
+#!/bin/sh
+exec "$(dirname "$0")/init-mock" nikki "$@"
+EOF
 chmod 755 "$TMP_DIR/bin/"*
 export TEST_UCI_STATE="$TMP_DIR/state.json" TEST_UCI_LOG="$TMP_DIR/log" PATH="$TMP_DIR/bin:$PATH"
 printf '%s' '{"network.5G":"interface","network.lan":"interface","network.wan.proto":"pppoe","network.wan.password":"fixture-only","dhcp.lan":"dhcp","firewall.@defaults[0]":"defaults","firewall.@defaults[0].flow_offloading":"1","firewall.@defaults[0].flow_offloading_hw":"1","firewall.wan":"zone","firewall.wan.name":"wan","firewall.wan.network":["wan","5G"],"network.lan.ip6class":"local cpe6"}' >"$TEST_UCI_STATE"
 # Substitute only absolute init calls, preserving the actual reconcile behavior.
-sed "s|/etc/init.d/odhcpd|$TMP_DIR/bin/init-mock odhcpd|; s|/etc/init.d/firewall|$TMP_DIR/bin/init-mock firewall|" "$TMP_DIR/on/usr/libexec/cpe5g-ipv6-reconcile" >"$TMP_DIR/reconcile.sh"
+sed "s|/etc/init.d/odhcpd|$TMP_DIR/bin/init-mock odhcpd|; s|/etc/init.d/firewall|$TMP_DIR/bin/init-mock firewall|; s|/etc/init.d/nikki|$TMP_DIR/bin/nikki-mock|g" "$TMP_DIR/on/usr/libexec/cpe5g-ipv6-reconcile" >"$TMP_DIR/reconcile.sh"
 sh "$TMP_DIR/reconcile.sh"
 python3 - <<'PYTEST'
 import json,os
@@ -98,6 +111,12 @@ assert d['network.wan.proto']=='pppoe' and d['network.wan.password']=='fixture-o
 assert d['firewall.wan.network']==['wan','5G','cpe6']
 assert d['firewall.@defaults[0].flow_offloading']=='0'
 assert d['firewall.@defaults[0].flow_offloading_hw']=='0'
+assert d['firewall.cpe5g_lucky_origin.family']=='ipv6'
+assert d['firewall.cpe5g_lucky_origin.dest_port']=='18443'
+assert d['firewall.cpe5g_lucky_origin.src']=='wan'
+assert d['firewall.cpe5g_origin_fence.type']=='nftables'
+assert d['firewall.cpe5g_origin_fence.position']=='table-append'
+assert d['firewall.cpe5g_origin_fence.path']=='/usr/share/cpe5g-origin/input-fence.nft'
 PYTEST
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
@@ -154,4 +173,27 @@ grep -Fxq 'network reload' "$TEST_UCI_LOG"
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 [ ! -s "$TEST_UCI_LOG" ] || { echo 'native enable transition must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# Nikki settings restored after firstboot receive a separate first-priority
+# management bypass without losing the existing user access sections.
+uci set nikki.config=config
+uci set nikki.operator=router_access_control
+uci add_list nikki.operator.cgroup=services/tailscale
+uci set nikki.operator.proxy=0
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+python3 - <<'PYTEST'
+import json,os
+d=json.load(open(os.environ['TEST_UCI_STATE']))
+assert d['nikki.cpe5g_management_direct']=='router_access_control'
+assert d['nikki.cpe5g_management_direct.cgroup']==['services/lucky','services/cpe5g-lucky-origin']
+assert d['nikki.cpe5g_management_direct.proxy']=='0'
+assert d['nikki.cpe5g_management_direct.dns']=='0'
+assert d['nikki.operator.cgroup']==['services/tailscale']
+PYTEST
+grep -Fxq 'reorder nikki.cpe5g_management_direct=0' "$TEST_UCI_LOG"
+grep -Fxq 'init nikki reload' "$TEST_UCI_LOG"
+! grep -Fxq 'network reload' "$TEST_UCI_LOG"
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ ! -s "$TEST_UCI_LOG" ] || { echo 'Nikki bypass must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
 echo 'CPE native IPv6 overlay/protocol/reconcile passed'

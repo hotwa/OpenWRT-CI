@@ -8,7 +8,11 @@ export function fromAddress(address){
  const halves=address.split('::');if(halves.length>2)throw Error('Invalid IPv6');
  const left=halves[0]?halves[0].split(':'):[],right=halves.length===2&&halves[1]?halves[1].split(':'):[];
  const parts=halves.length===2?[...left,...Array(8-left.length-right.length).fill('0'),...right]:left;
- if(parts.length!==8)throw Error('Invalid IPv6');return parts.map(x=>x.padStart(4,'0')).join('');
+ if(parts.length!==8)throw Error('Invalid IPv6');return parts.map(x=>x.padStart(4,'0')).join('').toLowerCase();
+}
+export function nativeAddress(prefixHex){
+ if(!/^[0-9a-f]{16}$/i.test(prefixHex))throw Error('Invalid native IPv6 prefix');
+ return ipv6(prefixHex+'0000c0de00130001');
 }
 function section(text,key){const start=`CPE6_${key}\n`,end='CPE6_';const at=text.indexOf(start);if(at<0)throw Error(`Missing ${key} snapshot`);const tail=text.slice(at+start.length);return tail.slice(0,tail.indexOf(end)<0?undefined:tail.indexOf(end)).trim();}
 export function snapshot(raw){
@@ -37,7 +41,7 @@ export function snapshot(raw){
  hasDefault:routes.split('\n').some(l=>/^default .*dev sipa_eth0(?: |$)/.test(l))};
 }
 export function update(interfaceName,device,s,{lan=true,lifetime=180,metric=665}={}){
- const address=ipv6(s.prefixHex+'0000c0de00130001');
+ const address=nativeAddress(s.prefixHex);
  return {action:0,interface:interfaceName,ifname:device,'link-up':true,keep:false,
  ip6addr:[{ipaddr:address,mask:'128',preferred:lifetime,valid:lifetime}],
  ip6prefix:lan?[`${s.prefix},${lifetime},${lifetime}`]:[],

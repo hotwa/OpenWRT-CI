@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {Controller} from '../Scripts/cpe5g-ipv6/worker.mjs';
-import {fromAddress} from '../Scripts/cpe5g-ipv6/model.mjs';
+import {fromAddress,nativeAddress} from '../Scripts/cpe5g-ipv6/model.mjs';
+import {guardDefinition} from '../Scripts/cpe5g-ipv6/public-access.mjs';
 const local='fe80::13:2',remote='fe80::66:1',prefixA='2001:db8:13:1::/64',prefixB='2001:db8:13:2::/64';
 const equalAddress=(a,b)=>fromAddress(a.split('/')[0])===fromAddress(b.split('/')[0]);
 const ownLine=(prefix,table,proto=196)=>`${prefix} via ${local} dev usb0 table ${table} proto ${proto} metric 665`;
@@ -26,8 +27,8 @@ class Network {
   if(bin==='nft'){
    if(cmd==='list table inet cpe6_guard'){if(!this.table)throw Error('Table absent');return this.table;}
    assert.equal(cmd,'-f -');
-   if(input.includes('table inet cpe6_guard {'))this.table=input;
-   if(input.startsWith('flush set'))this.gates.push({ipv4:input.includes('add element inet cpe6_guard blocked '),ipv6:input.includes('add element inet cpe6_guard ipv6_blocked ')});
+   if(input.includes('table inet cpe6_guard {'))this.table=input.slice(input.indexOf('table inet cpe6_guard {'));
+   if(input.startsWith('flush set inet cpe6_guard blocked\n'))this.gates.push({ipv4:input.includes('add element inet cpe6_guard blocked '),ipv6:input.includes('add element inet cpe6_guard ipv6_blocked ')});
    return '';
   }
   if(bin==='uci'){
@@ -41,7 +42,7 @@ class Network {
    if((!body['link-up']&&this.withdrawFails)||(body['link-up']&&this.notifyFails))throw Error('notify failed');return '';
   }
   assert.equal(bin,'ip');
-  if(cmd==='-j -6 addr show dev usb0')return JSON.stringify(this.linkMissing?[]:[{addr_info:[{scope:'link',local}]}]);
+  if(cmd==='-j -6 addr show dev usb0')return JSON.stringify(this.linkMissing?[]:[{ifname:'usb0',addr_info:[{scope:'link',local},...(this.prefix?[{family:'inet6',scope:'global',local:nativeAddress(fromAddress(this.prefix.split('/')[0]).slice(0,16)),prefixlen:128,preferred_life_time:180,valid_life_time:180}]:[])]}]);
   if(cmd==='-j -6 rule show'){if(this.ruleReadFails)throw Error('Rule read failed');return JSON.stringify(this.rules);}
   if(cmd==='-j -6 route show table all'){if(this.routeReadFails)throw Error('Route read failed');return JSON.stringify(this.routes);}
   const value=k=>args[args.indexOf(k)+1];
@@ -87,6 +88,52 @@ function setup(t,net=new Network()){
 async function cycle(c){try{await c.tick();}catch{await c.fail();}}
 function lastGate(net){return net.gates.at(-1);}
 const ownedUpstream=net=>net.upstream.filter(l=>l.includes('proto 196 '));
+
+function enablePublic(c,net){
+ const config={enabled:true,hostname:'cpe.jmsu.top',allowed_sources:['2001:db8:eeee::/48']};
+ c.publicOrigin.readJson=file=>file===c.publicOrigin.configFile?config:{ready:true,hostname:config.hostname,port:18443,address:nativeAddress(fromAddress(net.prefix.split('/')[0]).slice(0,16)),updated:Date.now()};
+ return config;
+}
+test('optional public config faults close its sets while ordinary IPv6 and SIM IPv4 stay usable',async t=>{
+ const {c,net,stateDir}=setup(t);const config=enablePublic(c,net);await c.tick();
+ assert.equal(c.publicOpen,true);const status=JSON.parse(fs.readFileSync(stateDir+'/status.json','utf8'));
+ assert.equal(status.address,nativeAddress(fromAddress(prefixA.split('/')[0]).slice(0,16)));assert.equal(status.public_origin_open,true);
+ config.allowed_sources=['::/0'];await c.tick();assert.equal(c.publicOpen,false);assert.equal(c.current.prefix,prefixA);assert.deepEqual(lastGate(net),{ipv4:false,ipv6:false});
+ assert.ok(net.calls.filter(x=>x.bin==='nft').at(-1).input.includes('flush set inet cpe6_guard public_address'));
+});
+test('quota failure, prefix transition and stop clear public exceptions before withdrawal',async t=>{
+ const {c,net}=setup(t);enablePublic(c,net);await c.tick();assert.equal(c.publicOpen,true);
+ net.prefix=prefixB;net.addVendor(prefixB);const start=net.calls.length;await c.tick();
+ const transition=net.calls.slice(start),flush=transition.findIndex(x=>x.bin==='nft'&&x.input?.includes('flush set inet cpe6_guard public_address')&&!x.input.includes('add element inet cpe6_guard public_address'));
+ const withdraw=transition.findIndex(x=>x.bin==='ubus'&&x.args[2]==='notify_proto'&&!JSON.parse(x.args[3])['link-up']);
+ assert.ok(flush>=0&&flush<withdraw);assert.equal(c.publicOpen,true);
+ net.quota={...net.quota,used:'10000',blocked:true};await c.tick();assert.equal(c.publicOpen,false);assert.deepEqual(lastGate(net),{ipv4:true,ipv6:true});
+ await c.stop();assert.equal(c.publicOpen,false);
+});
+test('mTLS authentication failure affects only the public origin; quota still closes both families',async t=>{
+ const {c,net}=setup(t);
+ const config={enabled:true,hostname:'cpe.lucky.jmsu.top',source_policy:'mtls',client_ca_sha256:'a'.repeat(64),server_cert_sha256:'b'.repeat(64)};
+ const pin={version:1,hostname:config.hostname,origin_sni:'cpe-origin.jmsu.top',server_cert_sha256:config.server_cert_sha256};
+ const ready={ready:true,source_policy:'mtls',hostname:config.hostname,port:18443,address:nativeAddress(fromAddress(net.prefix.split('/')[0]).slice(0,16)),updated:Date.now(),client_ca_sha256:config.client_ca_sha256,server_cert_sha256:config.server_cert_sha256,mtls_verified:true,origin_header_verified:true};
+ c.publicOrigin.readJson=file=>file===c.publicOrigin.configFile?config:file===c.publicOrigin.pinFile?pin:ready;
+ await c.tick();assert.equal(c.publicOpen,true);
+ assert.ok(net.calls.filter(x=>x.bin==='nft').at(-1).input.includes('add element inet cpe6_guard public_mtls_address'));
+ ready.origin_header_verified=false;await c.tick();assert.equal(c.publicOpen,false);assert.equal(c.current.prefix,prefixA);assert.deepEqual(lastGate(net),{ipv4:false,ipv6:false});
+ ready.origin_header_verified=true;await c.tick();assert.equal(c.publicOpen,true);
+ net.quota=null;await c.tick();assert.equal(c.publicOpen,false);assert.deepEqual(lastGate(net),{ipv4:true,ipv6:true});
+});
+test('only exact owned legacy guards are atomically migrated; copied markers cannot erase foreign rules',async t=>{
+ for(const [version,legacy] of [[1,false],[1,true],[2,false],[3,false]]){
+  const {c,net}=setup(t);net.table=guardDefinition('usb0',version,legacy);c.firewall();
+  const batch=net.calls.find(x=>x.bin==='nft'&&x.args[0]==='-f').input;
+  assert.ok(batch.startsWith('delete table inet cpe6_guard\ntable inet cpe6_guard {'));assert.ok(net.table.includes('cpe5g-ipv6-v4'));
+  const mutations=net.calls.filter(x=>x.bin==='nft'&&x.args[0]==='-f').length;c.firewall();assert.equal(net.calls.filter(x=>x.bin==='nft'&&x.args[0]==='-f').length,mutations);
+ }
+ const {c,net}=setup(t);net.table=guardDefinition('usb0',1).replace('counter drop','counter accept');const before=net.table;
+ assert.throws(()=>c.firewall(),/Reserved firewall table occupied/);assert.equal(net.table,before);assert.ok(!net.calls.some(x=>x.bin==='nft'&&x.args[0]==='-f'));
+ net.table=guardDefinition('usb0',2).replace('counter drop','counter accept');net.calls=[];
+ await c.fail();assert.ok(!net.calls.some(x=>x.bin==='nft'&&x.args[0]==='-f'),'error cleanup must not flush foreign public sets');
+});
 
 test('trusted quota with unavailable IPv6 withdraws only IPv6, including stop',async t=>{
  for(const absent of ['prefix','usbLinkLocal','hasDefault']){
@@ -217,7 +264,7 @@ test('real SIGTERM interrupts pending probe/health/add and idle delay before net
   // Reuse the network fixture, but hold an actual TCP ADB transport and run
   // the same signal entry point as the production worker in another process.
   const source=`import assert from 'node:assert/strict';import fs from 'node:fs';import net from 'node:net';
-import {Controller,runController} from ${JSON.stringify(worker)};import {shell,packet} from ${JSON.stringify(transport)};import {read} from ${JSON.stringify(probe)};import {fromAddress} from ${JSON.stringify(model)};
+import {Controller,runController} from ${JSON.stringify(worker)};import {shell,packet} from ${JSON.stringify(transport)};import {read} from ${JSON.stringify(probe)};import {fromAddress,nativeAddress} from ${JSON.stringify(model)};
 const local=${JSON.stringify(local)},remote=${JSON.stringify(remote)},prefixA=${JSON.stringify(prefixA)},prefixB=${JSON.stringify(prefixB)};
 const equalAddress=${equalAddress.toString()};${Network.toString()}
 const stage=${JSON.stringify(stage)},emit=x=>{if(x.event==='pending')n.withdrawFails=true;console.log(JSON.stringify(x));},sockets=new Set();
@@ -246,6 +293,6 @@ finally{for(const socket of sockets)socket.destroy();await new Promise(r=>server
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ip'&&(x.args.includes('replace')||x.args.includes('add')))),stage+' installed a policy after stop');
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='ubus'&&x.args[2]==='notify_proto'&&JSON.parse(x.args[3])['link-up'])),stage+' published after stop');
   assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='uci'&&x.args.includes('dhcp.lan.prefix_filter=::/0'))),stage+' enabled LAN RA after stop');
-  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='nft'&&x.input?.startsWith('flush set')&&!x.input.includes('add element inet cpe6_guard ipv6_blocked'))),stage+' reopened IPv6 after stop');
+  assert.ok(later.every(x=>x.event!=='call'||!(x.bin==='nft'&&x.input?.startsWith('flush set inet cpe6_guard blocked\n')&&!x.input.includes('add element inet cpe6_guard ipv6_blocked'))),stage+' reopened IPv6 after stop');
  }
 });

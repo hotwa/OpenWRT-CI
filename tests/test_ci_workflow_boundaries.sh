@@ -17,7 +17,7 @@ if grep -R -n -E 'secrets:[[:space:]]+inherit' "$ROOT_DIR/.github/workflows"; th
   exit 1
 fi
 
-allowed_secrets='HEADSCALE_OPENWRT_AUTHKEY HEADSCALE_CI_AUTHKEY HEADSCALE_URL MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD NIKKI_SUBSCRIPTION_URL COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL SAMBA_DEFAULT_PASSWORD CPE_WIFI_PASSWORD'
+allowed_secrets='HEADSCALE_OPENWRT_AUTHKEY HEADSCALE_CI_AUTHKEY HEADSCALE_URL MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD NIKKI_SUBSCRIPTION_URL COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL SAMBA_DEFAULT_PASSWORD CPE_WIFI_PASSWORD CPE_LUCKY_REMOTE_BUNDLE_1 CPE_LUCKY_REMOTE_BUNDLE_2 CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6'
 for secret in $allowed_secrets; do
   grep -Fxq "      $secret:" "$CORE" || {
     echo "WRT-CORE no longer declares expected build secret: $secret" >&2
@@ -43,10 +43,14 @@ for workflow in "$ROOT_DIR"/.github/workflows/*.yml; do
         exit 1
         ;;
     esac
-    if [ "$mapped_secret" = CPE_WIFI_PASSWORD ] && [ "$(basename "$workflow")" != CPE-5G.yml ]; then
-      echo "$(basename "$workflow") must not receive the CPE WiFi credential" >&2
-      exit 1
-    fi
+    case "$mapped_secret" in
+      CPE_WIFI_PASSWORD|CPE_LUCKY_REMOTE_BUNDLE_[1-6])
+        if [ "$(basename "$workflow")" != CPE-5G.yml ]; then
+          echo "$(basename "$workflow") must not receive a CPE private credential" >&2
+          exit 1
+        fi
+        ;;
+    esac
   done < <(sed -n -E 's/^[[:space:]]{6}([A-Z][A-Z0-9_]*):[[:space:]]*\$\{\{[[:space:]]*secrets\..*$/\1/p' "$workflow")
 
   # GitHub validates nested reusable-workflow permissions before a conditional

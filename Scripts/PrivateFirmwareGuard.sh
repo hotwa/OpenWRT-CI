@@ -70,6 +70,32 @@ if [ -s "$TARGET_FILES/etc/cpe5g/wifi.key" ]; then
 	add_reason cpe-wifi-credential
 fi
 
+# Lucky configuration, API tokens and certificate material are private seeds,
+# even when no other build credential was provided. Only file metadata is read.
+lucky_private=false
+if [ -d "$TARGET_FILES/etc/cpe5g-lucky" ]; then
+    while IFS= read -r -d '' lucky_private_file; do
+        if [ -s "$lucky_private_file" ]; then
+            lucky_private=true
+            break
+        fi
+    done < <(find "$TARGET_FILES/etc/cpe5g-lucky" \( -type f -o -type l \) -print0)
+fi
+if [ "$lucky_private" = false ]; then
+    for lucky_private_file in "$TARGET_FILES/etc/lucky/"*.lkcf \
+        "$TARGET_FILES/etc/lucky/cert-sync/lucky.token" \
+        "$TARGET_FILES/etc/lucky/cert-sync/cpe5g-openwrt/current/"*.pem \
+        "$TARGET_FILES/etc/lucky/cert-sync/cpe5g-openwrt/current/certificate-pin.json" \
+        "$TARGET_FILES/etc/lucky/cert-sync/cpe5g-origin/current/"*.pem \
+        "$TARGET_FILES/etc/lucky/cert-sync/cpe5g-origin/current/certificate-pin.json"; do
+        if [ -s "$lucky_private_file" ]; then
+            lucky_private=true
+            break
+        fi
+    done
+fi
+[ "$lucky_private" = false ] || add_reason cpe-lucky-private-seed
+
 # The subscription URL is written only by the private build injector, as base64
 # in a one-shot UCI-defaults file. It remains recoverable from a firmware image.
 nikki_subscription_defaults="$TARGET_FILES/etc/uci-defaults/98-nikki-subscription"

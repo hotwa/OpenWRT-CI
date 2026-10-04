@@ -142,6 +142,18 @@ on:
         type: boolean
         default: false
     secrets:
+      CPE_LUCKY_REMOTE_BUNDLE_1:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_2:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_3:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_4:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_5:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_6:
+        required: false
       CPE_WIFI_PASSWORD:
         required: false
       HEADSCALE_OPENWRT_AUTHKEY:
@@ -412,6 +424,7 @@ jobs:
             bash "$test_file"
           done
           python3 -m unittest tests.test_nikki_dns_overlay_patch
+          python3 -m unittest tests.test_nikki_router_selector_guard
 
       - name: Compute Build Cache Identity
         run: |
@@ -450,6 +463,7 @@ jobs:
           add_file "config/device/${WRT_CONFIG}" "$device_config"
           add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
           add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
+          add_file script/patch-nikki-router-selector-guard "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
@@ -458,8 +472,14 @@ jobs:
             add_file cpe/wifi-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh"
           fi
           add_value cpe/ipv6                    "${WRT_CPE_IPV6:-false}"
+          if [ "${WRT_CPE_5G:-false}" = true ]; then
+            add_file cpe/mwan3-compat-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh"
+            add_file cpe/mwan3-compat-patcher "$GITHUB_WORKSPACE/Scripts/patch_mwan3_nft_compat.py"
+            add_file cpe/mwan3-compat-runtime "$GITHUB_WORKSPACE/Scripts/cpe5g-mwan3-nft-compat"
+          fi
           if [ "${WRT_CPE_IPV6:-false}" = true ]; then
             add_file cpe/ipv6-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh"
+            add_file cpe/lucky-private-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh"
             printf '%s\t%s\n' cpe/ipv6-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6")" >> "$manifest"
           fi
           add_value container/test              "${WRT_CONTAINER_RUNTIME_TEST:-false}"
@@ -656,6 +676,11 @@ jobs:
               chmod +x ./wrt/files/etc/init.d/containerd-test ./wrt/files/etc/uci-defaults/97-containerd-test-enable
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            if [ "${WRT_CPE_5G:-false}" = true ]; then
+              python3 -B "$GITHUB_WORKSPACE/Scripts/patch_mwan3_nft_compat.py" \
+                "$GITHUB_WORKSPACE/wrt/feeds/packages/net/mwan3/files/lib/mwan3/mwan3.sh" \
+                "$GITHUB_WORKSPACE/wrt/feeds/packages/net/mwan3/files/etc/init.d/mwan3"
+            fi
             if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
               test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
                 echo "ERROR: CPE IPv6 route audit requires WRT_REQUIRED_DEVICE=jdcloud_re-ss-01" >&2
@@ -909,6 +934,12 @@ jobs:
         if: inputs.WRT_FEATURE_OVERLAY == true
         env:
           CPE_WIFI_PASSWORD: ${{secrets.CPE_WIFI_PASSWORD}}
+          CPE_LUCKY_REMOTE_BUNDLE_1: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_1}}
+          CPE_LUCKY_REMOTE_BUNDLE_2: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_2}}
+          CPE_LUCKY_REMOTE_BUNDLE_3: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_3}}
+          CPE_LUCKY_REMOTE_BUNDLE_4: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_4}}
+          CPE_LUCKY_REMOTE_BUNDLE_5: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_5}}
+          CPE_LUCKY_REMOTE_BUNDLE_6: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_6}}
           HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
           MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
           MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
@@ -926,7 +957,10 @@ jobs:
             trap 'rm -f "$guard_env"' EXIT
             credential_supplied=false
             for credential_name in \
-              CPE_WIFI_PASSWORD HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
+              CPE_WIFI_PASSWORD CPE_LUCKY_REMOTE_BUNDLE_1 CPE_LUCKY_REMOTE_BUNDLE_2 \
+              CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 \
+              CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6 \
+              HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
               NIKKI_SUBSCRIPTION_URL \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
@@ -940,6 +974,7 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
             [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
             [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]

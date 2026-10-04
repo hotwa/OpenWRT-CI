@@ -158,6 +158,15 @@ case "$*" in
   *) exit 1 ;;
 esac
 EOF
+cat >"$BIN_DIR/mwan3-compat" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in 'check ip'|'check ip6') ;; *) exit 2 ;; esac
+# Model a conditional foreign jump into an owned chain, which the native
+# compatibility helper must reject before making changes.
+[ ! -f "$TEST_ROOT/mangle-foreign" ] || exit 1
+printf 'compat %s\n' "$*" >>"$TEST_UCI_LOG"
+EOF
 chmod +x "$BIN_DIR"/*
 
 export PATH="$BIN_DIR:$PATH"
@@ -170,6 +179,7 @@ export CPE5G_RECONCILE_LOCK_DIR="$WORK_DIR/reconcile.lock"
 export CPE5G_IPTABLES_SAVE="$BIN_DIR/iptables-save"
 export CPE5G_IP6TABLES_SAVE="$BIN_DIR/ip6tables-save"
 export CPE5G_NFT="$BIN_DIR/nft"
+export CPE5G_MWAN3_COMPAT="$BIN_DIR/mwan3-compat"
 export CPE5G_IP="$BIN_DIR/ip"
 for family in 4 6; do
   printf '%s\n' \
@@ -214,10 +224,14 @@ touch "$WORK_DIR/mangle-ip-incompatible" "$WORK_DIR/mangle-ip6-incompatible"
 "$RECONCILE"
 "$RECONCILE"
 
-[ ! -e "$WORK_DIR/mangle-ip-incompatible" ]
-[ ! -e "$WORK_DIR/mangle-ip6-incompatible" ]
-grep -q '^nft delete ip mangle$' "$LOG"
-grep -q '^nft delete ip6 mangle$' "$LOG"
+[ -e "$WORK_DIR/mangle-ip-incompatible" ]
+[ -e "$WORK_DIR/mangle-ip6-incompatible" ]
+grep -q '^compat check ip$' "$LOG"
+grep -q '^compat check ip6$' "$LOG"
+if grep -q '^nft delete ' "$LOG"; then
+  echo 'reconcile deleted a shared mangle table' >&2
+  exit 1
+fi
 
 grep -q '^mwan3.user_rule=rule$' "$STATE"
 grep -q '^mwan3.user_rule.dest_ip=203.0.113.0/24$' "$STATE"
@@ -462,12 +476,11 @@ for family in 4 6; do
   grep -q '^1005: from all fwmark 0x81/0xff lookup 81$' "$WORK_DIR/iprules$family"
 done
 
-# An incompatible table with any non-mwan chain is not owned by this preset.
-# Reconcile must fail closed instead of deleting another package's state.
+# An ambiguous foreign hook must be rejected without deleting any table.
 touch "$WORK_DIR/mangle-foreign"
 : >"$LOG"
 if "$RECONCILE" >/dev/null 2>&1; then
-  echo "reconcile deleted or accepted a foreign mangle table" >&2
+  echo "reconcile accepted an ambiguous foreign hook" >&2
   exit 1
 fi
 if grep -q '^nft delete ip mangle$' "$LOG"; then

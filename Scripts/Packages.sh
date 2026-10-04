@@ -131,6 +131,10 @@ sh "$NIKKI_UPDATE_STATUS_FIX" "$NIKKI_PACKAGE_DIR/files/nikki.init" || {
 	echo "ERROR: failed to apply the reviewed Nikki subscription status fix." >&2
 	exit 1
 }
+python3 "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py" "$NIKKI_PACKAGE_DIR/files/ucode/hijack.ut" || {
+	echo "ERROR: failed to apply the reviewed Nikki router selector guard." >&2
+	exit 1
+}
 #UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
 #UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 #UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"

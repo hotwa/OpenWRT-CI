@@ -97,6 +97,12 @@ jobs:
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
       CPE_WIFI_PASSWORD: ${{ secrets.CPE_WIFI_PASSWORD }}
+      CPE_LUCKY_REMOTE_BUNDLE_1: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_1 }}
+      CPE_LUCKY_REMOTE_BUNDLE_2: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_2 }}
+      CPE_LUCKY_REMOTE_BUNDLE_3: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_3 }}
+      CPE_LUCKY_REMOTE_BUNDLE_4: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_4 }}
+      CPE_LUCKY_REMOTE_BUNDLE_5: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_5 }}
+      CPE_LUCKY_REMOTE_BUNDLE_6: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_6 }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-706-WIFI
@@ -112,6 +118,7 @@ jobs:
       WRT_PACKAGE: |
         CONFIG_PACKAGE_mwan3=y
         CONFIG_PACKAGE_luci-app-mwan3=y
+        CONFIG_PACKAGE_haproxy=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
       WRT_CPE_WIFI: true

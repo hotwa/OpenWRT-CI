@@ -4,7 +4,8 @@ import {execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {shell} from './adb.mjs';
 import {read} from './probe.mjs';
-import {update,withdraw,fromAddress,ipv6,stockUsbRoute} from './model.mjs';
+import {update,withdraw,fromAddress,ipv6,stockUsbRoute,nativeAddress} from './model.mjs';
+import {PublicAccess,guardDefinition,guardVersion} from './public-access.mjs';
 const protocol=196,tableId=613;
 function trustedQuota(q){
  if(!q||typeof q.enabled!=='boolean'||typeof q.blocked!=='boolean'||!/^\d+$/.test(q.limit)||!/^\d+$/.test(q.used))return null;
@@ -39,16 +40,16 @@ function ownedRoutes(raw,defaultTable){
 const routeKey=r=>r.table+':'+fromAddress(r.prefix.split('/')[0]);
 const withoutOwned=s=>({...s,routes:String(s.routes||'').split('\n').filter(l=>!ownedRoutes(l).length).join('\n')});
 export class Controller {
- constructor({interfaceName='cpe6',device='usb0',host='192.168.66.1',port=5555,lan='lan',mode='lan',interval=15,lifetime=180,healthInterval=60,run,adb,sense,stateDir='/var/run/cpe5g-ipv6'}={}){
+ constructor({interfaceName='cpe6',device='usb0',host='192.168.66.1',port=5555,lan='lan',mode='lan',interval=15,lifetime=180,healthInterval=60,run,adb,sense,stateDir='/var/run/cpe5g-ipv6',publicOptions={}}={}){
   for(const x of [interfaceName,device,lan])if(!/^[A-Za-z0-9_-]{1,32}$/.test(x))throw Error('Invalid interface name');
   if(![port,interval,lifetime,healthInterval].every(Number.isInteger)||port<1||port>65535||!['lan','router'].includes(mode)||interval<5||interval>300||lifetime<3*interval||lifetime>600||healthInterval<30||healthInterval>600)throw Error('Invalid lifetime or mode');
   Object.assign(this,{interfaceName,device,host,port,lan,mode,interval,lifetime,healthInterval,stateDir});
   this.run=run||((bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',timeout:this.shutdownDeadline?Math.max(1,Math.min(500,this.shutdownDeadline-Date.now())):10000,killSignal:this.shutdownDeadline?'SIGKILL':'SIGTERM',stdio:['pipe','pipe','pipe']}));
-  this.adb=adb||((cmd,options)=>shell(host,port,cmd,options));this.sense=sense||(options=>read(host,port,options));this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;this.abort=new AbortController();
+  this.adb=adb||((cmd,options)=>shell(host,port,cmd,options));this.sense=sense||(options=>read(host,port,options));this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;this.abort=new AbortController();this.publicOrigin=new PublicAccess({run:this.run,device,...publicOptions});this.publicOpen=false;
  }
  running(){if(this.stopping)throw Error('CPE IPv6 controller stopping');}
  tryRun(bin,args,input){try{return this.run(bin,args,input);}catch{return '';}}
- status(phase,detail){fs.mkdirSync(this.stateDir,{recursive:true,mode:0o700});fs.writeFileSync(this.stateDir+'/status.json',JSON.stringify({phase,detail,prefix:this.current?.prefix||null,quota:this.lastTrustedQuota,updated:Date.now()}),{mode:0o600});}
+ status(phase,detail){fs.mkdirSync(this.stateDir,{recursive:true,mode:0o700});fs.writeFileSync(this.stateDir+'/status.json',JSON.stringify({phase,detail,prefix:this.current?.prefix||null,address:phase==='online'&&this.current?nativeAddress(this.current.prefixHex):null,public_origin_open:this.publicOpen,quota:this.lastTrustedQuota,updated:Date.now()}),{mode:0o600});}
  notify(body){if(body['link-up'])this.running();this.run('ubus',['call','network.interface','notify_proto',JSON.stringify(body)]);}
  blockIPv4(){return !this.lastTrustedQuota||this.lastTrustedQuota.blocked;}
  acquireLock(){
@@ -65,39 +66,30 @@ export class Controller {
  releaseLock(){if(this.lock&&fs.readFileSync(this.lock+'/pid','utf8')===String(process.pid)){fs.rmSync(this.lock,{recursive:true});this.lock=null;}}
  firewall(){
   const existing=this.tryRun('nft',['list','table','inet','cpe6_guard']);
-  if(existing&&!existing.includes('cpe5g-ipv6-v1'))throw Error('Reserved firewall table occupied');
-  if(existing&&existing.includes('set ipv6_blocked'))return;
-  // Atomically upgrade our older table; never delete a foreign table.
-  this.run('nft',['-f','-'],`${existing?'delete table inet cpe6_guard\n':''}table inet cpe6_guard {
- comment "cpe5g-ipv6-v1"
- set blocked { type ifname; elements = { "${this.device}" }; }
- set ipv6_blocked { type ifname; elements = { "${this.device}" }; }
- chain input { type filter hook input priority -15; policy accept;
-  iifname "${this.device}" meta nfproto ipv6 ct state established,related accept
-  iifname "${this.device}" ip6 saddr fe80::/10 accept
-  iifname "${this.device}" meta l4proto ipv6-icmp accept
-  iifname "${this.device}" meta nfproto ipv6 udp dport 41641 accept
-  iifname "${this.device}" meta nfproto ipv6 counter drop
+  const version=existing?guardVersion(existing,this.device):null;
+  if(existing&&!version)throw Error('Reserved firewall table occupied');
+  if(version===4)return;
+  // One transaction migrates only a verified complete owned layout.
+  this.run('nft',['-f','-'],`${existing?'delete table inet cpe6_guard\n':''}${guardDefinition(this.device)}`);
  }
- chain output { type filter hook output priority -15; policy accept;
-  oifname "${this.device}" ip daddr 192.168.66.0/24 accept
-  oifname "${this.device}" ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
-  oifname "${this.device}" ip6 daddr fe80::/10 accept
-  oifname "${this.device}" ip6 daddr ff02::/16 meta l4proto ipv6-icmp icmpv6 type { 133, 134, 135, 136 } accept
-  meta nfproto ipv6 oifname @ipv6_blocked counter drop
-  oifname @blocked counter drop
- }
- chain forward { type filter hook forward priority -15; policy accept;
-  oifname "${this.device}" ip daddr 192.168.66.0/24 accept
-  oifname "${this.device}" ip6 daddr fe80::/10 accept
-  meta nfproto ipv6 oifname @ipv6_blocked counter drop
-  oifname @blocked counter drop
- }
-}\n`);
+ publicGate(online){
+  if(online)this.running();
+  // A down/error path can run after encountering a foreign reserved table.
+  // Never flush its similarly named sets without proving current ownership.
+  let guarded=false;
+  try{guarded=guardVersion(this.run('nft',['list','table','inet','cpe6_guard']),this.device)===4;}catch{}
+  if(!guarded){this.publicOpen=false;return;}
+  try{this.publicOpen=this.publicOrigin.refresh({address:online&&this.current?nativeAddress(this.current.prefixHex):null,online,quota:this.lastTrustedQuota});}
+  catch(e){
+   this.publicOpen=false;
+   try{this.publicOrigin.clear();}catch{}
+   // Public configuration/listener faults must not withdraw normal IPv6.
+   console.error('CPE public origin closed:',e.message);
+  }
  }
  gate(blocked,ipv6Blocked=blocked){
   if(!ipv6Blocked)this.running();
-  this.firewall();this.run('nft',['-f','-'],`flush set inet cpe6_guard blocked\n${blocked?`add element inet cpe6_guard blocked { "${this.device}" }\n`:''}flush set inet cpe6_guard ipv6_blocked\n${ipv6Blocked?`add element inet cpe6_guard ipv6_blocked { "${this.device}" }\n`:''}`);
+  this.firewall();if(ipv6Blocked)this.publicGate(false);this.run('nft',['-f','-'],`flush set inet cpe6_guard blocked\n${blocked?`add element inet cpe6_guard blocked { "${this.device}" }\n`:''}flush set inet cpe6_guard ipv6_blocked\n${ipv6Blocked?`add element inet cpe6_guard ipv6_blocked { "${this.device}" }\n`:''}`);
  }
  lanGate(online){
   if(online)this.running();
@@ -179,6 +171,7 @@ export class Controller {
   return errors;
  }
  async down(reason,block=this.blockIPv4(),shutdown=false){
+  this.publicGate(false);
   const errors=[];
   for(const action of [()=>this.gate(block,true),()=>this.lanGate(false),()=>this.notify(withdraw(this.interfaceName,this.device))]){try{action();}catch(e){errors.push(e);}}
   errors.push(...this.removePolicy());this.current=null;this.lastHealth=0;errors.push(...await this.removeUpstream(shutdown));
@@ -214,7 +207,7 @@ export class Controller {
   this.running();
   // Install the owned policy before netifd publishes a globally routable IP.
   this.policy(s);this.current=s;this.notify(update(this.interfaceName,this.device,s,{lan:this.mode==='lan',lifetime:this.lifetime}));
-  this.lanGate(true);this.gate(false,false);this.status('online','native-ipv6');
+  this.lanGate(true);this.gate(false,false);this.publicGate(true);this.status('online','native-ipv6');
  }
  async fail(reason='runtime-error'){if(!this.stopping)await this.down(reason,this.blockIPv4());}
  stop(){
