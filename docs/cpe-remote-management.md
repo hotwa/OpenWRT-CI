@@ -16,7 +16,7 @@ WAN 使用三个 ICMP 目标、至少两个成功；失败三轮下线、恢复�
 
 ## Lucky 入口部署清单
 
-下面是待部署清单，不是 Lucky API 导入格式。现有 Lucky 加密配置必须通过有效的管理会话或完整私有导出修改，不能重置账号或覆盖整份配置来添加规则。
+下面列出已部署的 Tailnet 入口和待部署的 ESA 入口，不是 Lucky API 导入格式。现有 Lucky 加密配置必须通过有效的管理会话或完整私有导出修改，不能重置账号或覆盖整份配置来添加规则。
 
 | 设置 | Tailnet 后台 | ESA 公网后台 |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ WAN 使用三个 ICMP 目标、至少两个成功；失败三轮下线、恢复�
 | 默认不匹配请求 | 拒绝 | 拒绝 |
 | 缓存 | 禁用 | ESA 绕过缓存，包括 HTML、API、登录及认证回调 |
 
-两个新端口在现场检查时未被占用，但监听尚未创建。Lucky 2.27.2 已有 IPv6 Web 反代、网页认证、通用 OIDC 和 Web 终端；仍需配置实际身份提供方、客户端及回调。Lucky 的管理员登录不自动保护另一条 UDX 反代规则，须在该 Web 子规则配置认证。[Web 服务](https://lucky666.cn/docs/modules/web/)、[功能版本](https://lucky666.cn/docs/updatelogs/v2.X/)
+Tailnet 的 16800 监听已按下节部署；公网 18443 监听尚未创建。Lucky 2.27.2 已有 IPv6 Web 反代、网页认证、通用 OIDC 和 Web 终端；后续接入 OIDC 时仍需配置身份提供方、客户端及回调。Lucky 的管理员登录不自动保护另一条 UDX 反代规则，须在该 Web 子规则配置认证。[Web 服务](https://lucky666.cn/docs/modules/web/)、[功能版本](https://lucky666.cn/docs/updatelogs/v2.X/)
 
 UDX 管理主页返回 HTTP 200，未登录 API 返回 auth_required。使用相对 `/api/...` 路径，适合独立域名根路径反代；需实际验证 Host、Location、cookie、认证头、Origin 和页面写操作。不能为适配代理删除 UDX 的登录。已读取的 UDX 前端把终端地址拼为 `http://当前域名:7681`，直接反代不会自动修好这个终端链接。
 
@@ -47,7 +47,7 @@ Lucky 配置目录 `localips` 非空会替换其默认内网名单。若通过 T
 ```text
 浏览器 HTTPS :443 -> ESA（代理与绕过缓存）
   -> OpenWrt 蜂窝 IPv6 HTTPS :18443（校验证书、限定来源）
-  -> Lucky（统一认证 + 2FA）
+  -> Lucky（临时账号认证；后续接入统一认证 + 2FA）
   -> UDX710 私有 USB HTTP 192.168.66.1:6677
 ```
 
