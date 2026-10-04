@@ -54,6 +54,13 @@ workflow_call = mapping(core, 'workflow_call', 2)
 call_secrets = mapping(workflow_call, 'secrets', 4)
 global_env = mapping(core, 'env', 0)
 steps = workflow_steps(core)
+smoke = steps['Repository Smoke Tests']
+assert 'case "$test_file" in' in smoke, 'privileged fixtures require a scoped suite selector'
+assert './tests/test_cpe_public_management.sh)' in smoke, 'only the root-owner suite should be elevated'
+assert 'sudo -n env "PATH=$PATH" bash "$test_file"' in smoke, \
+    'root-owner fixtures must run as root with the selected Node runtime'
+assert '*) bash "$test_file" ;;' in smoke, 'ordinary suites must retain the unprivileged runner'
+assert len(re.findall(r'\bsudo\b', smoke)) == 1, 'root privileges escaped the dedicated fixture suite'
 private_name = 'Inject Private Firmware Configuration'
 assert private_name in steps, 'private firmware injection step is missing'
 private = steps[private_name]

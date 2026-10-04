@@ -421,7 +421,14 @@ jobs:
       - name: Repository Smoke Tests
         run: |
           for test_file in ./tests/test_*.sh; do
-            bash "$test_file"
+            case "$test_file" in
+              ./tests/test_cpe_public_management.sh)
+                # These fixtures exercise the production root-owner checks.
+                # Keep the selected Node runtime and elevate only this suite.
+                sudo -n env "PATH=$PATH" bash "$test_file"
+                ;;
+              *) bash "$test_file" ;;
+            esac
           done
           python3 -m unittest tests.test_nikki_dns_overlay_patch
           python3 -m unittest tests.test_nikki_router_selector_guard
