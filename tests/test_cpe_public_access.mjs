@@ -200,6 +200,23 @@ test('nft 1.1.6 occupied singleton count annotations preserve exact guard owners
   nft116LeaseListing.replace('counter packets 0 bytes 0 drop','counter packets 0 bytes 0 drop # count 1')
  ])assert.equal(guardVersion(bad,'usb0'),null);
 });
+// nft on the CI runner rejects the socket used for Node child-process stdin.
+// Keep the real namespace checks while giving nft a private regular rules file.
+const realNftTransport=`import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+const run=(bin,args,input)=>{
+ const index=bin==='nft'?args.findIndex((arg,i)=>arg==='-f'&&args[i+1]==='-'):-1;
+ if(index<0)return execFileSync(bin,args,{input,encoding:'utf8',stdio:['pipe','pipe','pipe']});
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cpe-public-nft-'));
+ try{
+  fs.chmodSync(directory,0o700);
+  const file=path.join(directory,'rules.nft');fs.writeFileSync(file,input,{mode:0o600,flag:'wx'});
+  const directoryStat=fs.statSync(directory),fileStat=fs.lstatSync(file);
+  assert.equal(directoryStat.mode&0o777,0o700);assert.equal(directoryStat.uid,process.getuid());
+  assert.equal(fileStat.mode&0o777,0o600);assert.equal(fileStat.uid,process.getuid());assert.ok(fileStat.isFile());
+  const fileArgs=[...args];fileArgs[index+1]=file;
+  return execFileSync(bin,fileArgs,{encoding:'utf8',stdio:['pipe','pipe','pipe']});
+ }finally{fs.rmSync(directory,{recursive:true,force:true});}
+};`;
 test('real nft namespace accepts migration, refresh and expiry syntax and preserves foreign tables',t=>{
  const available=spawnSync('unshare',['--net','sh','-c','command -v nft >/dev/null && nft list ruleset'],{encoding:'utf8'});
  if(available.status!==0){t.skip('nft network namespace unavailable: '+available.stderr.trim());return;}
@@ -208,7 +225,7 @@ test('real nft namespace accepts migration, refresh and expiry syntax and preser
  const code=`import assert from 'node:assert/strict';import {execFileSync} from 'node:child_process';
 import {Controller} from ${JSON.stringify(workerModule)};
 import {guardDefinition,guardVersion,publicSetBatch} from ${JSON.stringify(publicModule)};
-const run=(bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',stdio:['pipe','pipe','pipe']});
+${realNftTransport}
 run('nft',['-f','-'],guardDefinition('usb0',1));
 assert.equal(guardVersion(run('nft',['list','table','inet','cpe6_guard']),'usb0'),1);
 const c=new Controller({run});c.firewall();c.firewall();
@@ -271,7 +288,7 @@ socket?.destroy();`;
  const code=`import assert from 'node:assert/strict';import net from 'node:net';import readline from 'node:readline';import {spawn,execFileSync} from 'node:child_process';
 import {Controller} from ${JSON.stringify(workerModule)};
 import {guardDefinition,publicSetBatch} from ${JSON.stringify(publicModule)};
-const run=(bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',stdio:['pipe','pipe','pipe']});
+${realNftTransport}
 const peer=spawn('unshare',['--net',process.execPath,'--input-type=module','-e',${JSON.stringify(peerCode)}],{stdio:['pipe','pipe','pipe']});
 let peerError='';peer.stderr.on('data',data=>{peerError+=data;});
 const lines=readline.createInterface({input:peer.stdout}),responses=new Map();let nextId=0;
