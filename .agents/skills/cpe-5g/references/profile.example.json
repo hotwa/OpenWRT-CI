@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "ssh": {
+    "host": "192.168.13.1",
+    "user": "root",
+    "identity_file": "/root/project/OpenWrt-Config-Backup/ops/ssh/openwrt_config_backup_maintainer_ed25519",
+    "known_hosts_file": "/root/.ssh/cpe-5g-known_hosts",
+    "jump": {
+      "host": "mac.pi.jmsu.top",
+      "user": "lingyuzeng",
+      "known_hosts_file": "/root/.ssh/known_hosts"
+    }
+  },
+  "repositories": {
+    "firmware": "/mnt/c/Users/pylyz/Documents/project/OpenWRT-CI",
+    "backup": "/root/project/OpenWrt-Config-Backup"
+  },
+  "public_context": {
+    "esa_zone": "lucky.jmsu.top",
+    "origin_hostname": "cpe-origin.jmsu.top",
+    "origin_port": 18443,
+    "current_udx_hostname": "cpe.lucky.jmsu.top"
+  },
+  "credential_refs": {
+    "cloud": "repository:backup",
+    "lucky": "remote:/etc/lucky/cert-sync/lucky.token",
+    "origin_vault": "file:/root/.local/share/cpe5g-origin"
+  }
+}
