@@ -121,6 +121,10 @@ jobs:
         CONFIG_PACKAGE_haproxy=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
+      WRT_CONTAINER_RUNTIME_TEST: true
+      WRT_CONTAINER_RUNTIME_MODE: prebuilt
+      WRT_CONTAINER_RUNTIME_VERSION: '2.4.1'
+      WRT_CPE_API_GATEWAY: true
       WRT_CPE_WIFI: true
       WRT_CPE_IPV6: true
       WRT_ENCRYPT_ARTIFACT: true

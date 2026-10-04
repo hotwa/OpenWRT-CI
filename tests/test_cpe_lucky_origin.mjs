@@ -15,6 +15,7 @@ import {hostname,originSni,originPort,paths,readRootFile,validateManifest,valida
 import {nativeAddress} from '../Scripts/cpe5g-ipv6/model.mjs';
 import {statusPath} from '../Scripts/cpe5g-ipv6/select-origin-ipv6.mjs';
 import {guardDefinition} from '../Scripts/cpe5g-ipv6/public-access.mjs';
+import {apiPaths,apiHostname,defaultApiService,validateApiService,restoreApiService} from '../Scripts/cpe5g-ipv6/api-service-registry.mjs';
 
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cpe-origin-cert-'));
 after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -46,6 +47,7 @@ function fixture(t,{native=false}={}){
  for(const name of ['openSync','readFileSync','writeFileSync','mkdirSync','lstatSync','chmodSync','unlinkSync'])mappedFs[name]=(...args)=>fs[name](mapped(args[0]),...args.slice(1));
  for(const name of ['fstatSync','closeSync','fsyncSync'])mappedFs[name]=(...args)=>fs[name](...args);
  mappedFs.renameSync=(a,b)=>fs.renameSync(mapped(a),mapped(b));
+ mappedFs.linkSync=(a,b)=>fs.linkSync(mapped(a),mapped(b));
  const write=(file,value,mode=0o600)=>{fs.mkdirSync(path.dirname(mapped(file)),{recursive:true,mode:0o700});fs.writeFileSync(mapped(file),typeof value==='string'?value:JSON.stringify(value),{mode});fs.chmodSync(mapped(file),mode);};
  const read=file=>JSON.parse(fs.readFileSync(mapped(file),'utf8'));
  write(paths.policy,policy());write(paths.certificatePin,certificatePin());write(paths.manifest,manifest());
@@ -122,6 +124,50 @@ test('HAProxy config is IPv6-only, mandatory mTLS, exact full header count/match
  assert.equal(config.split('\n').filter(line=>line.includes('http-response replace-header Set-Cookie')).length,2);
  assert.ok(config.includes('LuckyWebAuthorization_[^=;[:space:]]+'));
  assert.match(config,/SameSite=Lax/);
+});
+test('optional API registry is fixed, strict0600, and never changes UDX readiness when absent/unsafe/disabled',async t=>{
+ const service={...defaultApiService(),enabled:true};assert.equal(validateApiService(service).publicHost,apiHostname);
+ assert.equal(validateApiService({...service,allowedRequests:service.allowedRequests.map(x=>({path:x.path,method:x.method})).reverse()}).enabled,true);
+ for(const patch of [{publicHost:'other.lucky.jmsu.top'},{upstream:'http://192.168.13.1:22'},{listen:'0.0.0.0:16802'},
+  {allowedRequests:[{method:'GET',path:'/management'}]},{apiKey:'ForbiddenRawSecret'},{version:2},{enabled:1}])assert.throws(()=>validateApiService({...service,...patch}));
+ for(const mutate of [f=>{},f=>f.write(apiPaths.config,defaultApiService()),f=>f.write(apiPaths.config,'malformed'),
+  f=>f.write(apiPaths.config,service,0o644),f=>f.write(apiPaths.config,{...service,publicHost:'foreign.invalid'}),
+  f=>{f.write(apiPaths.config,service);fs.unlinkSync(f.mapped(apiPaths.config));fs.symlinkSync(f.mapped(paths.manifest),f.mapped(apiPaths.config));}]){
+  const f=fixture(t);mutate(f);assert.equal(await f.controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,false);
+  assert.ok(!fs.readFileSync(f.mapped(paths.config),'utf8').includes('backend cpe_lucky_api'));
+ }
+});
+test('API backend/probe failure and administrator disables remove only the API route',async t=>{
+ const f=fixture(t);f.write(apiPaths.config,{...defaultApiService(),enabled:true});
+ let backend=true,route=true;
+ const controller=new LuckyOrigin({...f.options,apiCheck:async()=>backend,probeApi:async()=>route});
+ assert.equal(await controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,true);
+ assert.match(fs.readFileSync(f.mapped(paths.config),'utf8'),/backend cpe_lucky_api/);
+ backend=false;assert.equal(await controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,false);
+ backend=true;route=false;assert.equal(await controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,false);
+ route=true;f.write(apiPaths.config,defaultApiService());assert.equal(await controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,false);
+ f.write(apiPaths.config,{...defaultApiService(),enabled:true});
+ f.state.probe=()=>{f.write(apiPaths.config,defaultApiService());return proof;};
+ assert.equal(await controller.tick(),true);assert.equal(f.read(paths.apiReady).ready,false);
+ f.state.probe=()=>{throw Error('UDX failed');};assert.equal(await controller.tick(),false);assert.equal(f.exists(paths.apiReady),false);
+ await controller.stop();
+});
+test('optional ROM API restore is validated, atomic no-clobber and preserves existing disable or unsafe files',t=>{
+ const service={...defaultApiService(),enabled:true};
+ const f=fixture(t);f.write(apiPaths.romConfig,service);fs.mkdirSync(f.mapped('/etc/cpe5g-lucky'),{recursive:true,mode:0o700});
+ assert.deepEqual(restoreApiService({fs:f.fs}),service);assert.deepEqual(f.read(apiPaths.config),service);
+ assert.equal(fs.statSync(f.mapped(apiPaths.config)).mode&0o777,0o600);
+ f.write(apiPaths.config,defaultApiService());assert.equal(restoreApiService({fs:f.fs}).enabled,false);assert.equal(f.read(apiPaths.config).enabled,false);
+ for(const mutation of [g=>g.write(apiPaths.romConfig,'malformed'),g=>g.write(apiPaths.romConfig,service,0o644),
+  g=>g.write(apiPaths.romConfig,{...service,upstream:'http://127.0.0.1:22'}),g=>{g.write(apiPaths.romConfig,service);fs.chmodSync(g.mapped('/rom/etc/cpe5g-lucky'),0o777);},
+  g=>{g.write(apiPaths.romConfig,service);fs.unlinkSync(g.mapped(apiPaths.romConfig));fs.symlinkSync(g.mapped(paths.manifest),g.mapped(apiPaths.romConfig));}]){
+  const g=fixture(t);mutation(g);assert.equal(restoreApiService({fs:g.fs}),null);assert.equal(g.exists(apiPaths.config),false);
+ }
+ const g=fixture(t);g.write(apiPaths.romConfig,service);g.write(apiPaths.config,'administrator invalid text');
+ assert.equal(restoreApiService({fs:g.fs}),null);assert.equal(fs.readFileSync(g.mapped(apiPaths.config),'utf8'),'administrator invalid text');
+ fs.unlinkSync(g.mapped(apiPaths.config));
+ const real=g.fs.linkSync;g.fs.linkSync=(a,b)=>{g.write(b,defaultApiService());return real(a,b);};
+ assert.equal(restoreApiService({fs:g.fs}).enabled,false);assert.equal(g.read(apiPaths.config).enabled,false);
 });
 function requestFixture({change,fail}={}){
  const calls=[];const expected='Basic '+Buffer.from(manifest().username+':'+manifest().password).toString('base64');
@@ -299,6 +345,77 @@ test('real TLS transport proves single default/overridden Host, mandatory client
 
 let cookieTestHaproxy=process.env.CPE_TEST_HAPROXY;
 if(!cookieTestHaproxy){try{cookieTestHaproxy=execFileSync('which',['haproxy'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{}}
+test('real HAProxy API rejects ambiguous targets/Host and preserves Bearer, large bodies and incremental SSE',
+ {skip:!cookieTestHaproxy},async t=>{
+ const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'cpe-haproxy-api-')),received=[];
+ let child;
+ const udx=http.createServer((request,response)=>{response.writeHead(200,{'set-cookie':'LuckyWebAuthorization_udx=x; Path=/'});response.end('UDX');});
+ const api=http.createServer((request,response)=>{
+  let body='';request.on('data',part=>body+=part);request.on('end',()=>{
+   received.push({authorization:request.headers.authorization,path:request.url,body,secret:request.headers['x-cpe-origin']});
+   if(request.headers.authorization!=='Bearer FixtureLimitedAPIKey')return response.writeHead(401).end('unauthorized');
+   if(request.method==='GET')return response.writeHead(200,{'content-type':'application/json','set-cookie':'LuckyWebAuthorization_api=x; Path=/'}).end('{"data":[]}');
+   response.writeHead(200,{'content-type':'text/event-stream'});response.flushHeaders();
+   response.write('data: {"part":1}\n\n');
+   setTimeout(()=>response.write(': heartbeat\n\ndata: {"part":2}\n\n'),60);
+   setTimeout(()=>response.end('data: [DONE]\n\n'),120);
+  });
+ });
+ t.after(async()=>{
+  if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(resolve=>{const timer=setTimeout(()=>child.kill('SIGKILL'),1500);child.once('exit',()=>{clearTimeout(timer);resolve();});child.kill('SIGTERM');});
+  await Promise.all([new Promise(resolve=>udx.close(resolve)),new Promise(resolve=>api.close(resolve))]);fs.rmSync(temporary,{recursive:true,force:true});
+ });
+ await Promise.all([udx,api].map(server=>new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);} )));
+ const reservation=net.createServer();await new Promise(resolve=>reservation.listen(0,'::1',resolve));
+ const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
+ const serverPem=path.join(temporary,'server.pem'),ca=path.join(temporary,'ca.pem'),configuration=path.join(temporary,'haproxy.cfg');
+ fs.writeFileSync(serverPem,material.chain+'\n'+material.key,{mode:0o600});fs.writeFileSync(ca,material.clientCa,{mode:0o600});
+ const config=haproxyConfig(manifest(),{...defaultApiService(),enabled:true}).replace(paths.serverPem,serverPem).replace(paths.runtimeCa,ca).replaceAll(paths.httpSocket,path.join(temporary,'http.sock'))
+  .replace('bind :::18443','bind [::1]:'+port).replace('127.0.0.1:16801','127.0.0.1:'+udx.address().port).replace('127.0.0.1:16802','127.0.0.1:'+api.address().port);
+ fs.writeFileSync(configuration,config,{mode:0o600});execFileSync(cookieTestHaproxy,['-c','-f',configuration],{stdio:['ignore','pipe','pipe']});
+ child=spawn(cookieTestHaproxy,['-db','-f',configuration],{stdio:['ignore','ignore','ignore']});
+ await new Promise((resolve,reject)=>{
+  let n=0;const connect=()=>{if(child.exitCode!==null)return reject(Error('fixture HAProxy exited'));
+   const socket=net.createConnection({host:'::1',port});socket.once('connect',()=>{socket.destroy();resolve();});
+   socket.once('error',()=>{socket.destroy();if(++n>100)return reject(Error('fixture startup timeout'));setTimeout(connect,10);});};child.once('error',reject);connect();
+ });
+ const request=({method='GET',path='/v1/models',host=apiHostname,authorization,body='',extra={},sni=originSni,client=true}={})=>new Promise((resolve,reject)=>{
+  const req=https.request({hostname:'::1',port,servername:sni,ca:material.clientCa,rejectUnauthorized:sni===originSni,
+   ...(client?{cert:material.healthCert,key:material.healthKey}:{}),agent:false,method,path,
+   headers:{Host:host,'X-CPE-Origin':manifest().origin_header_secret,...(authorization?{Authorization:authorization}:{}),...extra}},response=>{
+   const chunks=[];response.on('data',bytes=>chunks.push({at:Date.now(),text:bytes.toString()}));
+   response.once('end',()=>resolve({status:response.statusCode,headers:response.headers,chunks,body:chunks.map(x=>x.text).join('')}));
+  });req.once('error',reject);req.setTimeout(3000,()=>req.destroy(Error('fixture timeout')));req.end(body);
+ });
+ assert.equal((await request()).status,401);assert.equal((await request({authorization:'Bearer IncorrectKey'})).status,401);
+ for(const [method,path] of [['GET','/management'],['GET','/key/list'],['GET','/debug'],['GET','/v1/responses'],['POST','/v1/models'],
+  ['DELETE','/v1/models'],['GET','/V1/models'],['GET','/v1//models'],['GET','/v1/%6dodels'],
+  ['GET','/v1/../v1/models'],['GET','/v1/models?admin=1'],['GET','http://ai.lucky.jmsu.top/v1/models']]){
+  assert.equal((await request({method,path,authorization:'Bearer FixtureLimitedAPIKey'})).status,403,method+' '+path);
+ }
+ for(const options of [{host:'foreign.invalid'},{host:apiHostname+':18443'},{extra:{'X-CPE-Origin':'wrong'}}])assert.equal((await request(options)).status,403);
+ await assert.rejects(request({sni:'wrong.invalid'}));
+ await assert.rejects(request({client:false}));
+ const models=await request({authorization:'Bearer FixtureLimitedAPIKey'});assert.equal(models.status,200);
+ assert.deepEqual(models.headers['set-cookie'],['LuckyWebAuthorization_api=x; Path=/']);assert.equal(models.headers['cache-control'],'no-store, no-transform');
+ assert.ok(!received.at(-1).secret);assert.equal(received.at(-1).authorization,'Bearer FixtureLimitedAPIKey');
+ const largeBody=JSON.stringify({model:'approved',input:'x'.repeat(32768),stream:true});
+ for(const path of ['/v1/chat/completions','/v1/responses']){
+  const stream=await request({method:'POST',path,authorization:'Bearer FixtureLimitedAPIKey',body:largeBody,extra:{'content-type':'application/json'}});
+  assert.equal(stream.status,200);assert.match(stream.body,/part.*1[\s\S]*heartbeat[\s\S]*part.*2[\s\S]*\[DONE\]/);
+  assert.ok(stream.chunks.length>=3);assert.ok(stream.chunks.at(-1).at-stream.chunks[0].at>=70);assert.equal(received.at(-1).body,largeBody);
+ }
+ const normal=await request({host:hostname,path:'/'});assert.equal(normal.body,'UDX');assert.deepEqual(normal.headers['set-cookie'],['LuckyWebAuthorization_udx=x; Path=/; Secure; SameSite=Lax']);
+ const raw=(lines,method='GET')=>new Promise((resolve,reject)=>{
+  let bytes='';const socket=tls.connect({host:'::1',port,servername:originSni,ca:material.clientCa,cert:material.healthCert,key:material.healthKey},()=>socket.write(method+' /v1/models HTTP/1.1\r\n'+lines.join('\r\n')+'\r\nConnection: close\r\n\r\n'));
+  socket.on('data',data=>bytes+=data.toString());socket.once('end',()=>resolve(Number(bytes.match(/^HTTP\/1\.[01] (\d+)/)?.[1])));socket.once('error',reject);socket.setTimeout(3000,()=>socket.destroy(Error('fixture timeout')));
+ });
+ const secret='X-CPE-Origin: '+manifest().origin_header_secret;
+ assert.ok([400,403,NaN].includes(await raw(['Host: '+apiHostname,'Host: '+apiHostname,secret])));
+ assert.equal(await raw(['Host: '+apiHostname,secret,secret]),403);
+ assert.equal(await raw(['Host: '+apiHostname,secret,'Authorization: Bearer One','Authorization: Bearer Two']),403);
+ assert.equal(await raw(['Host: '+apiHostname,secret,'Authorization: Bearer FixtureLimitedAPIKey'],'get'),403);
+});
 test('real HAProxy preserves each cookie and Bearer headers while hardening only native Lucky cookies',
  {skip:!cookieTestHaproxy},async t=>{
  const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'cpe-haproxy-cookies-'));
@@ -339,7 +456,7 @@ test('real HAProxy preserves each cookie and Bearer headers while hardening only
  const frontendPort=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
  const serverPem=path.join(temporary,'server.pem'),ca=path.join(temporary,'ca.pem'),configuration=path.join(temporary,'haproxy.cfg');
  fs.writeFileSync(serverPem,material.chain+'\n'+material.key,{mode:0o600});fs.writeFileSync(ca,material.clientCa,{mode:0o600});
- const config=haproxyConfig(manifest()).replace(paths.serverPem,serverPem).replace(paths.runtimeCa,ca)
+ const config=haproxyConfig(manifest()).replace(paths.serverPem,serverPem).replace(paths.runtimeCa,ca).replaceAll(paths.httpSocket,path.join(temporary,'http.sock'))
   .replace('bind :::18443','bind [::1]:'+frontendPort).replace('server lucky 127.0.0.1:16801','server lucky 127.0.0.1:'+backend.address().port);
  fs.writeFileSync(configuration,config,{mode:0o600});
  execFileSync(cookieTestHaproxy,['-c','-f',configuration],{stdio:['ignore','pipe','pipe']});

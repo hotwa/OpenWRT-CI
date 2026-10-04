@@ -46,6 +46,11 @@ files={n:b'fixture-only-placeholder-not-a-real-credential' for n in paths}
 files['etc/cpe5g/public-origin.json']=json.dumps(origin).encode()
 files[pin_path]=json.dumps(certificate_pin).encode()
 files[manifest_path]=json.dumps(manifest).encode();files[managed_path]=json.dumps(managed).encode()
+api_path='etc/cpe5g-lucky/api-service.json'
+api={'version':1,'enabled':True,'publicHost':'ai.lucky.jmsu.top','upstream':'http://127.0.0.1:8317',
+ 'listen':'127.0.0.1:16802','authentication':'upstream-bearer','originSecretRef':'public-management.json#origin_header_secret',
+ 'allowedRequests':[{'method':'GET','path':'/v1/models'},{'method':'POST','path':'/v1/chat/completions'},{'method':'POST','path':'/v1/responses'}],
+ 'nativeRuleKey':'cpe5g-api-public','nativeChildKey':'cpe5g-api-public-child'}
 assert len(paths)==15
 cases=0
 def package(selected,extras=(),pax=False,dirs=False):
@@ -147,6 +152,13 @@ with tempfile.TemporaryDirectory(prefix='cpe-lucky-seed-test-') as raw:
  reject(bad,package({**files,pin_path:json.dumps({**certificate_pin,'extra_field':True}).encode()}))
  for payload in (b'[]',b'{}',b'not-json',b'{"version":1,"version":1}'):
   reject(bad,package({**files,pin_path:payload}))
+ with tempfile.TemporaryDirectory() as api_tmp:
+  api_overlay=Path(api_tmp)
+  assert invoke(api_overlay,package({**files,api_path:json.dumps(api).encode()})).returncode==0
+  assert json.loads((api_overlay/api_path).read_text())==api
+ for field,value in [('publicHost','wrong.example.invalid'),('upstream','http://192.168.13.2:8000'),('enabled','yes')]:
+  reject(bad,package({**files,api_path:json.dumps({**api,field:value}).encode()}))
+ reject(bad,package({**files,api_path:json.dumps({**api,'allowedRequests':[{'method':'POST','path':'/management'}]}).encode()}))
  for payload in (b'[]',b'{}',b'not-json',b'{"duplicate":1,"duplicate":2}'):
   reject(bad,package({**files,manifest_path:payload}))
   reject(bad,package({**files,managed_path:payload}))

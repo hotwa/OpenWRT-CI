@@ -34,11 +34,12 @@ ALLOWED = {
     'etc/cpe5g/public-origin.json',
     'etc/cpe5g-lucky/public-management.json',
     'etc/cpe5g-lucky/managed-native.json',
+    'etc/cpe5g-lucky/api-service.json',
     'etc/cpe5g-lucky/tls/client-ca.pem',
     'etc/cpe5g-lucky/tls/health-client.crt',
     'etc/cpe5g-lucky/tls/health-client.key',
 }
-REQUIRED = ALLOWED - {'etc/lucky/lucky_ipfilter.lkcf'}
+REQUIRED = ALLOWED - {'etc/lucky/lucky_ipfilter.lkcf', 'etc/cpe5g-lucky/api-service.json'}
 DIRECTORIES = {str(parent) for name in ALLOWED for parent in PurePosixPath(name).parents
                if str(parent) != '.'}
 
@@ -152,6 +153,10 @@ try {
   const {validateManagedSeed} = await import(pathToFileURL(resolve(source, 'cpe5g-ipv6/reconcile-lucky-managed.mjs')).href);
   const data = JSON.parse(readFileSync(0, 'utf8'));
   validateManagedSeed(data.managed, validateManifest(data.manifest));
+  if (data.api !== null) {
+    const {validateApiService} = await import(pathToFileURL(resolve(source, 'cpe5g-ipv6/api-service-registry.mjs')).href);
+    validateApiService(data.api);
+  }
 } catch {
   process.exitCode = 1;
 }
@@ -159,7 +164,9 @@ try {
     try:
         result = subprocess.run(
             ['node', '--input-type=module', '--eval', validator, sys.argv[3]],
-            input=json.dumps({'manifest': manifest, 'managed': managed}).encode('utf-8'),
+            input=json.dumps({'manifest': manifest, 'managed': managed,
+                             'api': object_json(files['etc/cpe5g-lucky/api-service.json'])
+                             if 'etc/cpe5g-lucky/api-service.json' in files else None}).encode('utf-8'),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C', 'LC_ALL': 'C'},
             timeout=10, check=False)

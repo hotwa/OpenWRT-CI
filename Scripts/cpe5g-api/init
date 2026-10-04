@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+START=99
+STOP=9
+USE_PROCD=1
+start_service() {
+ [ "$(uci -q get cpe_api.main.enabled 2>/dev/null)" = 1 ] || return 0
+ procd_open_instance
+ procd_set_param command /usr/sbin/cpe-api boot
+ procd_set_param env PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_set_param term_timeout 5
+ procd_close_instance
+}
+stop_service() {
+ # Detached containers retain their own restart state. Use cpe-api stop for
+ # an explicit persistent administrator stop; init stop/restart is not consent.
+ :
+}
+# rc shutdown invokes this override; preserve restart intent during normal halt.
+shutdown() { :; }

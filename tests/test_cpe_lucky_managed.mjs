@@ -4,7 +4,8 @@ import {execFileSync} from 'node:child_process';
 import {dirname,join} from 'node:path';
 import {test,after} from 'node:test';
 import {managedPaths,managedHostname,managedOrigin,validateManagedSeed,loadManagedSeed,restoreTerminal,
- readManagedFile,luckyApi,reconcileLuckyManaged,managedMain,ManagedRegistry,validateManagedKeys} from '../Scripts/cpe5g-ipv6/reconcile-lucky-managed.mjs';
+ readManagedFile,luckyApi,reconcileLuckyManaged,reconcileLuckyApi,managedMain,ManagedRegistry,validateManagedKeys} from '../Scripts/cpe5g-ipv6/reconcile-lucky-managed.mjs';
+import {defaultApiService,apiRuleFromTemplate,apiRuleName,validateApiRule,apiBackendReady} from '../Scripts/cpe5g-ipv6/api-service-registry.mjs';
 const root=fs.mkdtempSync('/tmp/cpe-lucky-managed-test-');
 after(()=>fs.rmSync(root,{recursive:true,force:true}));
 const clone=value=>JSON.parse(JSON.stringify(value));
@@ -66,6 +67,51 @@ function native({owned=false}={}){
  return {data,state,calls,config,registry,api,run:extra=>reconcileLuckyManaged({load:()=>clone(data),gate:()=>true,api,registry,...extra})};
 }
 async function closed(promise){await assert.rejects(promise,/^Error: CPE managed Lucky reconciliation unavailable$/);}
+test('independent API native creation uses native template and allocated identity without UDX auth or rewrites',async()=>{
+ const f=native({owned:true}),service={...defaultApiService(),enabled:true},previous=clone(f.state);
+ const result=await reconcileLuckyApi({load:()=>service,loadTemplate:()=>f.data,gate:()=>true,api:f.api,registry:f.registry});
+ assert.equal(result.ready,true);assert.equal(result.created,true);assert.equal(result.keys.enabled,true);
+ const post=f.calls.find(x=>x.method==='POST');assert.equal(post.path,'/api/webservice/rules');
+ assert.equal(post.body.RuleKey,'');assert.equal(post.body.RuleName,apiRuleName);assert.equal(post.body.ListenPort,16802);
+ const child=post.body.ProxyList[0];assert.equal(child.BasicAuthUserList,'');assert.equal(child.EnableBasicAuth,false);
+ assert.equal(child.OtherParams.WebAuth,false);assert.deepEqual(child.Locations,['http://127.0.0.1:8317']);
+ assert.equal(child.UseRuleGlobalAuthSettings,false);assert.ok(!JSON.stringify(post.body).includes(password));
+ assert.deepEqual(f.state.rule.slice(0,previous.rule.length),previous.rule);assert.deepEqual(f.state.ddns,previous.ddns);assert.deepEqual(f.state.ssl,previous.ssl);
+ const second=await reconcileLuckyApi({load:()=>service,loadTemplate:()=>f.data,gate:()=>true,api:f.api,registry:f.registry});
+ assert.equal(second.ready,true);assert.equal(second.created,false);assert.equal(f.calls.filter(x=>x.method==='POST').length,1);
+});
+test('API native registry preserves explicit disables even if the disabled Lucky rule is later deleted',async()=>{
+ const f=native({owned:true}),service={...defaultApiService(),enabled:true};
+ const rule=apiRuleFromTemplate(f.data.seed.rule,service);rule.Enable=false;f.state.rule.push(rule);
+ const options={load:()=>service,loadTemplate:()=>f.data,gate:()=>true,api:f.api,registry:f.registry};
+ assert.equal((await reconcileLuckyApi(options)).disabled,true);assert.equal(f.registry.value.enabled,false);
+ f.state.rule.pop();assert.equal((await reconcileLuckyApi(options)).disabled,true);
+ assert.ok(f.calls.every(x=>x.method==='GET'));
+});
+test('foreign/unsafe API names or occupied listeners are preserved and optional failures stay isolated',async()=>{
+ const service={...defaultApiService(),enabled:true};
+ for(const mutate of [r=>{r.RuleKey='foreignID';},r=>{r.ListenIP='0.0.0.0';},r=>{r.ProxyList[0].EnableBasicAuth=true;},
+  r=>{r.ProxyList[0].OtherParams.WebAuth=true;},r=>{r.ProxyList[0].Locations=['http://192.168.13.9:22'];},r=>{r.RuleName='foreign-owner';}]){
+  const f=native({owned:true}),rule=apiRuleFromTemplate(f.data.seed.rule,service);mutate(rule);f.state.rule.push(rule);
+  const previous=clone(f.state),out=await reconcileLuckyApi({load:()=>service,loadTemplate:()=>f.data,gate:()=>true,api:f.api,registry:f.registry});
+  assert.equal(out.ready,false);assert.deepEqual(f.state,previous);assert.ok(f.calls.every(x=>x.method==='GET'));
+ }
+ const f=native();assert.equal((await reconcileLuckyApi({load:()=>null,api:f.api})).skipped,true);assert.equal(f.calls.length,0);
+ assert.equal((await reconcileLuckyApi({load:()=>({...service,upstream:'http://127.0.0.1:22'}),api:f.api})).ready,false);assert.equal(f.calls.length,0);
+ let restored=false;
+ assert.equal((await reconcileLuckyApi({gate:()=>false,restore:()=>{restored=true;}})).ready,false);assert.equal(restored,false);
+});
+test('API health requires current owned scope and upstream401, never a webpage or redirects',async()=>{
+ const service={...defaultApiService(),enabled:true},rule=apiRuleFromTemplate(material().seed.rule,service);
+ const keys={version:1,hostname:service.publicHost,enabled:true,lucky_rule_key:rule.RuleKey,lucky_child_key:rule.ProxyList[0].Key};
+ const calls=[],api=async()=>({ret:0,ruleList:[rule]});
+ const fetch=async(url,options)=>{calls.push({url,options});return {status:401,body:{cancel:async()=>{}}};};
+ assert.equal(await apiBackendReady(service,{api,keys,fetch}),true);assert.equal(calls.length,2);
+ assert.equal(calls[0].options.headers.Authorization,undefined);assert.match(calls[1].options.headers.Authorization,/^Bearer /);
+ assert.equal(await apiBackendReady(service,{api,keys,fetch:async()=>({status:200})}),false);
+ rule.Enable=false;assert.equal(await apiBackendReady(service,{api,keys,fetch}),false);
+ rule.Enable=true;rule.ProxyList[0].BasicAuthUserList='foreign:secret';assert.equal(await apiBackendReady(service,{api,keys,fetch}),false);
+});
 test('old restored Lucky configs get missing owned names with native allocated IDs in a separate registry',async()=>{
  const f=native(),unrelated={rule:clone(f.state.rule[0]),ddns:clone(f.state.ddns[0]),ssl:clone(f.state.ssl[0])};
  const result=await f.run();assert.equal(result.ready,true);assert.deepEqual(result.created,['rule','ddns','ssl']);

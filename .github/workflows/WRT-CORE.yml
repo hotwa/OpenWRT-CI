@@ -80,6 +80,10 @@ on:
         required: false
         type: string
         default: ''
+      WRT_CPE_API_GATEWAY:
+        required: false
+        type: boolean
+        default: false
       WRT_CPE_WIFI:
         required: false
         type: boolean
@@ -209,6 +213,7 @@ env:
   WRT_CONTAINER_RUNTIME_TEST: ${{inputs.WRT_CONTAINER_RUNTIME_TEST}}
   WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
+  WRT_CPE_API_GATEWAY: ${{inputs.WRT_CPE_API_GATEWAY}}
   WRT_CPE_WIFI: ${{inputs.WRT_CPE_WIFI}}
   WRT_CPE_IPV6: ${{inputs.WRT_CPE_IPV6}}
   WRT_HEADSCALE_HOSTNAME: ${{inputs.WRT_HEADSCALE_HOSTNAME}}
@@ -489,6 +494,12 @@ jobs:
             add_file cpe/lucky-private-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh"
             printf '%s\t%s\n' cpe/ipv6-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6")" >> "$manifest"
           fi
+          add_value cpe/api-gateway "${WRT_CPE_API_GATEWAY:-false}"
+          if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+            add_file cpe/api-image-fetcher "$GITHUB_WORKSPACE/Scripts/fetch_cpe_api_image.py"
+            add_file cpe/api-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeApiGateway.sh"
+            printf '%s\t%s\n' cpe/api-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-api")" >> "$manifest"
+          fi
           add_value container/test              "${WRT_CONTAINER_RUNTIME_TEST:-false}"
           add_value container/mode              "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}"
           add_value container/version           "${WRT_CONTAINER_RUNTIME_VERSION:-latest}"
@@ -633,6 +644,16 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/fetch_opencode_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
+          if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+            test "${WRT_FEATURE_OVERLAY:-true}" = true &&
+            test "${WRT_CPE_5G:-false}" = true &&
+            test "${WRT_CPE_IPV6:-false}" = true &&
+            test "${WRT_CONTAINER_RUNTIME_TEST:-false}" = true &&
+            test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+              echo "ERROR: API gateway is restricted to the complete CPE B overlay" >&2
+              exit 1
+            }
+          fi
           if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
             case "${WRT_EXPECTED_DEVICE:-}" in
               jdcloud_re-ss-01|jdcloud_re-cs-02|jdcloud_re-cs-07) ;;
@@ -697,6 +718,19 @@ jobs:
               cp -r "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6/route-audit-package/." "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit/"
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_IPV6:-false}"
+            if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+              test "${WRT_CPE_5G:-false}" = true &&
+              test "${WRT_CPE_IPV6:-false}" = true &&
+              test "${WRT_CONTAINER_RUNTIME_TEST:-false}" = true &&
+              test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+                echo "ERROR: API gateway requires CPE B, native IPv6 and container runtime on RE-SS-01" >&2
+                exit 1
+              }
+            fi
+            if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+              python3 -B "$GITHUB_WORKSPACE/Scripts/fetch_cpe_api_image.py" "$GITHUB_WORKSPACE/wrt/files"
+            fi
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeApiGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_API_GATEWAY:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"

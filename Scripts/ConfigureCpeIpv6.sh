@@ -9,7 +9,7 @@ case "$ENABLE" in true|false) ;; *) exit 1;; esac
 [ -x "$FILES/usr/libexec/cpe5g-mwan3-gated-reconcile" ] || { echo 'CPE IPv6 requires the CPE-only network overlay' >&2; exit 1; }
 SOURCE="$(CDPATH= cd -- "$(dirname "$0")/cpe5g-ipv6" && pwd)"
 mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/usr/share/cpe5g-origin" "$FILES/lib/netifd/proto" "$FILES/lib/upgrade/keep.d" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config" "$FILES/etc/cpe5g" "$FILES/www/luci-static/resources/protocol"
-for module in adb model probe worker audit-bootstrap quota-logger local-failover public-access select-origin-ipv6 lucky-origin deploy-origin-certificate restore-lucky-private reconcile-lucky-managed; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap quota-logger local-failover public-access select-origin-ipv6 lucky-origin deploy-origin-certificate restore-lucky-private reconcile-lucky-managed api-service-registry; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 for command in select-origin-ipv6 deploy-origin-certificate; do
  cp "$SOURCE/$command" "$FILES/usr/libexec/cpe5g-ipv6/$command"
  chmod 755 "$FILES/usr/libexec/cpe5g-ipv6/$command"

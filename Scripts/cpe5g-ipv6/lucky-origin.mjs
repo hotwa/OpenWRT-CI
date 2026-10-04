@@ -8,6 +8,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {selectOriginIpv6} from './select-origin-ipv6.mjs';
 import {certificatePinPath,restoreJournal,guardVersion,publicConfig} from './public-access.mjs';
+import {apiPaths,apiHostname,loadApiService,loadApiKeys,validateApiService,apiBackendReady} from './api-service-registry.mjs';
 
 export const hostname='cpe.lucky.jmsu.top';
 export const originSni='cpe-origin.jmsu.top';
@@ -24,7 +25,8 @@ export const paths=Object.freeze({
  healthCert:'/etc/cpe5g-lucky/tls/health-client.crt',healthKey:'/etc/cpe5g-lucky/tls/health-client.key',
  runtime:'/var/run/cpe5g-lucky',config:'/var/run/cpe5g-lucky/haproxy.cfg',
  serverPem:'/var/run/cpe5g-lucky/server.pem',runtimeCa:'/var/run/cpe5g-lucky/client-ca.pem',
- ready:'/var/run/cpe5g-lucky/public-ready.json'
+ httpSocket:'/var/run/cpe5g-lucky/origin-http.sock',
+ ready:'/var/run/cpe5g-lucky/public-ready.json',apiReady:'/var/run/cpe5g-lucky/api-ready.json'
 });
 const haproxy='/usr/sbin/haproxy';
 const lifetime=72*60*60*1000;
@@ -108,8 +110,9 @@ export function loadOrigin({fs=fsDefault,now=Date.now}={}){
   return {manifest,material,pins,digest:hash(JSON.stringify({policy,pinText,manifest,material}))};
  }catch{throw unavailable();}
 }
-export function haproxyConfig(manifest){
+export function haproxyConfig(manifest,api=null){
  validateManifest(manifest);
+ if(api){validateApiService(api);if(!api.enabled)api=null;}
  // All interpolated values are fixed paths or a validated 64-character hex
  // value. Credentials never enter the HAProxy configuration or process args.
  return `global
@@ -121,22 +124,55 @@ defaults
   mode http
   no log
   timeout connect 3s
-  timeout client 30s
+  timeout client ${api?'300s':'30s'}
   timeout server 30s
   timeout http-request 5s
-  option http-server-close
+  option httpclose
 
 frontend cpe_public_tls
+  mode tcp
   bind :::18443 v6only ssl crt ${paths.serverPem} ca-file ${paths.runtimeCa} verify required ssl-min-ver TLSv1.2
+  tcp-request inspect-delay 5s
+  # The H1 parser coalesces identical Host fields before HTTP ACLs. Inspect
+  # complete raw headers first; the expression never reaches a request body.
+  tcp-request content set-var(sess.raw_headers) req.payload(0,0) if { req.proto_http }
+  acl duplicate_raw_host var(sess.raw_headers),lower -m reg '^[^\\r\\n]*\\r\\n([^\\r\\n]+\\r\\n)*host:[^\\r\\n]*\\r\\n([^\\r\\n]+\\r\\n)*host:'
   acl origin_sni ssl_fc_sni -m str ${originSni}
+  tcp-request content reject unless origin_sni
+  tcp-request content reject if duplicate_raw_host
+  tcp-request content unset-var(sess.raw_headers) if { req.proto_http }
+  tcp-request content accept if { req.proto_http }
+  tcp-request content reject
+  default_backend cpe_http_transport
+
+backend cpe_http_transport
+  mode tcp
+  timeout server ${api?'300s':'30s'}
+  server local_http ${paths.httpSocket}
+
+frontend cpe_public_http
+  # Only the owned TLS transport can reach this root-only UNIX listener.
+  bind ${paths.httpSocket} mode 600
   acl one_host req.fhdr_cnt(Host) eq 1
   acl origin_host req.fhdr(Host),lower -m str ${hostname}
+${api?`  acl api_host req.fhdr(Host),lower -m str ${apiHostname}
+  acl api_get method -m str GET
+  acl api_post method -m str POST
+  acl api_models url -m str /v1/models
+  acl api_posts url -m str /v1/chat/completions /v1/responses
+`:''}  acl approved_host req.fhdr(Host),lower -m str ${hostname}${api?' '+apiHostname:''}
   acl one_secret req.fhdr_cnt(X-CPE-Origin) eq 1
   acl origin_secret req.fhdr(X-CPE-Origin) -m str ${manifest.origin_header_secret}
-  http-request deny deny_status 403 unless origin_sni one_host origin_host one_secret origin_secret
-  http-request del-header X-CPE-Origin
+  http-request deny deny_status 403 unless one_host approved_host one_secret origin_secret
+${api?`  # Exact raw request targets reject percent escapes, queries, absolute form,
+  # slash/dot normalization and case variations before either proxy sees them.
+  http-request deny deny_status 403 if api_host !api_get !api_post
+  http-request deny deny_status 403 if api_host api_get !api_models
+  http-request deny deny_status 403 if api_host api_post !api_posts
+  http-request deny deny_status 403 if api_host { req.fhdr_cnt(Authorization) gt 1 }
+`:''}  http-request del-header X-CPE-Origin
   http-request set-header X-Forwarded-Proto https
-  default_backend cpe_lucky_private
+${api?'  use_backend cpe_lucky_api if api_host\n':''}  default_backend cpe_lucky_private
 
 backend cpe_lucky_private
   # Match each complete Set-Cookie independently; other cookies and existing
@@ -144,6 +180,14 @@ backend cpe_lucky_private
   http-response replace-header Set-Cookie '^(?!.*;[[:blank:]]*(?i:secure)[[:blank:]]*(?:=|;|$))(LuckyWebAuthorization_[^=;[:space:]]+=.*)$' '\\1; Secure'
   http-response replace-header Set-Cookie '^(?!.*;[[:blank:]]*(?i:samesite)[[:blank:]]*(?:=|;|$))(LuckyWebAuthorization_[^=;[:space:]]+=.*)$' '\\1; SameSite=Lax'
   server lucky 127.0.0.1:16801
+${api?`
+backend cpe_lucky_api
+  # 300s is an idle timeout, not a promise about ESA's total stream duration.
+  timeout server 300s
+  option http-no-delay
+  http-response set-header Cache-Control "no-store, no-transform"
+  server lucky_api 127.0.0.1:16802
+`:''}
 `;
 }
 function secureRuntime(fs){
@@ -203,7 +247,7 @@ function parseHttp(bytes){
 // pinned DER leaf and exact SAN; the public CA store is not needed for this
 // local-only check. A TLS alert, never a timeout/403/reset, proves mandatory
 // client authentication. No response headers or bodies are logged.
-export function tlsRequest({material,pins,path='/',headers=[],client=true,signal,timeout=3000}={}){
+export function tlsRequest({material,pins,path='/',method='GET',headers=[],client=true,signal,timeout=3000}={}){
  return new Promise((resolve,reject)=>{
   if(signal?.aborted)return reject(abortError());
   let socket,done=false,total=0;const parts=[];
@@ -220,7 +264,7 @@ export function tlsRequest({material,pins,path='/',headers=[],client=true,signal
     const peer=socket.getPeerCertificate();
     if(!peer.raw||hash(peer.raw)!==pins.server_cert_sha256||tls.checkServerIdentity(originSni,peer))return finish(unavailable());
     const defaultHost=headers.some(([name])=>name.toLowerCase()==='host')?'':`Host: ${hostname}\r\n`;
-    socket.write(`GET ${path} HTTP/1.1\r\n${defaultHost}Connection: close\r\nAccept-Encoding: identity\r\n${headers.map(([name,value])=>`${name}: ${value}\r\n`).join('')}\r\n`);
+    socket.write(`${method} ${path} HTTP/1.1\r\n${defaultHost}Connection: close\r\nAccept-Encoding: identity\r\n${headers.map(([name,value])=>`${name}: ${value}\r\n`).join('')}\r\n`);
    });
    socket.on('data',data=>{total+=data.length;if(total>81920)return finish(unavailable());parts.push(data);});
    socket.on('end',()=>{try{finish(null,parseHttp(Buffer.concat(parts)));}catch{finish(unavailable());}});
@@ -257,6 +301,32 @@ export async function probeOrigin(origin,{request=tlsRequest,signal}={}){
  if(!object(status)||status.logged_in!==false||status.auth_required!==true)throw unavailable();
  return {mtls_verified:true,origin_header_verified:true};
 }
+export async function probeApiOrigin(origin,{request=tlsRequest,signal}={}){
+ try{
+  const headers=[['Host',apiHostname],['X-CPE-Origin',origin.manifest.origin_header_secret]];
+  for(const [method,path,extra,status] of [
+   ['GET','/v1/models',[],401],['GET','/v1/models',[['Authorization','Bearer CPE_API_HEALTH_INVALID']],401],
+   ['GET','/management',[],403],['GET','/v1/responses',[],403],['POST','/v1/models',[],403],
+   ['GET','/v1/%6dodels',[],403],['GET','/v1//models',[],403]
+  ]){
+   const result=await request({material:origin.material,pins:origin.pins,signal,method,path,headers:[...headers,...extra]});
+   if(result?.status!==status)return false;
+  }
+  return !signal?.aborted;
+ }catch{return false;}
+}
+export async function checkApiBackend(service,{fs=fsDefault,fetch=globalThis.fetch,signal}={}){
+ try{
+  const token=readRootFile(fs,paths.token,{secret:true,max:512}).trim();
+  if(!keyId(token))return false;
+  const api=async(method,path)=>{
+   const response=await fetch('http://127.0.0.1:16601'+path,{method,headers:{openToken:token},signal:AbortSignal.timeout(3000)});
+   if(response.status!==200)throw unavailable();
+   const text=await response.text();if(Buffer.byteLength(text)>1024*1024)throw unavailable();return JSON.parse(text);
+  };
+  return await apiBackendReady(service,{api,keys:loadApiKeys({fs}),fetch,signal});
+ }catch{return false;}
+}
 
 export function ownedListener(child,fs=fsDefault){
  try{
@@ -281,13 +351,14 @@ export function ownedGuard(run){
 export class LuckyOrigin {
  #child=null;#digest=null;#busy=null;#stopping=false;#probeAbort=null;#state=null;#stopPending=null;
  constructor({fs=fsDefault,now=Date.now,run=(bin,args)=>execFileSync(bin,args,{encoding:'utf8',timeout:3000,maxBuffer:65536,stdio:['ignore','pipe','pipe']}),
-  spawn=spawnDefault,select=()=>selectOriginIpv6({fs,now,run}),probe=probeOrigin,wait=sleep,
+  spawn=spawnDefault,select=()=>selectOriginIpv6({fs,now,run}),probe=probeOrigin,probeApi=probeApiOrigin,
+  apiCheck=(service,options)=>checkApiBackend(service,{fs,...options}),wait=sleep,
   ownsListener=child=>ownedListener(child,fs),log=text=>process.stderr.write(text+'\n')}={}){
-  Object.assign(this,{fs,now,run,spawn,select,probe,wait,ownsListener,log});
+  Object.assign(this,{fs,now,run,spawn,select,probe,probeApi,apiCheck,wait,ownsListener,log});
  }
  get child(){return this.#child?.process||null;}
  #message(state){if(state!==this.#state){this.#state=state;this.log(state==='ready'?'CPE public origin ready':'CPE public origin unavailable');}}
- #clear(){remove(this.fs,paths.ready);}
+ #clear(){remove(this.fs,paths.ready);remove(this.fs,paths.apiReady);}
  async #stopChild(){
   if(this.#stopPending)return this.#stopPending;
   const active=this.#terminate();this.#stopPending=active;
@@ -298,7 +369,7 @@ export class LuckyOrigin {
   if(!owned||owned.dead){this.#child=null;return;}
   // Only ChildProcess objects returned by this instance's spawn are signaled.
   // Never read a PID file or signal a PID discovered in the system.
-  owned.process.kill('SIGTERM');
+  owned.retiring=true;owned.process.kill('SIGTERM');
   const bounded=async ms=>{
    const abort=new AbortController();
    try{await Promise.race([owned.closed,this.wait(ms,abort.signal)]);}finally{abort.abort();}
@@ -314,45 +385,60 @@ export class LuckyOrigin {
   this.#child=owned;this.#digest=origin.digest;
   const dead=()=>{
    if(owned.dead)return;owned.dead=true;resolveClosed();
-   if(this.#child===owned){this.#probeAbort?.abort();try{this.#clear();}catch{}this.#message('unavailable');}
+   if(this.#child===owned){if(!owned.retiring)this.#probeAbort?.abort();try{this.#clear();}catch{}this.#message('unavailable');}
   };
   process.once('exit',dead);process.once('error',dead);
+ }
+ async #ensure(origin){
+  if(this.#child&&!this.#child.dead&&this.#digest===origin.digest)return;
+  this.#clear();await this.#stopChild();if(this.#stopping)throw unavailable();
+  secureRuntime(this.fs);
+  atomic(this.fs,paths.serverPem,origin.material.chain.trim()+'\n'+origin.material.key.trim()+'\n');
+  atomic(this.fs,paths.runtimeCa,origin.material.clientCa);
+  atomic(this.fs,paths.config,haproxyConfig(origin.manifest,origin.api));
+  this.run(haproxy,['-c','-f',paths.config]);
+  if(this.#stopping||!ownedGuard(this.run))throw unavailable();
+  this.#start(origin);
+  for(let n=0;n<30&&!this.#stopping&&!this.#child.dead;n++){
+   await this.wait(50);if(this.ownsListener(this.#child.process))break;
+  }
  }
  async #tick(){
   if(this.#stopping)return false;
   try{
-   const origin=loadOrigin({fs:this.fs,now:this.now});
+   let origin=loadOrigin({fs:this.fs,now:this.now});
    if(!origin){this.#clear();await this.#stopChild();this.#message('unavailable');return false;}
    const before=this.select();
    if(!ownedGuard(this.run))throw unavailable();
-   if(!this.#child||this.#child.dead||this.#digest!==origin.digest){
-    this.#clear();await this.#stopChild();if(this.#stopping)return false;
-    secureRuntime(this.fs);
-    atomic(this.fs,paths.serverPem,origin.material.chain.trim()+'\n'+origin.material.key.trim()+'\n');
-    atomic(this.fs,paths.runtimeCa,origin.material.clientCa);
-    atomic(this.fs,paths.config,haproxyConfig(origin.manifest));
-    this.run(haproxy,['-c','-f',paths.config]);
-    if(this.#stopping)return false;
-    if(!ownedGuard(this.run))throw unavailable();
-    this.#start(origin);
-    // A listener not started by us cannot establish readiness if our child
-    // loses the bind race. Give startup/bind failures time to surface.
-    for(let n=0;n<30&&!this.#stopping&&!this.#child.dead;n++){
-     await this.wait(50);if(this.ownsListener(this.#child.process))break;
+   const sourceDigest=origin.digest,service=loadApiService({fs:this.fs});
+   let api=null;
+   const abort=new AbortController();this.#probeAbort=abort;
+   try{if(service?.enabled&&await this.apiCheck(service,{signal:abort.signal}))api=service;}catch{}
+   const effective=api=>({...origin,api,digest:hash(JSON.stringify({sourceDigest,api}))});
+   origin=effective(api);await this.#ensure(origin);
+   if(api){
+    let passed=false;try{passed=await this.probeApi(origin,{signal:abort.signal});}catch{}
+    if(!passed||JSON.stringify(loadApiService({fs:this.fs}))!==JSON.stringify(service)){
+     api=null;origin=effective(null);await this.#ensure(origin);
     }
    }
-   const owned=this.#child;
+   let owned=this.#child;
    if(this.#stopping||!owned||owned.dead||!this.ownsListener(owned.process))throw unavailable();
-   const abort=new AbortController();this.#probeAbort=abort;
-   const verified=await this.probe(origin,{signal:abort.signal});
+   let verified=await this.probe(origin,{signal:abort.signal});
+   if(api&&JSON.stringify(loadApiService({fs:this.fs}))!==JSON.stringify(service)){
+    api=null;origin=effective(null);await this.#ensure(origin);owned=this.#child;
+    verified=await this.probe(origin,{signal:abort.signal});
+   }
    if(this.#stopping||abort.signal.aborted||owned!==this.#child||owned.dead||
     verified?.mtls_verified!==true||verified?.origin_header_verified!==true)throw unavailable();
    const after=loadOrigin({fs:this.fs,now:this.now}),address=this.select();
-   if(!after||after.digest!==origin.digest||before!==address||!this.ownsListener(owned.process)||!ownedGuard(this.run))throw unavailable();
+   if(!after||after.digest!==sourceDigest||before!==address||!this.ownsListener(owned.process)||!ownedGuard(this.run))throw unavailable();
    noDeployment(this.fs);
    this.#clear();
    atomic(this.fs,paths.ready,JSON.stringify({ready:true,hostname,source_policy:'mtls',port:originPort,address,
     updated:this.now(),...origin.pins,mtls_verified:true,origin_header_verified:true})+'\n');
+   atomic(this.fs,paths.apiReady,JSON.stringify({version:1,api_route:true,approved_host:apiHostname,ready:!!api,
+    updated:this.now(),shared_gate:'udx'})+'\n');
    noDeployment(this.fs);
    if(!ownedGuard(this.run))throw unavailable();
    this.#message('ready');return true;
@@ -371,7 +457,7 @@ export class LuckyOrigin {
   this.#stopping=true;this.#probeAbort?.abort();
   try{this.#clear();}finally{await this.#stopChild();}
   if(this.#busy)await this.#busy;
-  for(const file of [paths.config,paths.serverPem,paths.runtimeCa])remove(this.fs,file);
+  for(const file of [paths.config,paths.serverPem,paths.runtimeCa,paths.httpSocket])remove(this.fs,file);
  }
 }
 export async function originMain({signal,interval=5000,wait=sleep,...options}={}){

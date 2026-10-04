@@ -3,11 +3,13 @@
 ## 当前状态与入口边界
 
 2026-10-04 的 `cpe.lucky.jmsu.top` 已可通过 Lucky 临时认证和 UDX 自身登录访问。
-现有生产逻辑只授权这个 UDX Host；HAProxy 并不是任意 Lucky 服务的公网入口。
-本次没有配置新的 API 域名、LAN 上游或 API 密钥。
+现有生产 UDX 入口保持不变。新增实现只允许独立的 `ai.lucky.jmsu.top`，
+转发到 CPE 上的 CLIProxyAPI `127.0.0.1:8317`；没有授权其他 LAN 服务。
+实现和离线 HAProxy/SSE 验证已经完成，实际 Lucky/ESA 端到端验收须单独记录。
+容器、固定 ARM64 镜像及 `/data` 持久化见 [部署合同](cpe-api-container.md)。
 
 本地 [`cpe-5g` skill](../.agents/skills/cpe-5g/SKILL.md) 提供只读设备检查、服务请求
-校验和部署规划。第一次发布 AI 服务时还需实现下述可选路由能力，并完成端到端验收；
+校验和部署规划。受管首次 API 路由能力已实现；上线仍需完成端到端验收；
 不能把离线 plan 输出当作服务已发布。实际 LAN 地址、端口、公开域名、公开模型及密钥
 文件引用由部署请求提供。示例地址不代表允许连接或发布。
 
@@ -20,11 +22,11 @@ OpenAI-compatible client: Authorization: Bearer <limited virtual key>
   → cpe-origin.jmsu.top:18443 over SIM IPv6, HTTPS + mTLS + origin header
   → HAProxy exact Host and path/method route
   → an independent Lucky loopback listener
-  → approved LAN LiteLLM gateway
+  → CPE CLIProxyAPI container (or explicitly approved LAN gateway)
   → private vLLM model services
 ```
 
-`ai.lucky.jmsu.top` 是可选名称；上线前应核对该名称是否已有业务。
+当前首次部署使用 `ai.lucky.jmsu.top`；新增前核对现有 DNS 与规则无重名。
 每项服务使用明确 Host、LAN 上游和允许的 API 路径，不提供整个 LAN 的通用公网代理。
 UDX 的网页认证和 API 的 Bearer 认证分别配置；SSH 仍使用 LAN 或 Tailscale。
 模型推理运行在 LAN 服务器，OpenWrt 承担路由和代理。
@@ -89,7 +91,7 @@ Lucky 当前部署二进制的 Bearer 透传与 SSE flush 尚未验收；应使�
 
 ## 固件扩展与升级保留
 
-首次实际发布需要一个独立、可选且默认关闭的服务 registry，例如放在
+独立、可选且默认关闭的服务 registry 已实现，放在
 `/etc/cpe5g-lucky/`，仅接受已批准 Host、私网上游、允许路径/方法、认证方式和
 loopback 监听。不要修改现有 UDX v1 manifest 的身份或把 API 子规则塞进 UDX 的
 ProxyList。CLI 的 plan JSON 是用户请求描述，不是当前固件接受的 registry。

@@ -7,6 +7,7 @@ import {randomBytes} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {validateManifest} from './lucky-origin.mjs';
 import {OriginCertificateDeployer} from './deploy-origin-certificate.mjs';
+import {apiPaths,apiHostname,apiRuleName,loadApiService,restoreApiService,validateApiService,validateApiKeys,validateApiRule,apiRuleFromTemplate} from './api-service-registry.mjs';
 
 export const managedHostname='cpe.lucky.jmsu.top';
 export const managedOrigin='cpe-origin.jmsu.top';
@@ -174,11 +175,11 @@ export function validateManagedKeys(raw){
  return raw;
 }
 export class ManagedRegistry {
- constructor({fs=fsDefault,paths=managedPaths,rootBoundary='/'}={}){
-  this.fs=fs;this.paths=paths;this.rootBoundary=rootBoundary;
+ constructor({fs=fsDefault,paths=managedPaths,rootBoundary='/',validate=validateManagedKeys}={}){
+  this.fs=fs;this.paths=paths;this.rootBoundary=rootBoundary;this.validate=validate;
  }
  read(){
-  try{return validateManagedKeys(JSON.parse(readManagedFile(this.fs,this.paths.registry,{rootBoundary:this.rootBoundary,max:4096})));}
+  try{return this.validate(JSON.parse(readManagedFile(this.fs,this.paths.registry,{rootBoundary:this.rootBoundary,max:4096})));}
   catch(e){if(e.code==='ENOENT')return null;throw unavailable();}
  }
  acquire(){
@@ -187,7 +188,7 @@ export class ManagedRegistry {
   return new OriginCertificateDeployer({fs:this.fs,paths:{lock:this.paths.lock},rootBoundary:this.rootBoundary}).acquire();
  }
  write(value,check){
-  validateManagedKeys(value);this.read();
+  this.validate(value);this.read();
   const fs=this.fs,file=this.paths.registry,temp=file+'.'+randomBytes(12).toString('hex');
   let fd;
   try{
@@ -345,7 +346,71 @@ export async function reconcileLuckyManaged({load=loadManagedSeed,gate=restoreTe
 export async function managedMain({reconcile=reconcileLuckyManaged,stderr=text=>process.stderr.write(text),allowArgs=false}={}){
  try{
   if(!allowArgs&&process.argv.length>2)throw unavailable();
-  const result=await reconcile();if(result.skipped||result.ready)return 0;throw unavailable();
+  const result=await reconcile();
+  if(result.ready&&reconcile===reconcileLuckyManaged)await reconcileLuckyApi();
+  if(result.skipped||result.ready)return 0;throw unavailable();
  }catch{stderr(failure+'\n');return 1;}
+}
+export class ApiManagedRegistry extends ManagedRegistry {
+ constructor(options={}){super({...options,paths:options.paths??{registry:apiPaths.keys,lock:apiPaths.lock},validate:validateApiKeys});}
+}
+// Optional API errors are confined here. Never mutate an existing rule, adopt
+// a foreign identity, or recreate an entry after a recorded administrator disable.
+export async function reconcileLuckyApi({load=loadApiService,restore=restoreApiService,loadTemplate=loadManagedSeed,gate=restoreTerminal,api,registry}={}){
+ let release,ownedLock,activeAdded=false;
+ try{
+  if(!gate())throw unavailable();
+  if(load===loadApiService)restore();
+  const service=load();if(!service||!service.enabled)return {ready:false,skipped:true};
+  validateApiService(service);
+  const template=loadTemplate();if(!template||template.policy?.enabled!==true)throw unavailable();
+  validateManagedSeed(template.seed,template.seedManifest??template.manifest);
+  if([template.manifest.lucky_rule_key,template.seed.rule.RuleKey].includes(service.nativeRuleKey)||
+   template.seed.rule.ProxyList[0].Key===service.nativeChildKey)throw unavailable();
+  registry??=new ApiManagedRegistry();ownedLock=registry.paths?.lock??registry;
+  if(active.has(ownedLock))throw unavailable();active.add(ownedLock);activeAdded=true;
+  release=registry.acquire();const previous=registry.read();if(previous)validateApiKeys(previous);
+  if(previous?.enabled===false)return {ready:false,skipped:false,disabled:true};
+  api??=luckyApi();
+  const unchanged=()=>{if(!equal(load(),service))throw unavailable();};
+  const select=rows=>{
+   if(!Array.isArray(rows))throw unavailable();
+   const matches=rows.filter(row=>row?.RuleName===apiRuleName);if(matches.length>1)throw unavailable();
+   const references=[service.nativeRuleKey,previous?.lucky_rule_key].filter(Boolean);
+   if(rows.some(row=>references.includes(row?.RuleKey)&&row?.RuleName!==apiRuleName))throw unavailable();
+   const owned=matches[0]??null;
+   if(rows.some(row=>row!==owned&&row?.ListenPort===16802&&['127.0.0.1','0.0.0.0',''].includes(row.ListenIP)))throw unavailable();
+   if(owned){
+    validateApiRule(owned,service);
+    if(previous?(owned.RuleKey!==previous.lucky_rule_key||owned.ProxyList[0].Key!==previous.lucky_child_key):
+     (owned.RuleKey!==service.nativeRuleKey||owned.ProxyList[0].Key!==service.nativeChildKey))throw unavailable();
+   }
+   return owned;
+  };
+  const read=async()=>{const result=await api('GET','/api/webservice/rules');if(result?.ret!==0)throw unavailable();return select(result.ruleList);};
+  let owned=await read(),created=false;
+  if(!owned){
+   unchanged();owned=await read();
+   if(!owned){
+    const payload=clone(apiRuleFromTemplate(template.seed.rule,service));
+    payload.RuleKey='';payload.DefaultProxy.Key='';payload.DefaultProxy.GroupKey='';
+    payload.ProxyList[0].Key='';payload.ProxyList[0].GroupKey='';
+    unchanged();const result=await api('POST','/api/webservice/rules',payload);if(result?.ret!==0)throw unavailable();
+    // Newly allocated IDs may only be adopted in the same POST/readback cycle.
+    const after=await api('GET','/api/webservice/rules');if(after?.ret!==0||!Array.isArray(after.ruleList))throw unavailable();
+    const matches=after.ruleList.filter(row=>row?.RuleName===apiRuleName);if(matches.length!==1)throw unavailable();
+    owned=validateApiRule(matches[0],service);
+    const returned=result.RuleKey??result.key??result.rule?.RuleKey;
+    if(returned!==undefined&&returned!==owned.RuleKey||after.ruleList.some(row=>row!==matches[0]&&row?.ListenPort===16802&&['127.0.0.1','0.0.0.0',''].includes(row.ListenIP)))throw unavailable();
+    created=true;
+   }
+  }
+  if(owned.RuleKey===template.manifest.lucky_rule_key||owned.ProxyList[0].Key===template.seed.rule.ProxyList[0].Key)throw unavailable();
+  const enabled=owned.Enable&&owned.ProxyList[0].Enable;
+  const keys={version:1,hostname:apiHostname,lucky_rule_key:owned.RuleKey,lucky_child_key:owned.ProxyList[0].Key,enabled};
+  unchanged();registry.write(keys,unchanged);
+  return {ready:enabled,skipped:false,created,disabled:!enabled,keys};
+ }catch{return {ready:false,skipped:false,unavailable:true};}
+ finally{try{release?.();}finally{if(activeAdded)active.delete(ownedLock);}}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)process.exitCode=await managedMain();
