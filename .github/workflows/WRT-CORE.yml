@@ -657,7 +657,10 @@ jobs:
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
-              test "$WRT_EXPECTED_DEVICE" = jdcloud_re-ss-01
+              test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+                echo "ERROR: CPE IPv6 route audit requires WRT_REQUIRED_DEVICE=jdcloud_re-ss-01" >&2
+                exit 1
+              }
               mkdir -p "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit"
               cp -r "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6/route-audit-package/." "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit/"
             fi
