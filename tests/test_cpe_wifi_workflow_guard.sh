@@ -8,7 +8,7 @@ root=Path(sys.argv[1])
 core=(root/'.github/workflows/WRT-CORE.yml').read_text()
 input_guard=textwrap.dedent(core.split('      - name: Guard CPE WiFi Inputs\n',1)[1].split('        run: |\n',1)[1].split('\n      - name:',1)[0])
 config_guard=textwrap.dedent(core.split('          make defconfig -j$(nproc)\n',1)[1].split('          # zram-swap',1)[0])
-base={**os.environ,'WRT_CPE_WIFI':'true','WRT_CPE_5G':'true','WRT_FEATURE_OVERLAY':'true','WRT_ENCRYPT_ARTIFACT':'true','WRT_REQUIRED_DEVICE':'jdcloud_re-ss-01','WRT_CONFIG':'IPQ60XX-706-WIFI'}
+base={**os.environ,'WRT_CPE_IPV6':'false','WRT_CPE_WIFI':'true','WRT_CPE_5G':'true','WRT_FEATURE_OVERLAY':'true','WRT_ENCRYPT_ARTIFACT':'true','WRT_REQUIRED_DEVICE':'jdcloud_re-ss-01','WRT_CONFIG':'IPQ60XX-706-WIFI'}
 cases=0
 def check(script,env,ok,cwd):
  global cases
@@ -31,6 +31,10 @@ with tempfile.TemporaryDirectory(prefix='cpe-wifi-guard-') as name:
   uc.write_text("set ${si}.disabled='1'\n")
   dts.write_text('#include "ipq6018.dtsi"\n')
  reset(); check(config_guard,base,True,cwd)
+ # Model the CPE-only package injected before defconfig, independent of WiFi.
+ (cwd/'.config').write_text(config+'\nCONFIG_PACKAGE_cpe6-route-audit=y\n')
+ check(config_guard,{**base,'WRT_CPE_IPV6':'true'},True,cwd)
+ reset();check(config_guard,{**base,'WRT_CPE_IPV6':'true'},False,cwd)
  for package in ['kmod-ath11k-ahb','ath11k-firmware-ipq6018-ddwrt','ipq-wifi-jdcloud_re-ss-01','wpad-openssl','wifi-scripts']:
   reset();(cwd/'.config').write_text(config.replace('CONFIG_PACKAGE_'+package+'=y\n',''))
   check(config_guard,base,False,cwd)
