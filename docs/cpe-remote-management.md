@@ -24,7 +24,7 @@ WAN 使用三个 ICMP 目标、至少两个成功；失败三轮下线、恢复�
 | Lucky 新监听 | Tailnet IPv4 / 16800，或由防火墙限定 tailscale0 | IPv6 HTTPS / 18443，仅批准回源来源 |
 | 反代目标 | `http://192.168.66.1:6677/` | `http://192.168.66.1:6677/` |
 | 域名/路径 | 完整后台根路径 | 严格匹配 `cpe.jmsu.top`，完整根路径 |
-| 认证 | Tailnet ACL，加 UDX 原有登录 | 统一 OIDC 网页认证 + 2FA，加 UDX 原有登录 |
+| 认证 | Tailnet ACL、Lucky 临时账号，加 UDX 原有登录 | 先用 Lucky 自带账号认证；后续 OIDC/2FA，加 UDX 原有登录 |
 | 默认不匹配请求 | 拒绝 | 拒绝 |
 | 缓存 | 禁用 | ESA 绕过缓存，包括 HTML、API、登录及认证回调 |
 
@@ -33,6 +33,12 @@ WAN 使用三个 ICMP 目标、至少两个成功；失败三轮下线、恢复�
 UDX 管理主页返回 HTTP 200，未登录 API 返回 auth_required。使用相对 `/api/...` 路径，适合独立域名根路径反代；需实际验证 Host、Location、cookie、认证头、Origin 和页面写操作。不能为适配代理删除 UDX 的登录。已读取的 UDX 前端把终端地址拼为 `http://当前域名:7681`，直接反代不会自动修好这个终端链接。
 
 Lucky 配置目录 `localips` 非空会替换其默认内网名单。若通过 Tailscale 管理被判定为外网，应保留默认 RFC1918/链路本地范围后补入批准的 Tailnet IPv4/IPv6网段，避免直接打开全公网管理。[安装与内网名单](https://lucky666.cn/docs/install/)
+
+2026-10-04 用户选择暂不接 OIDC，先启用 Lucky 自带认证。已部署独立父规则 `managed-cpe-udx-tailnet`，仅监听 `100.64.0.53:16800`，反代固定 UDX 后端，默认未匹配 Host 关闭；旧 8443 规则保留。新子规则启用 `EnableBasicAuth` 和 `OtherParams.WebAuth`，`BasicAuthRegConf` 留空以保护所有路径，禁用自动开防火墙和缓存。临时账号独立于管理员与 Wi-Fi 密码，浏览器使用 Lucky 登录 Cookie，机器客户端回退 BasicAuth；不覆盖 UDX Bearer 认证。
+
+真实浏览器经 Mac 跳板临时隧道及直接 MagicDNS 两条路径均通过 Lucky 登录并到达 UDX 登录页；Cookie 请求能读取 UDX 的未登录状态，错误 Bearer 得到 UDX 未授权响应。无认证/错误 BasicAuth 的根页面、API、静态资源返回 401；有效账号加错误 Host 被关闭。没有输入 UDX 密码或更改其登录。
+
+临时账号、规则快照和变更前备份存于 CPE `/data/cpe5g-lucky`，访问凭据另存本机 Downloads 的私有文件，均不入 Git。`/etc/lucky/` 和相应 eMMC 凭据/规则文件已加入现场 sysupgrade 保留清单。该认证为设备配置，不含于正在构建镜像；保留配置升级会继承，清空配置刷机不应宣称自动恢复。尚未为该新监听做重启验收。
 
 ## ESA 回源与 IPv6 门禁
 
@@ -53,9 +59,11 @@ Lucky 可更新 ESA DDNS，发布当前受控入口的 IPv6，而不是任取 UD
 
 当前 `cpe6_guard` input priority -15 拒绝新的 usb0 公网 IPv6 TCP 入站。直接回源方案需在该托管门禁中添加精确的端口/来源例外，再配套 fw4；仅增加 fw4 allow 不够。例外应保留额度门禁，缺失/未知额度时不接受新入口，不能开放整个端口范围。可用 ESA 回源节点集合时限定来源并维护更新。[源站防护](https://help.aliyun.com/zh/edge-security-acceleration/esa/user-guide/origin-protection)
 
-现场已有 Lucky `:::8443` 监听，但本机带 SNI 的 HTTPS 握手没有成功；不能宣称现有 TLS/反代可用。现有 `/etc/lucky/cert-sync` 配置引用的适配器也不在设备中，保存的 token 未通过只读管理 API 认证。应先确认真实 Lucky 管理凭据、证书及规则，保留既有配置。
+现场已有 Lucky `:::8443` 监听。首次使用未匹配规则的 SNI 导致握手被拒绝；改用真实 `cpe-admin.cpe5g-openwrt.origin.jmsu.top` 后，系统 CA 校验成功并返回认证 401，证明这个原有入口的 TLS 正常。现有源站证书于 2026-10-10 到期，公网上线前应完成续期链路验证。`/etc/lucky/cert-sync` 引用的适配器不在设备中，不能由现有证书有效推断自动续期正常。
 
-公网写入前缺少的部署信息：ESA 站点及套餐、可维护配置位置；统一认证提供方及客户端配置；Lucky 的有效维护会话/凭据来源；批准的浏览器 SSH 目标。真实值仅放私有配置/CI Secret 与加密固件，公开仓库不保存客户端密钥、登录凭据或 SSH 私钥。
+已有 token 的正确 API 请求头是 `openToken`，不是管理员登录会话的 `Lucky-Admin-Token`；改正后 `/api/info` 与规则读写均成功。旧的错误请求头测试不能作为密钥失效证据。
+
+公网写入前缺少的部署信息：ESA 站点及套餐、可维护配置位置；批准的浏览器 SSH 目标。统一身份提供方可后续接入，临时 Lucky 认证已可用。真实值仅放私有配置/CI Secret 与加密固件，公开仓库不保存客户端密钥、登录凭据或 SSH 私钥。
 
 ## SSH 管理
 
