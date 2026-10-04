@@ -224,6 +224,64 @@ jkv origin_mtls_verified "$r" '@.mtls_verified'
 jkv origin_header_verified "$r" '@.origin_header_verified'
 '''
 
+# Validate only whitelisted image fields; a local version alias is not proof of a pin.
+REMOTE_IMAGE_PROJECTION = r'''api_image_projection() {
+ row=$1
+ old_ifs=$IFS; IFS='|'; set -- $row; IFS=$old_ifs
+ platform=${1:-}; if [ "$#" -gt 0 ]; then shift; fi
+ verified=''
+ if [ -n "$platform" ]; then
+  verified=false
+  if [ "$platform" = 'linux/arm64' ]; then
+   for ref in "$@"; do
+    case "$ref" in
+     docker.io/eceasy/cli-proxy-api@sha256:913f5db831ef5919ff63edb5f818df7dd8c821a18d36a92145449a8d8a1b787d|eceasy/cli-proxy-api@sha256:913f5db831ef5919ff63edb5f818df7dd8c821a18d36a92145449a8d8a1b787d) verified=true ;;
+    esac
+   done
+  fi
+ fi
+ kv api_image_platform "$platform"
+ kv api_image_manifest_verified "$verified"
+}
+'''
+
+# Fixed local resources only: never config, credentials, OAuth state or logs.
+REMOTE_API_STATUS = REMOTE_STATUS + REMOTE_IMAGE_PROJECTION + r'''kv api_service_enabled "$(uci -q get cpe_api.main.enabled)"
+kv api_init_enabled "$(if [ -x /etc/init.d/cpe-api ]; then /etc/init.d/cpe-api enabled >/dev/null 2>&1 && printf true || printf false; fi)"
+kv api_disabled_marker "$(if [ -e /data/compose/cpe-api/disabled ]; then printf true; else printf false; fi)"
+kv api_containerd_socket "$(if [ -S /run/containerd/containerd.sock ]; then printf true; else printf false; fi)"
+kv api_nerdctl_present "$(if [ -x /usr/bin/nerdctl ]; then printf true; else printf false; fi)"
+if [ -x /usr/bin/nerdctl ]; then
+ kv api_nerdctl_version "$(timeout 3 /usr/bin/nerdctl --version 2>/dev/null)"
+ if [ -S /run/containerd/containerd.sock ]; then
+  row=$(timeout 5 /usr/bin/nerdctl --address /run/containerd/containerd.sock --namespace default image inspect --format '{{.Os}}/{{.Architecture}}|{{range .RepoDigests}}{{.}}|{{end}}' docker.io/eceasy/cli-proxy-api:v8.0.13 2>/dev/null)
+  api_image_projection "$row"
+  row=$(timeout 5 /usr/bin/nerdctl --address /run/containerd/containerd.sock --namespace default inspect --format '{{.State.Status}}|{{.State.Running}}|{{.HostConfig.Memory}}|{{.HostConfig.CpuQuota}}|{{.HostConfig.CpuPeriod}}|{{.HostConfig.PidsLimit}}' cpe-api 2>/dev/null)
+  kv api_container_fields "$row"
+  # nerdctl stats reports zero cgroups on this device. Read only this container's
+  # kernel cgroup-v2 counters, located through its verified numeric PID.
+  pid=$(timeout 5 /usr/bin/nerdctl --address /run/containerd/containerd.sock --namespace default inspect --format '{{.State.Pid}}' cpe-api 2>/dev/null)
+  case "$pid" in ''|0|*[!0-9]*) ;; *)
+   cg=$(sed -n 's/^0:://p' "/proc/$pid/cgroup" 2>/dev/null)
+   case "$cg" in /*)
+    case "$cg" in *..*|*' '*|*'	'*) ;; *)
+     kv api_resource_source cgroup-v2
+     kv api_memory_current "$(cat "/sys/fs/cgroup$cg/memory.current" 2>/dev/null)"
+     kv api_memory_max "$(cat "/sys/fs/cgroup$cg/memory.max" 2>/dev/null)"
+     kv api_pids "$(cat "/sys/fs/cgroup$cg/pids.current" 2>/dev/null)"
+     kv api_cpu_usage_usec "$(awk '/^usage_usec / {print $2}' "/sys/fs/cgroup$cg/cpu.stat" 2>/dev/null)"
+    ;; esac
+   ;; esac
+  ;; esac
+ fi
+fi
+r=/var/run/cpe5g-lucky/api-ready.json
+jkv api_ready "$r" '@.ready'
+jkv api_approved_host "$r" '@.approved_host'
+jkv api_shared_gate "$r" '@.shared_gate'
+jkv api_updated "$r" '@.updated'
+'''
+
 
 def ssh_argv(profile):
     s = profile["ssh"]
@@ -242,7 +300,23 @@ def ssh_argv(profile):
     return argv + [s["user"] + "@" + s["host"], "sh", "-s"]
 
 
-def status_projection(raw):
+def container_projection(row):
+    if not row:
+        return {}
+    parts = row.split("|")
+    if len(parts) not in (6, 9):
+        return {}
+    fields = parts[-6:]
+    if len(parts) == 9 and parts[:3] != fields[:3]:
+        return {}
+    if fields[0] not in ("created", "running", "paused", "restarting", "removing", "exited", "dead") or fields[1] not in ("true", "false"):
+        return {}
+    if any(re.fullmatch(r"[0-9]{1,20}", value) is None for value in fields[2:]):
+        return {}
+    return dict(zip(("api_container_state", "api_container_running", "api_memory_limit", "api_cpu_quota", "api_cpu_period", "api_pids_limit"), fields))
+
+
+def status_projection(raw, include_api=False):
     values = {}
     interfaces = {}
     for line in raw.splitlines():
@@ -257,6 +331,8 @@ def status_projection(raw):
             values[k] = v or None
 
     need(values.get("schema") == "cpe5g-read-only-v1", "远端未返回预期的只读状态结构")
+    if include_api and "api_container_fields" in values:
+        values.update(container_projection(values["api_container_fields"]))
 
     def text(key):
         return values.get(key)
@@ -268,7 +344,7 @@ def status_projection(raw):
         value = values.get(key)
         return int(value) if value and re.fullmatch(r"[0-9]{1,20}", value) else None
 
-    return {
+    result = {
         "mode": "read-only",
         "system": {k: text(k) for k in ("hostname", "kernel", "release", "model")},
         "wan": {"protocol": text("wan_protocol"), "up": boolean("wan_up"), "device": text("wan_device"), "ipv6_option": text("wan_ipv6_option"), "wan6_present": text("wan6_section") is not None, "wan6_disabled": boolean("wan6_disabled"), "wan6_auto": boolean("wan6_auto"), "cpe6_present": text("cpe6_section") is not None},
@@ -278,15 +354,32 @@ def status_projection(raw):
         "api_publication": {"not_verified": True, "note": "现有 readiness 仅针对 UDX；status 不验证或部署新的 API"},
     }
 
+    if include_api:
+        # Readiness proves local route/auth rejection checks only, not OAuth or public inference.
+        result["api"] = {
+            "service_enabled": boolean("api_service_enabled"),
+            "init_enabled": boolean("api_init_enabled"),
+            "disabled_marker": boolean("api_disabled_marker"),
+            "runtime": {"binary_present": boolean("api_nerdctl_present"), "version": text("api_nerdctl_version"), "socket_present": boolean("api_containerd_socket")},
+            "image": {"pinned_version": "8.0.13", "local_alias": "docker.io/eceasy/cli-proxy-api:v8.0.13", "local_platform": text("api_image_platform"), "manifest_verified": boolean("api_image_manifest_verified")},
+            "container": {"state": text("api_container_state"), "running": boolean("api_container_running")},
+            "limits": {"memory_bytes": number("api_memory_limit"), "cpu_quota": number("api_cpu_quota"), "cpu_period": number("api_cpu_period"), "pids": number("api_pids_limit")},
+            "resources": {"source": text("api_resource_source"), "cpu_usage_usec": number("api_cpu_usage_usec"), "memory_current_bytes": number("api_memory_current"), "memory_max_bytes": number("api_memory_max"), "pids": number("api_pids")},
+            "origin": {"ready": boolean("api_ready"), "approved_host": text("api_approved_host"), "shared_gate": text("api_shared_gate"), "updated_ms": number("api_updated")},
+            "public_inference_verified": False,
+        }
+        result["api_publication"]["note"] = "api-ready 为独立本地检查结果，但依赖 UDX 共享 gate；不证明公网调用或可用模型"
+    return result
 
-def read_status(profile):
+
+def read_status(profile, include_api=False):
     try:
-        result = subprocess.run(ssh_argv(profile), input=REMOTE_STATUS, text=True, capture_output=True, timeout=35, check=False)
+        result = subprocess.run(ssh_argv(profile), input=REMOTE_API_STATUS if include_api else REMOTE_STATUS, text=True, capture_output=True, timeout=35, check=False)
     except subprocess.TimeoutExpired:
         raise Invalid("只读 SSH 状态检查超时；未写设备") from None
     need(result.returncode == 0, "只读 SSH 失败：检查现有密钥、主机指纹、跳板和连通性；不回显远端原始输出")
     need(len(result.stdout) <= 16384, "远端状态输出异常，已拒绝显示")
-    return status_projection(result.stdout)
+    return status_projection(result.stdout, include_api=include_api)
 
 
 def service_plan(service, profile):
@@ -311,14 +404,14 @@ def service_plan(service, profile):
         "limits": service["limits"],
         "required_before_publication": [
             "核对用户批准的端点与 Host；示例 enabled=false 不构成发布授权",
-            "确认或实现可选 service registry、独立 Lucky backend 与精确 HAProxy Host 及 method/path 配对路由",
+            "核对已实现的固定 CPE API registry 与目标固件；其他端点仍需按批准范围设计",
             "保留 UDX v1；隔离 API 健康结果并处理共享 readiness/nft gate",
             "落实私有 CI 文件白名单、validator、加密注入、保留配置恢复与迁移",
             "配置新 Host 的 ESA HTTPS/mTLS/header、HTTPS 跳转、无普通/POST 缓存与 API 规则",
             "在上游网关核实 Bearer 鉴权、模型/预算/并发与版本对应的 SSE keepalive",
             "少量真实公网请求验收 JSON、SSE、长流、取消、拒绝与 Host 隔离",
         ],
-        "note": "规划不保证当前固件具有通用发布能力；单独添加 Lucky 规则不足以发布新 Host",
+        "note": "此 JSON 是离线规划；固定 CPA 注册格式不同，不直接安装；代码实现不等于实机部署",
     }
 
 
@@ -328,6 +421,8 @@ def main():
     default_profile = os.environ.get("CPE_5G_PROFILE", "~/.config/cpe-5g/profile.json")
     status = sub.add_parser("status", help="只读 SSH 白名单状态")
     status.add_argument("--profile", default=default_profile)
+    api_status = sub.add_parser("api-status", help="只读 SSH：固定 CPE API 运行时、容器资源及独立 readiness")
+    api_status.add_argument("--profile", default=default_profile)
     validate = sub.add_parser("validate", help="离线校验 API 规划规格，不部署")
     validate.add_argument("--service", required=True)
     plan = sub.add_parser("plan", help="离线生成部署计划，不连接设备或云")
@@ -335,8 +430,8 @@ def main():
     plan.add_argument("--service", required=True)
     args = parser.parse_args()
     try:
-        if args.command == "status":
-            result = read_status(validate_profile(load_json(args.profile)))
+        if args.command in ("status", "api-status"):
+            result = read_status(validate_profile(load_json(args.profile)), include_api=args.command == "api-status")
         else:
             service = validate_service(load_json(args.service))
             result = {"valid": True, "name": service["name"], "enabled_in_spec": service["enabled"], "deployed": False} if args.command == "validate" else service_plan(service, validate_profile(load_json(args.profile)))

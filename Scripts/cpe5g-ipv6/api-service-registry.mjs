@@ -2,6 +2,7 @@
 import fsDefault from 'node:fs';
 import {dirname} from 'node:path';
 import {randomBytes} from 'node:crypto';
+import http from 'node:http';
 
 export const apiHostname='ai.lucky.jmsu.top';
 export const apiRuleName='managed-cpe5g-ai-api-backend';
@@ -20,6 +21,17 @@ const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const id=x=>typeof x==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(x);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const clone=x=>JSON.parse(JSON.stringify(x));
+// Lucky's native UI initializes these rule-wide auth fields to empty/false;
+// its readback omits zero values. Reject configured global credentials even
+// when the child currently has inheritance disabled.
+const noGlobalAuth=rule=>(rule.GlobalBasicAuthUserList??'')===''&&
+ (rule.GlobalAllowAllThirdAuthUsers??false)===false&&
+ Array.isArray(rule.GlobalThirdAuthLoginUserList??[])&&(rule.GlobalThirdAuthLoginUserList??[]).length===0&&
+ (rule.GlobalAllowThirdUserSkipTwoFA??false)===false;
+const noProxyAuth=proxy=>(proxy.EnableBasicAuth??false)===false&&(proxy.WebAuth??false)===false&&
+ (proxy.BasicAuthUserList??'')===''&&(proxy.BasicAuthUser??'')===''&&(proxy.BasicAuthPasswd??'')===''&&
+ (proxy.BasicAuthRegConf??'')===''&&(proxy.UseRuleGlobalAuthSettings??false)===false&&
+ (proxy.OtherParams?.WebAuth??false)===false&&(proxy.OtherParams?.BasicAuthRegConf??'')==='';
 export function validateApiService(raw){
  const expected=defaultApiService();
  if(!object(raw)||Object.keys(raw).sort().join(',')!==Object.keys(expected).sort().join(',')||typeof raw.enabled!=='boolean')throw unavailable();
@@ -86,13 +98,13 @@ export function validateApiRule(rule,service){
  validateApiService(service);
  if(!object(rule)||!id(rule.RuleKey)||rule.RuleName!==apiRuleName||typeof rule.Enable!=='boolean'||
   rule.Network!=='tcp4'||rule.ListenIP!=='127.0.0.1'||rule.ListenPort!==16802||rule.EnableTLS!==false||rule.Http3!==false||
-  rule.AutoOptionsFirewall===true||!object(rule.DefaultProxy)||rule.DefaultProxy.WebServiceType!=='close'||
+  rule.AutoOptionsFirewall===true||!noGlobalAuth(rule)||!object(rule.DefaultProxy)||!noProxyAuth(rule.DefaultProxy)||rule.DefaultProxy.WebServiceType!=='close'||
   (rule.DefaultProxy.Locations?.length??0)!==0||!Array.isArray(rule.ProxyList)||rule.ProxyList.length!==1)throw unavailable();
  const child=rule.ProxyList[0];
  if(!object(child)||!id(child.Key)||typeof child.Enable!=='boolean'||child.WebServiceType!=='reverseproxy'||
   !same(child.Domains,[apiHostname])||!same(child.Locations,[service.upstream])||child.EnableBasicAuth!==false||
-  (child.WebAuth??false)!==false||child.BasicAuthUserList!==''||child.UseRuleGlobalAuthSettings!==false||
-  child.CacheEnabled!==false||!object(child.OtherParams)||child.OtherParams.WebAuth!==false||
+  (child.WebAuth??false)!==false||child.BasicAuthUserList!==''||(child.UseRuleGlobalAuthSettings??false)!==false||
+  !noProxyAuth(child)||child.CacheEnabled!==false||!object(child.OtherParams)||child.OtherParams.WebAuth!==false||
   child.OtherParams.BasicAuthRegConf!==''||child.OtherParams.AutoOptionsFirewall!==false||
   (child.BasicAuthRegConf!==undefined&&child.BasicAuthRegConf!=='')||child.NginxConf||child.ProxyType||child.ProxyAddr||
   child.OtherParams.HttpClientProxyType||child.OtherParams.HttpClientProxyAddr)throw unavailable();
@@ -101,19 +113,30 @@ export function validateApiRule(rule,service){
 export function apiRuleFromTemplate(template,service){
  validateApiService(service);
  const rule=clone(template),child=rule.ProxyList?.[0];if(!child||!rule.DefaultProxy)throw unavailable();
- Object.assign(rule,{RuleKey:service.nativeRuleKey,RuleName:apiRuleName,Enable:true,ListenIP:'127.0.0.1',ListenPort:16802,AutoOptionsFirewall:false});
- Object.assign(rule.DefaultProxy,{EnableBasicAuth:false,WebAuth:false,BasicAuthUserList:'',UseRuleGlobalAuthSettings:false});
+ Object.assign(rule,{RuleKey:service.nativeRuleKey,RuleName:apiRuleName,Enable:true,ListenIP:'127.0.0.1',ListenPort:16802,AutoOptionsFirewall:false,
+  GlobalBasicAuthUserList:'',GlobalAllowAllThirdAuthUsers:false,GlobalThirdAuthLoginUserList:[],GlobalAllowThirdUserSkipTwoFA:false});
+ Object.assign(rule.DefaultProxy,{EnableBasicAuth:false,WebAuth:false,BasicAuthUserList:'',BasicAuthUser:'',BasicAuthPasswd:'',BasicAuthRegConf:'',UseRuleGlobalAuthSettings:false});
  if(rule.DefaultProxy.OtherParams)Object.assign(rule.DefaultProxy.OtherParams,{WebAuth:false,BasicAuthRegConf:'',AutoOptionsFirewall:false});
  Object.assign(child,{Key:service.nativeChildKey,Enable:true,Domains:[apiHostname],Locations:[service.upstream],
-  EnableBasicAuth:false,WebAuth:false,BasicAuthUserList:'',BasicAuthRegConf:'',UseRuleGlobalAuthSettings:false,CacheEnabled:false});
+  EnableBasicAuth:false,WebAuth:false,BasicAuthUserList:'',BasicAuthUser:'',BasicAuthPasswd:'',BasicAuthRegConf:'',UseRuleGlobalAuthSettings:false,CacheEnabled:false,Remark:'CLIProxyAPI public backend'});
  Object.assign(child.OtherParams,{WebAuth:false,BasicAuthRegConf:'',AutoOptionsFirewall:false});
  return validateApiRule(rule,service);
 }
 export function apiRequestAllowed(method,target){return apiRequests.some(x=>x.method===method&&x.path===target);}
+// Node fetch may replace a user-supplied Host. Lucky's close-by-default child
+// routing requires the exact approved Host on this fixed loopback request.
+export function apiHealthRequest(url,{headers,signal}={}){
+ if(url!=='http://127.0.0.1:16802/v1/models')return Promise.reject(unavailable());
+ return new Promise((resolve,reject)=>{
+  const req=http.request({host:'127.0.0.1',port:16802,path:'/v1/models',method:'GET',headers,signal},response=>
+   resolve({status:response.statusCode,body:{cancel:async()=>response.destroy()}}));
+  req.once('error',reject);req.end();
+ });
+}
 // No credentials are needed for health: CPA must reject absent/invalid Bearer.
 // Scope is checked from Lucky's live native config, so an administrator disable
 // cannot be silently re-enabled by a healthy unrelated loopback process.
-export async function apiBackendReady(service,{api,keys,fetch=globalThis.fetch,signal}={}){
+export async function apiBackendReady(service,{api,keys,fetch=apiHealthRequest,signal}={}){
  try{
   validateApiService(service);validateApiKeys(keys);if(!service.enabled||!keys.enabled)return false;
   const result=await api('GET','/api/webservice/rules');

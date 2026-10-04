@@ -1,4 +1,4 @@
 interface:
   display_name: "CPE-5G 网络与 API 发布"
-  short_description: "检查 CPE 网络、SIM 和安全入口，并规划 LAN API 的 Lucky 与 ESA 发布"
-  default_prompt: "使用 $cpe-5g 检查 CPE 连接状态，并为指定内网 API 制定 HTTPS 发布配置。"
+  short_description: "检查 CPE 网络、SIM、独立 CPA 容器，并指导指定 API 的私有配置与发布"
+  default_prompt: "使用 $cpe-5g 检查 CPE 网络与独立 CPA 容器状态，并为指定 API 提供私有配置及 HTTPS 发布指导。"

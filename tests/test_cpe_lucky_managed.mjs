@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import {execFileSync} from 'node:child_process';
 import {dirname,join} from 'node:path';
 import {test,after} from 'node:test';
 import {managedPaths,managedHostname,managedOrigin,validateManagedSeed,loadManagedSeed,restoreTerminal,
  readManagedFile,luckyApi,reconcileLuckyManaged,reconcileLuckyApi,managedMain,ManagedRegistry,validateManagedKeys} from '../Scripts/cpe5g-ipv6/reconcile-lucky-managed.mjs';
-import {defaultApiService,apiRuleFromTemplate,apiRuleName,validateApiRule,apiBackendReady} from '../Scripts/cpe5g-ipv6/api-service-registry.mjs';
+import {defaultApiService,apiRuleFromTemplate,apiRuleName,validateApiRule,apiBackendReady,apiHealthRequest} from '../Scripts/cpe5g-ipv6/api-service-registry.mjs';
 const root=fs.mkdtempSync('/tmp/cpe-lucky-managed-test-');
 after(()=>fs.rmSync(root,{recursive:true,force:true}));
 const clone=value=>JSON.parse(JSON.stringify(value));
@@ -88,6 +89,35 @@ test('API native registry preserves explicit disables even if the disabled Lucky
  f.state.rule.pop();assert.equal((await reconcileLuckyApi(options)).disabled,true);
  assert.ok(f.calls.every(x=>x.method==='GET'));
 });
+test('native Lucky readback omits zero global-auth fields while retaining explicit Basic/WebAuth disables',async()=>{
+ const f=native({owned:true}),service={...defaultApiService(),enabled:true},base=f.api;
+ const api=async(method,path,body)=>{
+  const result=await base(method,path,body);
+  if(method==='POST'){
+   const rule=f.state.rule.at(-1),child=rule.ProxyList[0];delete child.UseRuleGlobalAuthSettings;delete child.BasicAuthRegConf;
+   for(const field of ['GlobalBasicAuthUserList','GlobalAllowAllThirdAuthUsers','GlobalThirdAuthLoginUserList','GlobalAllowThirdUserSkipTwoFA'])delete rule[field];
+  }
+  return result;
+ };
+ const options={load:()=>service,loadTemplate:()=>f.data,gate:()=>true,api,registry:f.registry};
+ assert.equal((await reconcileLuckyApi(options)).ready,true);assert.equal((await reconcileLuckyApi(options)).ready,true);
+ f.state.rule.at(-1).ProxyList[0].UseRuleGlobalAuthSettings=true;
+ assert.equal((await reconcileLuckyApi(options)).ready,false);
+});
+test('API template clears actual Lucky rule-wide auth and readback rejects inheritance/default-proxy credentials',()=>{
+ const service={...defaultApiService(),enabled:true},template=material().seed.rule;
+ Object.assign(template,{GlobalBasicAuthUserList:'inherited:credential',GlobalAllowAllThirdAuthUsers:true,
+  GlobalThirdAuthLoginUserList:['foreign-user'],GlobalAllowThirdUserSkipTwoFA:true});
+ const safe=apiRuleFromTemplate(template,service);assert.equal(safe.GlobalBasicAuthUserList,'');
+ assert.deepEqual(safe.GlobalThirdAuthLoginUserList,[]);
+ for(const mutate of [r=>r.GlobalBasicAuthUserList='foreign:credential',r=>r.GlobalAllowAllThirdAuthUsers=true,
+  r=>r.GlobalThirdAuthLoginUserList=['foreign-user'],r=>r.GlobalAllowThirdUserSkipTwoFA=true,
+  r=>r.DefaultProxy.EnableBasicAuth=true,r=>r.DefaultProxy.UseRuleGlobalAuthSettings=true,
+  r=>r.DefaultProxy.BasicAuthUserList='foreign:credential',r=>r.DefaultProxy.OtherParams={WebAuth:true},
+  r=>r.ProxyList[0].UseRuleGlobalAuthSettings=true]){
+  const changed=clone(safe);mutate(changed);assert.throws(()=>validateApiRule(changed,service));
+ }
+});
 test('foreign/unsafe API names or occupied listeners are preserved and optional failures stay isolated',async()=>{
  const service={...defaultApiService(),enabled:true};
  for(const mutate of [r=>{r.RuleKey='foreignID';},r=>{r.ListenIP='0.0.0.0';},r=>{r.ProxyList[0].EnableBasicAuth=true;},
@@ -111,6 +141,22 @@ test('API health requires current owned scope and upstream401, never a webpage o
  assert.equal(await apiBackendReady(service,{api,keys,fetch:async()=>({status:200})}),false);
  rule.Enable=false;assert.equal(await apiBackendReady(service,{api,keys,fetch}),false);
  rule.Enable=true;rule.ProxyList[0].BasicAuthUserList='foreign:secret';assert.equal(await apiBackendReady(service,{api,keys,fetch}),false);
+});
+test('API health sends the exact native Lucky Host through node http on the fixed loopback port',async()=>{
+ const calls=[],server=http.createServer((request,response)=>{
+  calls.push({host:request.headers.host,path:request.url,authorization:request.headers.authorization});
+  response.writeHead(401,{'Content-Type':'application/json'});response.end('{"error":"fixture unauthorized"}');
+ });
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(16802,'127.0.0.1',resolve);});
+ try{
+  const service={...defaultApiService(),enabled:true},rule=apiRuleFromTemplate(material().seed.rule,service);
+  const keys={version:1,hostname:service.publicHost,enabled:true,lucky_rule_key:rule.RuleKey,lucky_child_key:rule.ProxyList[0].Key};
+  assert.equal(await apiBackendReady(service,{api:async()=>({ret:0,ruleList:[rule]}),keys}),true);
+  assert.deepEqual(calls,[{host:service.publicHost,path:'/v1/models',authorization:undefined},
+   {host:service.publicHost,path:'/v1/models',authorization:'Bearer CPE_API_HEALTH_INVALID'}]);
+  await assert.rejects(apiHealthRequest('http://192.168.13.9:22/v1/models'));
+  assert.equal(calls.length,2);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
 test('old restored Lucky configs get missing owned names with native allocated IDs in a separate registry',async()=>{
  const f=native(),unrelated={rule:clone(f.state.rule[0]),ddns:clone(f.state.ddns[0]),ssl:clone(f.state.ssl[0])};

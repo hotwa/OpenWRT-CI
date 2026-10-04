@@ -23,3 +23,11 @@ profile 的 `repositories` 用于找到持久仓库；不要依赖历史 `/tmp` 
 `status` 的输出经过固定远端字段抽取与本地二次白名单，只显示 WAN 协议/地址可用性、IPv6 设置、wan6/cpe6 是否存在、mwan3 wan/5G 状态、SIM 控制器 phase/detail/address/配额、UDX 源站 readiness 和系统版本。字段缺失显示 `null`，不等同于正常。
 
 `public_origin_open` 与 `udx_origin.ready` 不能替代 ESA 到源站和应用到上游的完整调用验收。mwan3 的 SIM `online` 也不能证明出口实际吞吐或 LAN 新连接成功。检查实际掉线时关联现有探针日志、接口路由/marks、配额与信号，不运行会明显消耗 SIM 流量的测速。
+
+`api-status` 复用同一 SSH/指纹策略，额外读取固定 `cpe-api` UCI/init enabled、disabled marker、nerdctl binary/version、containerd socket、固定本地 image alias 的 platform 与 `RepoDigests` 精确 manifest 匹配布尔值、固定 container 的运行状态/资源限额及其内核 cgroup-v2 资源计数，以及 `api-ready.json` 白名单字段。所有查询有超时，不拉镜像、不启动/停止容器、不发 API 请求、不扫描 LAN、不读 config/credentials/auth/logs。缺少 runtime、container 或支持的 template 输出时显示 `null`，不应当作成功。
+
+API 独立 readiness 仍依赖 UDX shared gate；本地 `ready=true` 不证明 OAuth/模型/ESA 公网可用。状态工具不自动建立管理隧道或登录；只有用户指定管理/登录任务才执行发布参考中的私有 SSH forward 和全新 provider OAuth。
+
+nerdctl 2.4.1 不支持对此长 digest 引用进行 image inspect，`api-status` 改查固定本地 `v8.0.13` alias；只有 Linux ARM64 且 RepoDigests 含固定 manifest 才返回 `manifest_verified=true`。匹配失败为 `false`，无法查询为 `null`；不会创建 alias、拉取/修复镜像或回显原始 inspect。
+
+实机 nerdctl 2.4.1 的 format 会先输出部分 native 字段，再输出完整 Docker-compatible 字段；状态 parser 只接受完整六字段或已验证的相同三字段前缀，防止 CPU/PID 限额错位。其 stats 在本机错误报告 0B/0B 与 0 PIDs，工具改从固定容器的 numeric PID 定位内核 cgroup-v2，只读 memory.current/max、pids.current 与 cpu.stat 的 usage_usec。CPU 值是累计微秒，不是瞬时百分比；计数缺失为 null，不报告伪零。

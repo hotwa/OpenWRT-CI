@@ -324,7 +324,7 @@ export async function checkApiBackend(service,{fs=fsDefault,fetch=globalThis.fet
    if(response.status!==200)throw unavailable();
    const text=await response.text();if(Buffer.byteLength(text)>1024*1024)throw unavailable();return JSON.parse(text);
   };
-  return await apiBackendReady(service,{api,keys:loadApiKeys({fs}),fetch,signal});
+  return await apiBackendReady(service,{api,keys:loadApiKeys({fs}),signal});
  }catch{return false;}
 }
 

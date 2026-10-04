@@ -5,6 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 export const HOME='/data/compose/cpe-api';
 export const NAME='cpe-api';
+export const IMAGE_ALIAS='docker.io/eceasy/cli-proxy-api:v8.0.13';
 export const ROM_IMAGE_ARCHIVE='/usr/share/cpe-api/cli-proxy-api-v8.0.13-arm64.oci.tar';
 export const IMAGE='docker.io/eceasy/cli-proxy-api@sha256:913f5db831ef5919ff63edb5f818df7dd8c821a18d36a92145449a8d8a1b787d';
 export function imageRef(value) {
@@ -120,16 +121,33 @@ export function validateLocalImage(output) {
  const accepted=[IMAGE,IMAGE.replace('docker.io/','')];
  if(info?.Architecture!=='arm64' || info?.Os!=='linux' || !info.RepoDigests?.some(ref=>accepted.includes(ref))) throw Error('local image target differs');
 }
-export function ensureLocalImage(run,archive=ROM_IMAGE_ARCHIVE,ownerUid=0) {
+export function repairImageReference(runCtr) {
+ // nerdctl 2.4.1 image-inspect resolves ordinary repository tags, while run
+ // accepts the full digest. Inspect a local alias and verify its actual target.
+ // ctr's pinned list schema starts REF TYPE DIGEST. Only inspect those columns.
+ const rows=runCtr(['images','list']).split('\n').map(row=>row.trim().split(/\s+/));
+ const source=rows.find(row=>row[0]===IMAGE),alias=rows.find(row=>row[0]===IMAGE_ALIAS);
+ if(!source) return false;
+ const expected=IMAGE.split('@')[1];
+ if(source[1]!=='application/vnd.oci.image.manifest.v1+json' || source[2]!==expected || (alias && (alias[1]!=='application/vnd.oci.image.manifest.v1+json' || alias[2]!==expected))) throw Error('imported manifest or alias differs');
+ if(!alias) runCtr(['images','tag',IMAGE,IMAGE_ALIAS]);
+ return true;
+}
+export function ensureLocalImage(run,archive=ROM_IMAGE_ARCHIVE,ownerUid=0,runCtr=ctr) {
  let output;
- try {output=run(['image','inspect',IMAGE]);} catch { /* Never pull on a miss. */ }
- if(output!==undefined) {validateLocalImage(output);return;}
- // Runtime must be healthy before considering a local, fixed firmware archive.
+ try {output=run(['image','inspect',IMAGE_ALIAS]);} catch { /* Never pull on a miss. */ }
+ if(output!==undefined) {if(!repairImageReference(runCtr)) throw Error('fixed image entry missing');validateLocalImage(output);return;}
  run(['info']);
+ if(repairImageReference(runCtr)) {validateLocalImage(run(['image','inspect',IMAGE_ALIAS]));return;}
  const source=fs.lstatSync(archive);
  if(!source.isFile() || source.isSymbolicLink() || source.uid!==ownerUid || source.nlink!==1 || (source.mode & 0o022)!==0) throw Error('unsafe ROM image archive');
  run(['load','--input',archive],{timeout:120000});
- validateLocalImage(run(['image','inspect',IMAGE]));
+ if(!repairImageReference(runCtr)) throw Error('fixed imported image entry missing');
+ validateLocalImage(run(['image','inspect',IMAGE_ALIAS]));
+}
+function ctr(args) {
+ const result=spawnSync('/usr/bin/ctr',['--address','/run/containerd/containerd.sock','--namespace','default',...args],{stdio:'pipe',timeout:20000});
+ if(result.status!==0) throw Error('image store operation failed');return result.stdout.toString();
 }
 function nerd(args,options={}) {const result=spawnSync('/usr/bin/nerdctl',['--address','/run/containerd/containerd.sock','--namespace','default',...args],{stdio:'pipe',timeout:20000,...options}); if(result.status!==0) throw Error('container runtime operation failed'); return result.stdout?.toString()??'';}
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -155,7 +173,7 @@ async function main(args) {
   const info=JSON.parse(nerd(['inspect',NAME]))[0];
   validateContainer(info,image,HOME);
   // Preserve containerd's persisted stopped state at boot.
-  if(command==='start') nerd(['start',NAME]);
+  if(command==='start' && info.State?.Running!==true) nerd(['start',NAME]);
   return;
  }
  nerd(['compose','--file',compose,'up','--pull','never','-d'],{cwd:HOME});

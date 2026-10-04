@@ -49,7 +49,9 @@ cpe-api start
 cpe-api status
 ```
 
-First firmware boot prepares the baked fixed image pin and missing application
+The `98-cpe-api` firstboot hook enables and starts the app after the existing
+`97-containerd-test-enable` runtime hook. First firmware boot prepares the
+baked fixed image pin and missing application
 material on the verified data mount without any download. An existing
 different pin or administrator disable is preserved and refuses recovery.
 Manual `prepare` accepts the same fixed pin and generates only missing
@@ -62,7 +64,17 @@ other write access. It then verifies the exact image reference is present.
 The inspect result must report Linux arm64 and the fixed manifest in
 `RepoDigests` (image `Id` is a separate config digest). An existing mismatched
 image is refused instead of overwritten. Existing local images are never
-reloaded. A missing/unsafe archive safely
+reloaded. nerdctl 2.4.1 image-inspect cannot resolve the digest reference even though
+container execution accepts it; metadata inspection needs an ordinary local
+tag. The manager checks ctr's actual manifest target against the fixed digest,
+then adds only `docker.io/eceasy/cli-proxy-api:v8.0.13` as an alias. The
+manager inspects that alias and verifies the actual fixed `RepoDigests`; the
+application still executes using the fixed digest; an existing alias to a different
+target is refused. Every startup also verifies the full digest-named ctr
+entry and the alias both retain the fixed manifest type and target; a missing
+full entry or a raw-name retag mismatch refuses execution even when alias
+metadata looks correct. This repair uses local metadata only, never registry
+resolution, and can repair an already imported image without importing again. A missing/unsafe archive safely
 defers; there is no registry fallback or SIM download. Offline import has a
 120-second bound inside the procd task. The service starts after the
 existing `containerd-test` service and waits for its socket for at most 60

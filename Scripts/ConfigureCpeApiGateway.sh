@@ -10,11 +10,12 @@ cp "$SOURCE/model.mjs" "$FILES/usr/libexec/cpe5g-api/model.mjs"
 cp "$SOURCE/launcher" "$FILES/usr/sbin/cpe-api"
 cp "$SOURCE/init" "$FILES/etc/init.d/cpe-api"
 printf '%s\n' "config gateway 'main'" " option enabled '1'" > "$FILES/etc/config/cpe_api"
-cat > "$FILES/etc/uci-defaults/96-cpe-api" <<'EOT'
+cat > "$FILES/etc/uci-defaults/98-cpe-api" <<'EOT'
 #!/bin/sh
 /etc/init.d/cpe-api enable
+/etc/init.d/cpe-api start
 exit 0
 EOT
 printf '%s\n' /etc/config/cpe_api /etc/init.d/cpe-api > "$FILES/lib/upgrade/keep.d/cpe-api"
-chmod 755 "$FILES/usr/sbin/cpe-api" "$FILES/etc/init.d/cpe-api" "$FILES/etc/uci-defaults/96-cpe-api"
+chmod 755 "$FILES/usr/sbin/cpe-api" "$FILES/etc/init.d/cpe-api" "$FILES/etc/uci-defaults/98-cpe-api"
 echo 'CPE API: loopback-only managed application staged; local image required'
