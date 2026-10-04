@@ -125,3 +125,27 @@ tailscale status
 ```
 
 刷写与真实断 WAN测试必须有独立现场 LAN/串口/U-Boot 救援和定时回滚。正式验收需在新自动化下重复本机及真实 LAN 客户端 IPv6，并覆盖更多客户端、额度未知/超限但管理链仍可达、WAN 恢复回切、允许与拒绝的公网服务、同一 Headscale 节点身份以及两次软重启和一次冷启动。在这些检查完成前，不宣称新自动化已在实机长期可用。
+
+
+## UDX710 BusyBox 路由归属兼容
+
+UDX710 的 BusyBox `ip` 在 IPv6 路由输出中省略 `rt_proto`，且其
+`show table all proto 196` 不能可靠过滤协议。不得把 `metric 665`
+单独当作本控制器路由的归属证据，否则可能误删厂商或其他服务的路由。
+CPE B 的 CI 单独编译静态 `cpe6-route-audit`：它通过只读 rtnetlink
+转储，只输出协议 196、table 181/200、metric 665、usb0 和 link-local
+下一跳的 /64 路由。ADB 兼容层将这份内核证据补入快照和删除后的验证，
+保留所有非本控制器路由。审计程序缺失时拒绝回程路由增删；已确认额度
+有效的 SIM IPv4 不因这种 IPv6 失败而被阻断。
+
+`cpe6-route-audit-bootstrap` 从固件 `/usr/libexec/cpe5g-ipv6/route-audit`
+每 30 秒校验 UDX710 `/tmp/cpe6-maint/route-audit`。缺失或版本不符时，
+仅在 USB 地址 192.168.66.2 临时监听，防火墙仅允许 UDX710
+192.168.66.1 访问，校验 SHA256 后才原子发布工具，随后关闭监听和规则。
+服务终止时也清理资源。工具在 UDX710 RAM 中，无需修改其固件或分区；
+OpenWrt 和模块重启后均可从烘焙的副本恢复，不依赖手工放置的 eMMC 文件。
+
+现场补丁已验证本机 IPv6 ping/HTTPS、LAN Mac SLAAC/ping/指定 CPE 网卡
+的 HTTPS，以及删除临时审计工具后的自动补发。CI 新镜像仍需单独验证
+冷启动和实际 WAN 恢复；WAN 恢复的 IPv4 策略适用于新连接，已有 SIM
+连接不保证自动迁移。WAN IPv6 保持禁用，蜂窝 IPv6 可持续服务 LAN。

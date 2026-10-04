@@ -9,7 +9,7 @@ case "$ENABLE" in true|false) ;; *) exit 1;; esac
 [ -x "$FILES/usr/libexec/cpe5g-mwan3-gated-reconcile" ] || { echo 'CPE IPv6 requires the CPE-only network overlay' >&2; exit 1; }
 SOURCE="$(CDPATH= cd -- "$(dirname "$0")/cpe5g-ipv6" && pwd)"
 mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/lib/netifd/proto" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config"
-for module in adb model probe worker; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 cp "$SOURCE/proto.sh" "$FILES/lib/netifd/proto/cpe6.sh"
 cp "$SOURCE/reconcile.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile"
 cat > "$FILES/etc/config/cpe5g_ipv6" <<'EOF'
@@ -43,11 +43,26 @@ start_service() {
  procd_close_instance
 }
 EOF
+cat > "$FILES/etc/init.d/cpe6-route-audit-bootstrap" <<'EOF'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+START=96
+start_service() {
+ procd_open_instance
+ procd_set_param command /usr/bin/node /usr/libexec/cpe5g-ipv6/audit-bootstrap.mjs
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_set_param term_timeout 5
+ procd_close_instance
+}
+EOF
 cat > "$FILES/etc/uci-defaults/93-cpe-5g-ipv6" <<'EOF'
 #!/bin/sh
+/etc/init.d/cpe6-route-audit-bootstrap enable
+/etc/init.d/cpe6-route-audit-bootstrap start
 /etc/init.d/cpe5g-ipv6-reconcile enable
 /etc/init.d/cpe5g-ipv6-reconcile start
 exit 0
 EOF
-chmod 755 "$FILES/lib/netifd/proto/cpe6.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile" "$FILES/usr/sbin/cpe5g-ipv6" "$FILES/etc/init.d/cpe5g-ipv6-reconcile" "$FILES/etc/uci-defaults/93-cpe-5g-ipv6"
+chmod 755 "$FILES/etc/init.d/cpe6-route-audit-bootstrap" "$FILES/lib/netifd/proto/cpe6.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile" "$FILES/usr/sbin/cpe5g-ipv6" "$FILES/etc/init.d/cpe5g-ipv6-reconcile" "$FILES/etc/uci-defaults/93-cpe-5g-ipv6"
 echo 'CPE IPv6: guarded native prefix sharing staged for netifd'

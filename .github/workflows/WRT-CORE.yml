@@ -656,6 +656,11 @@ jobs:
               chmod +x ./wrt/files/etc/init.d/containerd-test ./wrt/files/etc/uci-defaults/97-containerd-test-enable
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+              test "$WRT_EXPECTED_DEVICE" = jdcloud_re-ss-01
+              mkdir -p "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit"
+              cp -r "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6/route-audit-package/." "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit/"
+            fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_IPV6:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
@@ -1014,7 +1019,16 @@ jobs:
           sed -i -E '/^CONFIG_PACKAGE_luci-app-wrtbak=/d' .config
           printf '%s\n' '# CONFIG_PACKAGE_luci-app-wrtbak is not set' >> .config
 
+          if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+            echo 'CONFIG_PACKAGE_cpe6-route-audit=y' >> .config
+          fi
           make defconfig -j$(nproc)
+          if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+            grep -Fxq 'CONFIG_PACKAGE_cpe6-route-audit=y' .config || {
+              echo 'ERROR: CPE route audit package was dropped by defconfig' >&2
+              exit 1
+            }
+          fi
           if [ "${WRT_CPE_WIFI:-false}" = true ]; then
             for package in kmod-ath11k-ahb kmod-mac80211 kmod-cfg80211 \
               ath11k-firmware-ipq6018-ddwrt ipq-wifi-jdcloud_re-ss-01 \

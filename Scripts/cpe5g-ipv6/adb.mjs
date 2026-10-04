@@ -9,7 +9,13 @@ export function packet(name,a=0,b=0,payload=Buffer.alloc(0)) {
  h.writeUInt32LE(body.reduce((n,v)=>(n+v)>>>0,0),16);h.writeUInt32LE((code^0xffffffff)>>>0,20);
  return Buffer.concat([h,body]);
 }
+export function withRouteAudit(command){
+ // BusyBox on UDX710 suppresses rt_proto when printing routes. Append only
+ // kernel-verified controller ownership; never infer it from metric alone.
+ return /ip -6 route/.test(command)?'ip() { case "$*" in "-6 route add "*|"-6 route del "*) [ -x /tmp/cpe6-maint/route-audit ] || return 1;; esac; /sbin/ip "$@"; rc=$?; case "$*" in "-6 route show "*) [ ! -x /tmp/cpe6-maint/route-audit ] || /tmp/cpe6-maint/route-audit || return 1;; esac; return $rc; }; '+command:command;
+}
 export function shell(host,port,command,{timeout=20000,maxBytes=1048576,signal}={}) {
+ command=withRouteAudit(command);
  return new Promise((resolve,reject)=>{
   const cancelled=()=>Object.assign(Error('Private ADB cancelled'),{name:'AbortError'});
   if(signal?.aborted){reject(cancelled());return;}

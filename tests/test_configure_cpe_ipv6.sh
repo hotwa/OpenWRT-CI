@@ -11,10 +11,10 @@ if "$ROOT_DIR/Scripts/ConfigureCpeIpv6.sh" "$TMP_DIR/wrong" true >/dev/null 2>&1
 fi
 "$ROOT_DIR/Scripts/ConfigureCpe5G.sh" "$TMP_DIR/on" true >/dev/null
 "$ROOT_DIR/Scripts/ConfigureCpeIpv6.sh" "$TMP_DIR/on" true >/dev/null
-for path in lib/netifd/proto/cpe6.sh usr/sbin/cpe5g-ipv6 usr/libexec/cpe5g-ipv6-reconcile etc/init.d/cpe5g-ipv6-reconcile etc/uci-defaults/93-cpe-5g-ipv6; do
+for path in lib/netifd/proto/cpe6.sh usr/sbin/cpe5g-ipv6 usr/libexec/cpe5g-ipv6-reconcile etc/init.d/cpe5g-ipv6-reconcile etc/init.d/cpe6-route-audit-bootstrap etc/uci-defaults/93-cpe-5g-ipv6; do
  [ -x "$TMP_DIR/on/$path" ]; sh -n "$TMP_DIR/on/$path"
 done
-for module in adb model probe worker; do node --check "$TMP_DIR/on/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap; do node --check "$TMP_DIR/on/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 # Run the custom protocol against helper mocks; validate every configured value.
 INCLUDE_ONLY=1 . "$TMP_DIR/on/lib/netifd/proto/cpe6.sh"
 proto_config_add_string(){ printf 's:%s\n' "$@"; }
