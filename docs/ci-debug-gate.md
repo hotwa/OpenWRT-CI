@@ -1,7 +1,14 @@
 # CI Debug Gate
 
-The CI Debug Gate is an opt-in failure hold for the hosted GitHub Actions
-runner. It starts `tailscaled` in `userspace-networking` mode, enables
+The CI Debug Gate holds the hosted GitHub Actions runner when `DEBUG_SSH=true`
+or a package/compile failure occurs with `DEBUG_SSH_ON_FAILURE=true`.
+The reusable workflow defaults these inputs to false and true respectively,
+preserving failure diagnosis for existing callers. CPE-5G A and B explicitly
+set `DEBUG_SSH_ON_FAILURE=false`: ordinary CPE builds do not hold even on
+failure; enable `DEBUG_SSH` only for an intentional test or investigation.
+An already-running hold still needs `/tmp/continue-ci` or its timeout; changing
+workflow inputs cannot release an existing run.
+The gate starts `tailscaled` in `userspace-networking` mode, enables
 Tailscale SSH, and holds the job for up to 90 minutes. The Headscale preauth
 key assigns `tag:ci-debug` and its ephemeral lifecycle; the client deliberately
 does not pass `--advertise-tags`. Touch `/tmp/continue-ci` on the runner to release

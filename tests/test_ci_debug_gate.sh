@@ -52,6 +52,29 @@ grep -Fq 'tailscale logout' "$CLEANUP" || {
 	exit 1
 }
 
+# Evaluate the actual workflow expression across both policies and outcomes.
+# CPE opt-out must cover failures without disabling explicit test enrollment.
+python3 - "$WORKFLOW" <<'PY'
+import itertools
+import re
+import sys
+
+workflow = open(sys.argv[1]).read()
+policy = re.search(r'^      DEBUG_SSH_ON_FAILURE:\n((?:        .*\n)+)', workflow, re.M)
+assert policy and 'required: false' in policy[1] and 'type: boolean' in policy[1] and 'default: true' in policy[1]
+gate = workflow.split('        id: ci_debug_gate\n', 1)[1]
+expression = gate.split('        if: >-\n', 1)[1].split('        continue-on-error:', 1)[0].strip()
+for debug, on_failure, custom, compile in itertools.product((False, True), (False, True), ('success', 'failure', 'skipped'), ('success', 'failure', 'skipped')):
+    expr = expression.replace('env.DEBUG_SSH', repr(str(debug).lower()))
+    expr = expr.replace('inputs.DEBUG_SSH_ON_FAILURE', repr(on_failure))
+    expr = expr.replace('steps.custom_packages.outcome', repr(custom)).replace('steps.compile_firmware.outcome', repr(compile))
+    expr = ' '.join(expr.replace('&&', ' and ').replace('||', ' or ').split())
+    actual = eval(expr, {'__builtins__': {}, 'always': lambda: True})
+    expected = debug or (on_failure and 'failure' in (custom, compile))
+    assert actual == expected, (debug, on_failure, custom, compile, actual)
+print('Explicit debug and caller failure-hold policy matrix passed')
+PY
+
 # Mock the already-installed-client path. This exercises the former set -u
 # failure where SUDO was assigned only during installation.
 MOCK_BIN="$WORK_DIR/bin"

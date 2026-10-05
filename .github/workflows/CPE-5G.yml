@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       DEBUG_SSH:
-        description: 'Hold runner with Tailscale SSH for live debugging'
+        description: 'Test only: explicitly hold runner with Tailscale SSH for live debugging'
         required: false
         type: boolean
         default: false
@@ -54,6 +54,7 @@ jobs:
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      DEBUG_SSH_ON_FAILURE: false
       WRT_CONFIG: IPQ60XX-706-NOWIFI
       WRT_THEME: argon
       WRT_NAME: CPE-706-A
@@ -105,6 +106,7 @@ jobs:
       CPE_LUCKY_REMOTE_BUNDLE_6: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_6 }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      DEBUG_SSH_ON_FAILURE: false
       WRT_CONFIG: IPQ60XX-706-WIFI
       WRT_THEME: argon
       WRT_NAME: CPE-5G

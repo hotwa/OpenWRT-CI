@@ -32,6 +32,21 @@ grep -q "name: CPE-5G" "$WORKFLOW" || {
 
 baseline_block="$(yaml_mapping_block "$WORKFLOW" '  ' baseline_a)"
 cpe_block="$(yaml_mapping_block "$WORKFLOW" '  ' cpe_overlay_b)"
+yaml_mapping_block "$WORKFLOW" '      ' DEBUG_SSH | grep -q 'default: false' || {
+  echo "CPE debug must remain disabled by default"
+  exit 1
+}
+for control in baseline_a cpe_overlay_b; do
+  block="$(yaml_mapping_block "$WORKFLOW" '  ' "$control")"
+  printf '%s\n' "$block" | grep -Fq 'DEBUG_SSH_ON_FAILURE: false' || {
+    echo "CPE control $control must opt out of automatic failure holds"
+    exit 1
+  }
+  printf '%s\n' "$block" | grep -Fq 'DEBUG_SSH: ${{ inputs.DEBUG_SSH }}' || {
+    echo "CPE control $control must preserve explicit test debugging"
+    exit 1
+  }
+done
 printf '%s\n' "$cpe_block" | grep -q 'WRT_IP: 192.168.13.1' || {
   echo "CPE-5G B control does not use 192.168.13.1"
   exit 1
