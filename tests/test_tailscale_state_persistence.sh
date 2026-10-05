@@ -17,6 +17,8 @@ grep -Fq 'START=96' "$INIT"
 grep -Fq '/data/tailscale/tailscaled.state' "$ROOT_DIR/files/etc/config/tailscale"
 grep -Fq 'tailscale-state-persist' "$WORKFLOW"
 grep -Fq 'data_is_persistent_mount' "$WORKER"
+grep -Fxq '/usr/sbin/tailscale-state-persist >/dev/null 2>&1 || true' "$HOTPLUG"
+! grep -q 'init.d/tailscale-state-persist restart' "$HOTPLUG"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -36,12 +38,18 @@ cat >"$BIN_DIR/uci" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"$TEST_CALLS"
 case "$1 $2" in
-  '-q get') printf '%s\n' '/etc/tailscale/tailscaled.state' ;;
+  '-q get') cat "$TEST_CONFIG" 2>/dev/null ;;
+  '-q set') printf '%s\n' "${3#*=}" >"$TEST_CONFIG" ;;
 esac
 EOF
 cat >"$BIN_DIR/tailscale-init" <<'EOF'
 #!/bin/sh
 printf 'init %s\n' "$*" >>"$TEST_CALLS"
+case "$1" in
+  running) [ -f "$TEST_RUNNING" ] ;;
+  stop) rm -f "$TEST_RUNNING" ;;
+  start) touch "$TEST_RUNNING" ;;
+esac
 EOF
 cat >"$BIN_DIR/logger" <<'EOF'
 #!/bin/sh
@@ -50,7 +58,7 @@ EOF
 chmod 755 "$BIN_DIR"/*
 
 run_worker() {
-  TEST_CALLS="$CALLS" PATH="$BIN_DIR:$PATH" \
+  TEST_CALLS="$CALLS" TEST_RUNNING="$WORK_DIR/running" TEST_CONFIG="$WORK_DIR/config" PATH="$BIN_DIR:$PATH" \
   TAILSCALE_STATE_DATA_ROOT="$DATA_ROOT" \
   TAILSCALE_STATE_DIR="$STATE_DIR" \
   TAILSCALE_STATE_FILE="$STATE_FILE" \
@@ -77,6 +85,29 @@ printf '%s\n' 'newer-legacy-state-must-not-overwrite' >"$LEGACY"
 run_worker
 grep -Fxq 'persisted-authoritative-state' "$STATE_FILE"
 ! grep -Fxq 'init stop' "$CALLS"
+! grep -Fxq 'init start' "$CALLS"
+[ -f "$READY_FILE" ]
+
+# A concurrent event must leave the active worker's readiness marker intact.
+mkdir "$WORK_DIR/lock"
+: >"$CALLS"
+run_worker
+[ -f "$READY_FILE" ]
+[ ! -s "$CALLS" ]
+rmdir "$WORK_DIR/lock"
+
+# A stopped service must still start using the authoritative state.
+rm -f "$WORK_DIR/running"
+: >"$CALLS"
+run_worker
+grep -Fxq 'init start' "$CALLS"
+
+# Switching a running daemon away from legacy storage needs a real stop/start.
+printf '%s\n' '/etc/tailscale/tailscaled.state' >"$WORK_DIR/config"
+: >"$CALLS"
+run_worker
+grep -Fxq 'init stop' "$CALLS"
+grep -Fxq 'init start' "$CALLS"
 
 rm -rf "$STATE_DIR"
 printf 'tmpfs %s tmpfs rw 0 0\n' "$DATA_ROOT" >"$MOUNTS"

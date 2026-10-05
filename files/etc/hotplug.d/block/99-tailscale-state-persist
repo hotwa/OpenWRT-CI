@@ -6,5 +6,6 @@ case "${ACTION:-}" in
 	add|mount|remove|umount) ;;
 	*) exit 0 ;;
 esac
-[ -x /etc/init.d/tailscale-state-persist ] || exit 0
-/etc/init.d/tailscale-state-persist restart >/dev/null 2>&1 || true
+[ -x /usr/sbin/tailscale-state-persist ] || exit 0
+# Reconcile storage directly. A block event is not a service restart request.
+/usr/sbin/tailscale-state-persist >/dev/null 2>&1 || true

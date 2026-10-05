@@ -19,6 +19,17 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
   `tailscale-state-persist` service migrates an existing legacy state from
   `/etc/tailscale/` only when `/data` is a real block-backed mount; it never
   overwrites an existing `/data` state file.
+- Block hotplug calls `tailscale-state-persist` directly under its worker lock,
+  rather than restarting its wrapper service. Repeated events with a mounted
+  `/data` and the correct state path do not call Tailscale `start` or `restart`:
+  package startup cleanup can delete the live interface addresses and routes.
+  Only a stopped daemon or a state-path migration requires startup. Loss of the
+  actual `/data` mount still stops Tailscale to protect its persistent identity.
+  The shared `WRT-CORE.yml` Tailscale overlay includes this protection for builds
+  enabling `WRT_TAILSCALE_ROUTE_RECONCILE` (default true). Already-flashed devices
+  require a hotfix or a new firmware; arbitrary external OpenWrt builds are not
+  covered. Direct repeated calls to the package's unpatched Tailscale init script
+  remain a separate risk and should be avoided.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` starts enrollment when an interface comes up; it never restarts a live one-shot worker.

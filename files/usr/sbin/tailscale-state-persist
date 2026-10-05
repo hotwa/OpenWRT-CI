@@ -31,6 +31,11 @@ set_state_file() {
 	local current
 	current="$(uci -q get "$CONFIG.state_file" 2>/dev/null || true)"
 	[ "$current" = "$STATE_FILE" ] && return 0
+	# A storage-path change must stop the old instance before reconfiguration.
+	# OpenWrt start invokes --cleanup even when procd keeps the live instance.
+	if "$INIT" running >/dev/null 2>&1; then
+		"$INIT" stop
+	fi
 	uci -q set "$CONFIG.state_file=$STATE_FILE"
 	uci -q commit tailscale
 }
@@ -41,6 +46,10 @@ release_lock() {
 
 main() {
 	[ -x "$INIT" ] || exit 0
+	# Serialize the readiness marker and mount checks too: USB events can arrive
+	# in bursts while another worker is migrating state or starting the daemon.
+	mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+	trap release_lock EXIT HUP INT TERM
 	rm -f "$READY_FILE"
 	data_is_persistent_mount || {
 		"$INIT" stop >/dev/null 2>&1 || true
@@ -48,8 +57,6 @@ main() {
 		exit 0
 	}
 
-	mkdir "$LOCK_DIR" 2>/dev/null || exit 0
-	trap release_lock EXIT HUP INT TERM
 	mkdir -p "$STATE_DIR"
 	chmod 700 "$STATE_DIR"
 
@@ -69,7 +76,11 @@ main() {
 	: >"$READY_FILE"
 	chmod 600 "$READY_FILE"
 	"$INIT" enable >/dev/null 2>&1 || true
-	"$INIT" start >/dev/null 2>&1 || true
+	# Block hotplug can invoke us repeatedly while tailscaled is healthy.
+	# Calling start again would remove its live addresses and firewall state.
+	if ! "$INIT" running >/dev/null 2>&1; then
+		"$INIT" start >/dev/null 2>&1 || true
+	fi
 	[ -s "$STATE_FILE" ] || log "no existing Tailnet state; a new enrollment may create one"
 }
 
