@@ -10,6 +10,13 @@ put() {
 }
 changed=0
 nikki_changed=0
+# Retained early CPE images may have an obsolete uhttpd probe. Remove only
+# that exact missing document root; preserve administrator-owned health pages.
+if [ "$(uci -q get uhttpd.cpe5g_health.home 2>/dev/null || true)" = /www/cpe5g-health ] && [ ! -d /www/cpe5g-health ]; then
+ uci delete uhttpd.cpe5g_health
+ uci commit uhttpd
+ /etc/init.d/uhttpd reload
+fi
 enabled="$(cfg enabled 1)"
 if [ "$enabled" != 1 ]; then
  if [ "$(uci -q get network.cpe6 2>/dev/null || true)" = interface ]; then

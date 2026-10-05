@@ -96,7 +96,7 @@ chmod 755 "$TMP_DIR/bin/"*
 export TEST_UCI_STATE="$TMP_DIR/state.json" TEST_UCI_LOG="$TMP_DIR/log" PATH="$TMP_DIR/bin:$PATH"
 printf '%s' '{"network.5G":"interface","network.lan":"interface","network.wan.proto":"pppoe","network.wan.password":"fixture-only","dhcp.lan":"dhcp","firewall.@defaults[0]":"defaults","firewall.@defaults[0].flow_offloading":"1","firewall.@defaults[0].flow_offloading_hw":"1","firewall.wan":"zone","firewall.wan.name":"wan","firewall.wan.network":["wan","5G"],"network.lan.ip6class":"local cpe6"}' >"$TEST_UCI_STATE"
 # Substitute only absolute init calls, preserving the actual reconcile behavior.
-sed "s|/etc/init.d/odhcpd|$TMP_DIR/bin/init-mock odhcpd|; s|/etc/init.d/firewall|$TMP_DIR/bin/init-mock firewall|; s|/etc/init.d/nikki|$TMP_DIR/bin/nikki-mock|g" "$TMP_DIR/on/usr/libexec/cpe5g-ipv6-reconcile" >"$TMP_DIR/reconcile.sh"
+sed "s|/etc/init.d/odhcpd|$TMP_DIR/bin/init-mock odhcpd|; s|/etc/init.d/firewall|$TMP_DIR/bin/init-mock firewall|; s|/etc/init.d/uhttpd|$TMP_DIR/bin/init-mock uhttpd|; s|/etc/init.d/nikki|$TMP_DIR/bin/nikki-mock|g" "$TMP_DIR/on/usr/libexec/cpe5g-ipv6-reconcile" >"$TMP_DIR/reconcile.sh"
 sh "$TMP_DIR/reconcile.sh"
 python3 - <<'PYTEST'
 import json,os
@@ -121,6 +121,20 @@ PYTEST
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 [ ! -s "$TEST_UCI_LOG" ] || { echo 'reconcile must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# Clean the exact obsolete probe, but preserve a different operator endpoint.
+uci set uhttpd.cpe5g_health=uhttpd
+uci set uhttpd.cpe5g_health.home=/www/cpe5g-health
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+! uci -q get uhttpd.cpe5g_health >/dev/null
+grep -Fxq 'commit uhttpd' "$TEST_UCI_LOG"
+grep -Fxq 'init uhttpd reload' "$TEST_UCI_LOG"
+uci set uhttpd.cpe5g_health=uhttpd
+uci set uhttpd.cpe5g_health.home=/www/custom-health
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get uhttpd.cpe5g_health.home)" = /www/custom-health ]
+[ ! -s "$TEST_UCI_LOG" ]
 # A restored DHCP interface can disable shared usb0 IPv6 while the native
 # preset remains current. Repairing only this option must reload netifd.
 uci set network.5G.ipv6=0

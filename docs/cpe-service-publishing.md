@@ -159,7 +159,25 @@ ADB timeout；两个后台服务共享一次只接受一个主机连接的 UDX A
 
 另有旧保留 `uhttpd.cpe5g_health` 实例指向缺失的 `/www/cpe5g-health`，反复退出。
 当前源码没有该实例的生成逻辑，当前 WAN/SIM 使用 ICMP 探针，公网使用独立源站
-自检。本次仅记录这个遗留项，不把新建空页面当作健康验证。
+自检。2026-10-05 保留配置升级后确认该实例仍在重试；CPE managed reconcile
+现仅在实例的 home 恰为此路径且目录不存在时删除它。管理员改为其它路径或
+确有目录的实例保留，不创建空页面代替探针。
+
+2026-10-05 已解密并安装 Action `37282283649` 的 Wi-Fi B 镜像，ROM 提交
+`7754eb8e3c216b3dbe1b9add6efb95c47ece109c`，sysupgrade SHA-256 为
+`bc51ca657dd6f60ed6717ec8ea742d1c19e1339e763fa3c7e3abc0bb5a6814d7`。
+通过设备 image test，保留配置和独立 `/data`，ROM 的 ADB/API 文件哈希与
+产物一致。启动时 PPPoE 尚未完成，SIM 负责默认 IPv4；PPPoE 后续恢复后
+mwan3 自动回到 WAN。WAN IPv6 为 0，SIM 原生 IPv6 和源站 mTLS/header
+readiness 恢复。公网 API 无认证 401、有效认证 200 空列表；尚无 provider
+登录，不代表推理或长流验收通过。
+
+该轮发现 agent-runtime 用 `mv -f` 更新已有目录符号链接，会沿目标写入
+只读 `/opt` 并使 reconcile 失败。已改为设备 GNU/BusyBox 均支持的 `mv -fT`，
+现场 reconcile 返回 ok。另修复 profile 21 在 uv 查询前未 export 安装目录、
+普通 SSH 登录缺少 Python PATH 的顺序问题；现场 Python 3.13.15 已可用。
+两项都有先复现再通过的隔离回归。此镜像本身不含上述现场修复；后续镜像与
+修复后的整机软重启、物理冷启动必须分别记录，不以本地测试替代实机验收。
 
 UDX 的旧 IPv6 relay 仍启用了 `16677 → 6677` 和 `8443 → 18443`。一次外部无认证
 16677 请求超时，尚未证实它从公网可达，也不能把单次超时视为关闭证明。清理前需
