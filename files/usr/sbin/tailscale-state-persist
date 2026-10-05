@@ -93,7 +93,7 @@ main() {
 
 	set_state_file
 	"$INIT" enable >/dev/null 2>&1 || true
-	if ! "$INIT" start >/dev/null 2>&1; then
+	if ! "$INIT" running >/dev/null 2>&1 && ! "$INIT" start >/dev/null 2>&1; then
 		log "failed to start tailscaled with persistent state; enrollment is held"
 		exit 1
 	fi

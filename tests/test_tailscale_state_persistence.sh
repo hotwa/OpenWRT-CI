@@ -46,13 +46,14 @@ cat >"$BIN_DIR/tailscale-init" <<'EOF'
 #!/bin/sh
 printf 'init %s\n' "$*" >>"$TEST_CALLS"
 case "$1" in
-  stop) [ "${TEST_STOP_FAIL:-0}" != 1 ] ;;
+  running) [ -f "$TEST_RUNNING" ] ;;
+  stop) [ "${TEST_STOP_FAIL:-0}" != 1 ] && rm -f "$TEST_RUNNING" ;;
   start)
     # Publishing readiness before tailscaled starts would release enrollment
     # against a daemon that still uses the legacy identity.
     [ ! -e "$TEST_READY" ] || exit 20
     [ "$(cat "$TEST_CONFIG")" = "$TEST_STATE" ] || exit 21
-    [ "${TEST_START_FAIL:-0}" != 1 ]
+    [ "${TEST_START_FAIL:-0}" != 1 ] && touch "$TEST_RUNNING"
     ;;
 esac
 EOF
@@ -72,7 +73,7 @@ chmod 755 "$BIN_DIR"/*
 
 run_worker() {
   TEST_CALLS="$CALLS" TEST_CONFIG="$CURRENT_CONFIG" \
-  TEST_STATE="$STATE_FILE" TEST_READY="$READY_FILE" PATH="$BIN_DIR:$PATH" \
+  TEST_STATE="$STATE_FILE" TEST_READY="$READY_FILE" TEST_RUNNING="$WORK_DIR/running" PATH="$BIN_DIR:$PATH" \
   TAILSCALE_STATE_DATA_ROOT="$DATA_ROOT" \
   TAILSCALE_STATE_DIR="$STATE_DIR" \
   TAILSCALE_STATE_FILE="$STATE_FILE" \
@@ -87,7 +88,7 @@ run_worker() {
 run_worker
 cmp "$LEGACY" "$STATE_FILE"
 grep -Fq "set tailscale.settings.state_file=$STATE_FILE" "$CALLS"
-[ "$(grep '^init ' "$CALLS" | tr '\n' ',')" = 'init stop,init enable,init start,' ]
+[ "$(grep '^init ' "$CALLS" | tr '\n' ',')" = 'init stop,init enable,init running,init start,' ]
 [ "$(stat -c %a "$STATE_DIR")" = 700 ]
 [ "$(stat -c %a "$STATE_FILE")" = 600 ]
 [ -f "$READY_FILE" ]
@@ -107,8 +108,10 @@ grep -Fxq 'init stop' "$CALLS"
 : >"$CALLS"
 run_worker
 ! grep -Fxq 'init stop' "$CALLS"
+! grep -Fxq 'init start' "$CALLS"
 [ -f "$READY_FILE" ]
 
+rm -f "$WORK_DIR/running"
 : >"$CALLS"
 if TEST_START_FAIL=1 run_worker; then
   echo 'failed tailscaled start must fail the persistence worker' >&2
