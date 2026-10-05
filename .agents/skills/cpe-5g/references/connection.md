@@ -44,3 +44,11 @@ Nikki Fake-IP AAAA 返回的 fc00 地址仅代表代理映射。实际 SIM 原�
 否则 Nikki 会过滤掉不存在的 cgroup，造成错误验收。2026-10-05 国内阿里 IPv6
 TLS/HTTP 与 usb0 双向抓包成功，Cloudflare 同类直连超时；不能推断所有目的地
 可直连。临时服务、ACL 和抓包进程都需清理。WAN IPv6 保持禁用。
+
+
+SIM 换前缀后必须分别检查受管地址、原生 DDNS 任务状态和实际公网认证响应。
+公网恢复不能替代 DDNS 任务验收；当前专用账号的 DescribeSubDomainRecords
+查询权限报错尚待云侧修复。Lucky 原生 API 更新已有 DDNS 任务使用
+PUT /api/ddns?key=<TaskKey>；POST /api/ddns 会创建新任务，即使 body 带旧 key。
+修改前核对原 TaskKey、单条 origin 记录范围并保存私有备份，修改后核对任务数
+与其它字段，不能靠猜测 URL 后缀删除任务。

@@ -17,7 +17,7 @@ https://github.com/VIKINGYFY/immortalwrt.git
 - 上游合并策略见 `docs/upstream-merge-policy.md`。默认只做小原子吸收，不能用上游覆盖删除 hotwa 的京东云设备、Nikki、wrtbak/private build、CPE-5G 或 Headscale/Tailscale guard。
 - CPE-5G 当前生产基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
 - A 纯底层对照使用同一 SHA/NOWIFI 配置、关闭 feature overlay，也已完成刷写并正常进入系统；保留为后续启动问题隔离基线。
-- 2026-10-03 无线候选：CPE B 改用单机型 `IPQ60XX-706-WIFI`，继续固定上述完整源码 SHA；增加 RE-SS-01 无线驱动、IPQ6018 固件及板级校准文件。2.4 GHz IoT AP 为 `CPE-s13-IoT`，`HT20`、WPA2/CCMP，密码仅由私有 CI Secret 注入。2026-10-05 Action `37282283649` 已保留配置刷写并完成两次软重启，2.4 GHz AP 在线；物理冷启动与实际 IoT 关联仍待验收，已验证 NOWIFI B 和 A 隔离基线仍保留，详见 [无线预设](docs/cpe-wifi.md)。
+- 2026-10-03 无线候选：CPE B 改用单机型 `IPQ60XX-706-WIFI`，继续固定上述完整源码 SHA；增加 RE-SS-01 无线驱动、IPQ6018 固件及板级校准文件。2.4 GHz IoT AP 为 `CPE-s13-IoT`，`HT20`、WPA2/CCMP，密码仅由私有 CI Secret 注入。2026-10-05 Action `37282283649` 已保留配置刷写并完成两次软重启，2.4 GHz AP 在线；断电冷启动后 AP/容器/身份恢复，实际 IoT 关联仍待验收，已验证 NOWIFI B 和 A 隔离基线仍保留，详见 [无线预设](docs/cpe-wifi.md)。
 - 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
 
 | 组件 | 当前已验证版本 | 来源提交 |
@@ -31,7 +31,7 @@ https://github.com/VIKINGYFY/immortalwrt.git
 | qca-ssdk | `d9a19649`，APK `6.18.37.2025.11.14~d9a19649-r1` | tree `0ce02e13bdce01e62c1caf5e15d0e1f2ded0d1c1` |
 | Qualcommax 6.18 内核补丁 | `target/linux/qualcommax/patches-6.18` | tree `d211c3263007c73642721596c4004424b32016a8` |
 | RE-SS-01 DTS/DTB | `target/linux/qualcommax/dts/ipq6000-re-ss-01.dts`；FIT 描述 `OpenWrt jdcloud_re-ss-01` | DTS blob `a278a87acb783e546cc473878cb8fe5ca3d50a92` |
-| CPE 无线候选配置 | `IPQ60XX-706-WIFI`；`kmod-ath11k-ahb`、`ath11k-firmware-ipq6018-ddwrt`、`ipq-wifi-jdcloud_re-ss-01` | 与已验证源码 SHA 相同；Action `37282283649` 刷写及两次软重启通过，冷启动/IoT 关联待验；不提升 NOWIFI 基线 |
+| CPE 无线候选配置 | `IPQ60XX-706-WIFI`；`kmod-ath11k-ahb`、`ath11k-firmware-ipq6018-ddwrt`、`ipq-wifi-jdcloud_re-ss-01` | 与已验证源码 SHA 相同；Action `37282283649` 刷写及两次软重启通过，冷启动恢复通过、IoT 关联待验；不提升 NOWIFI 基线 |
 | RE-SS-01 factory pipeline | `append-kernel | pad-to 6144k | append-rootfs | append-metadata` | `ipq60xx.mk` blob `44a7716b4009d8be76c4c54fa399cf89bec4a838` |
 
 Release 的 Source code tar.gz 只代表 `davidtall/DaeWRT-CI` 的 CI 脚本、配置和补丁层，不是 ImmortalWrt 内核源码。上表的内核、NSS、DTS 与 factory provenance 来自实际 sysupgrade 元数据以及完整 ImmortalWrt SHA。复现固件必须使用完整源码 SHA，不能拼接单项对象。普通 QCA 构建不受这个 CPE 专属固定影响。
@@ -52,7 +52,7 @@ CPE 的只读 SSH 检查与内网 API 发布规划可使用 [cpe-5g skill](.agen
 
 当前推荐公网服务链路为：`CPE 公网动态 IPv6:外部端口 -> CPE IPv6-to-IPv4 relay -> OpenWrt usb0 192.168.66.2:Lucky入口端口 -> Lucky反向代理 -> 192.168.13.x:服务端口`。Lucky 应监听 `192.168.66.2` 或 `0.0.0.0` 的指定入口端口；LAN 服务本身无需“转发到 192.168.66.2”。只开放明确需要的端口和 Host 规则，避免把整个 `192.168.13.0/24` 暴露给公网。
 
-2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM。2026-10-05 已验证真实 eMMC `/data` 挂载、原 Tailnet 身份保留、容器自动启动及两次软重启；修复后的冷启动仍待验收，不能仅凭构建成功声明全部通过。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。
+2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM。2026-10-05 已验证真实 eMMC `/data` 挂载、原 Tailnet 身份保留、容器自动启动及两次软重启；现场修复经断电冷启动保留，SIM 换前缀后公网恢复，但 Lucky DDNS 查询权限报错尚待修复；替代固件仍需独立刷写验收。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。
 
 CPE A、B 产物（含配置测试包）统一使用 `private-encrypted` 加密交付，完整 payload 用固定 age v1.3.2 加密到维护公钥，SSH 维护私钥留在本机。公开仓库的 `private` 后缀不限制 artifact 下载权限；解密后仍需验证原 checksum、metadata、型号和镜像。A 功能隔离和普通 QCA/fleet 的原交付格式保持原样，命令见 [CPE 加密交付](docs/cpe-ipv6-backup.md#加密交付与本机解密)。
 

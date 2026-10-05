@@ -24,7 +24,7 @@ python3 scripts/cpe5g.py api-status --profile /root/.config/cpe-5g/profile.json
 
 先读 [references/publishing.md](references/publishing.md)。用户提出具体发布任务时，沿用其已有授权；缺少内网地址/端口、精确公网域名或应用鉴权引用时，只补齐这些必要信息，继续做不依赖它们的工作。以用户明确给出的端点为对象，不发现并发布其他 LAN 服务。
 
-仓库已实现 CPE B 独立 headless CLIProxyAPI v8.0.13 ARM64 容器（nerdctl 2.4.1、`127.0.0.1:8317`）及 `ai.lucky.jmsu.top` 的三个精确 API 路由，经 Lucky `16802`、HAProxy `18443` 与 ESA mTLS。2026-10-05：Action `37282283649` 已解密、校验并保留配置刷入，ROM `7754eb8`；容器在两次软重启中自动恢复，`/data`、Tailnet/Multica/Pi 身份保留。公网 UDX 无认证 401/有效认证 200，API 无认证 401/有效 Bearer 200 空列表。Agent 链接、Python PATH、旧 uhttpd 探针和 Nikki AAAA 池已现场修复；这些补丁与 ROM 版本须区分。历史 ESA 522 仍需观察，provider 登录、公网实际推理/SSE、取消和物理冷启动尚待验收。`api-status` 仅检查固定运行时/容器资源与独立 `api-ready.json`，不读取 config、keys 或 auth，不证明公网推理。私有管理 SSH forward、全新 OAuth 与明确 upstream 配置读发布参考。脚本无 `publish` 命令，离线规格也不是固定 CPA 的运行注册格式。
+仓库已实现 CPE B 独立 headless CLIProxyAPI v8.0.13 ARM64 容器（nerdctl 2.4.1、`127.0.0.1:8317`）及 `ai.lucky.jmsu.top` 的三个精确 API 路由，经 Lucky `16802`、HAProxy `18443` 与 ESA mTLS。2026-10-05：Action `37282283649` 已解密、校验并保留配置刷入，ROM `7754eb8`；容器在两次软重启和断电冷启动中自动恢复，`/data`、Tailnet/Multica/Pi 身份保留。公网 UDX 无认证 401/有效认证 200，API 无认证 401/有效 Bearer 200 空列表。Agent 链接、Python PATH、旧 uhttpd 探针和 Nikki AAAA 池已现场修复；这些补丁与 ROM 版本须区分。历史 ESA 522 仍需观察，provider 登录、公网实际推理/SSE 和取消尚待验收；冷启动换前缀后公网恢复，但 DDNS 查询权限错误待修复。`api-status` 仅检查固定运行时/容器资源与独立 `api-ready.json`，不读取 config、keys 或 auth，不证明公网推理。私有管理 SSH forward、全新 OAuth 与明确 upstream 配置读发布参考。脚本无 `publish` 命令，离线规格也不是固定 CPA 的运行注册格式。
 
 ```bash
 python3 scripts/cpe5g.py validate --service /path/to/service.json
