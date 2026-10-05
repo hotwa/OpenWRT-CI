@@ -2,7 +2,7 @@
 
 ## 固定 CPE B 模型入口
 
-仓库已实现 CPE B 独立、无浏览器的 CLIProxyAPI 容器；2026-10-04，源提交 `c605fcf` 已推送，实机 CPA 正确运行，无 OAuth/provider。经 LG SOCKS 和固定 ESA A 入口，公网 `ai.lucky.jmsu.top/v1/models` 已实测有效 Bearer 200 空列表、无/错误 Bearer 401。公网仍间歇 522；源站 readiness 连续 65 秒稳定，故障抓包观测正确 SYN-ACK 后远端 RST、未进入 TLS。这些证据不能证明公网稳定或定位某个服务已出错。公网 JSON/SSE 推理、取消、无缓存与冷启动仍待实际验收。代码、镜像或 fixture 测试成功不能写成实机成功。执行前阅读 firmware 仓库的 `docs/cpe-api-container.md`、`docs/container-runtime-test.md`、`docs/cpe-service-publishing.md` 与 `Scripts/cpe5g-api/model.mjs`、`Scripts/cpe5g-ipv6/api-service-registry.mjs`。
+仓库已实现 CPE B 独立、无浏览器的 CLIProxyAPI 容器。2026-10-05 已安装 Action `37282283649`（ROM `7754eb8`），保留配置与真实 eMMC `/data`；同一容器在两次软重启后自动恢复，配置哈希与身份保持一致，资源限额和 loopback 绑定正常。公网 UDX 无认证 401、有效认证 200；API 有效 Bearer 200 空列表、无认证 401。无 OAuth/provider，不能据此宣称推理可用。历史间歇 ESA 522 仍需长期观察，真实 JSON/SSE 推理、取消、无缓存和物理冷启动待验收。现场补丁解决 agent-runtime 目录符号链接更新、Python profile export、旧 uhttpd 探针与 Nikki 缺失 IPv6 Fake-IP 池；旧 ROM 不包含这些补丁。执行前阅读 firmware 仓库的 `docs/cpe-api-container.md`、`docs/container-runtime-test.md`、`docs/cpe-service-publishing.md` 与 `Scripts/cpe5g-api/model.mjs`、`Scripts/cpe5g-ipv6/api-service-registry.mjs`。
 
 固定实现使用 nerdctl **2.4.1** 与官方 CLIProxyAPI **v8.0.13** Linux ARM64 manifest：
 
