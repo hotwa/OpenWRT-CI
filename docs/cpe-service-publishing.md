@@ -168,7 +168,7 @@ ADB timeout；两个后台服务共享一次只接受一个主机连接的 UDX A
 `bc51ca657dd6f60ed6717ec8ea742d1c19e1339e763fa3c7e3abc0bb5a6814d7`。
 通过设备 image test，保留配置和独立 `/data`，ROM 的 ADB/API 文件哈希与
 产物一致。启动时 PPPoE 尚未完成，SIM 负责默认 IPv4；PPPoE 后续恢复后
-mwan3 自动回到 WAN。WAN IPv6 为 0，SIM 原生 IPv6 和源站 mTLS/header
+mwan3 自动回到 WAN。WAN IPv6 为 0，SIM IPv6 地址和源站 mTLS/header
 readiness 恢复。公网 API 无认证 401、有效认证 200 空列表；尚无 provider
 登录，不代表推理或长流验收通过。
 
@@ -177,8 +177,24 @@ readiness 恢复。公网 API 无认证 401、有效认证 200 空列表；尚�
 现场 reconcile 返回 ok。另修复 profile 21 在 uv 查询前未 export 安装目录、
 普通 SSH 登录缺少 Python PATH 的顺序问题；现场 Python 3.13.15 已可用。
 两项都有先复现再通过的隔离回归。此镜像本身不含上述现场修复；后续镜像与
-修复后的整机软重启、物理冷启动必须分别记录，不以本地测试替代实机验收。
+修复后已完成两次整机软重启，容器自动恢复、原有 Multica/Pi 身份、Python PATH、
+源站认证和无 fatal/OOM/存储错误均通过；物理冷启动仍未完成。
 
 UDX 的旧 IPv6 relay 仍启用了 `16677 → 6677` 和 `8443 → 18443`。一次外部无认证
 16677 请求超时，尚未证实它从公网可达，也不能把单次超时视为关闭证明。清理前需
 确认模块内部 NAT 和当前入口依赖。本次不据此修改模块转发。
+
+2026-10-05 还发现 Nikki/Mihomo 的 Fake-IP 模式缺少 IPv6 地址池时，即使
+`ipv6` 与 `dns.ipv6` 为 true，AAAA 仍返回空列表。CPE B reconcile 仅在
+已有 Nikki mixin 且 IPv6 池缺失时补 `fake_ip6_range=fc00::/18`，保留管理员
+已有池，复用 Nikki 原生路由/拦截；关闭 CPE 时不修改 Nikki。缺失、保留、
+恢复后修复及幂等测试通过。现场 CPE 与 Mac LAN 客户端按域名 IPv6 HTTPS
+成功，但此项可能走代理，不能单独证明原生 SIM 出口。
+
+另以临时 procd cgroup 绕过 Nikki，并在 reload 后确认实际 nft bypass 规则，
+经 usb0 固定解析 `dns.alidns.com` 到 `2400:3200::1`，TLS 校验通过、HTTP 404
+（根路径无资源），抓包确认受管 OpenWrt IPv6 地址与该服务器双向通信。
+同方法的 Cloudflare `2606:4700:4700::1111` 请求超时，仅观察到出站 SYN；
+不能宣称所有目的地址可直连。临时服务、ACL 已清理。公网 UDX 无认证 401、
+有效认证 200，API 无认证 401、有效 Bearer 200 空列表；provider、推理/SSE、
+物理冷启动与有独立现场救援的真实 WAN-loss 测试仍待验收。

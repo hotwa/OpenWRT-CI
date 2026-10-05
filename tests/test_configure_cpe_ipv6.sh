@@ -190,6 +190,9 @@ sh "$TMP_DIR/reconcile.sh"
 # Nikki settings restored after firstboot receive a separate first-priority
 # management bypass without losing the existing user access sections.
 uci set nikki.config=config
+uci set nikki.mixin=mixin
+uci set nikki.mixin.ipv6=1
+uci set nikki.mixin.dns_ipv6=1
 uci set nikki.operator=router_access_control
 uci add_list nikki.operator.cgroup=services/tailscale
 uci set nikki.operator.proxy=0
@@ -203,6 +206,8 @@ assert d['nikki.cpe5g_management_direct.cgroup']==['services/lucky','services/cp
 assert d['nikki.cpe5g_management_direct.proxy']=='0'
 assert d['nikki.cpe5g_management_direct.dns']=='0'
 assert d['nikki.operator.cgroup']==['services/tailscale']
+assert d['nikki.mixin.fake_ip6_range']=='fc00::/18'
+assert d['nikki.mixin.ipv6']=='1' and d['nikki.mixin.dns_ipv6']=='1'
 PYTEST
 grep -Fxq 'reorder nikki.cpe5g_management_direct=0' "$TEST_UCI_LOG"
 grep -Fxq 'init nikki reload' "$TEST_UCI_LOG"
@@ -210,4 +215,26 @@ grep -Fxq 'init nikki reload' "$TEST_UCI_LOG"
 : >"$TEST_UCI_LOG"
 sh "$TMP_DIR/reconcile.sh"
 [ ! -s "$TEST_UCI_LOG" ] || { echo 'Nikki bypass must be idempotent'; cat "$TEST_UCI_LOG"; exit 1; }
+# Keep an operator pool and repair only a missing pool after restore.
+uci set nikki.mixin.fake_ip6_range=fc00:4000::/18
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get nikki.mixin.fake_ip6_range)" = fc00:4000::/18 ]
+[ ! -s "$TEST_UCI_LOG" ]
+uci delete nikki.mixin.fake_ip6_range
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ "$(uci get nikki.mixin.fake_ip6_range)" = fc00::/18 ]
+grep -Fxq 'set nikki.mixin.fake_ip6_range=fc00::/18' "$TEST_UCI_LOG"
+grep -Fxq 'init nikki reload' "$TEST_UCI_LOG"
+! grep -Fxq 'network reload' "$TEST_UCI_LOG"
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+[ ! -s "$TEST_UCI_LOG" ]
+uci delete nikki.mixin.fake_ip6_range
+uci set cpe5g_ipv6.main.enabled=0
+: >"$TEST_UCI_LOG"
+sh "$TMP_DIR/reconcile.sh"
+! uci -q get nikki.mixin.fake_ip6_range >/dev/null
+! grep -Fxq 'init nikki reload' "$TEST_UCI_LOG"
 echo 'CPE native IPv6 overlay/protocol/reconcile passed'

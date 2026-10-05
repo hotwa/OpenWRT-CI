@@ -98,6 +98,13 @@ put firewall.cpe5g_lucky_origin.enabled 1
 # Management replies must keep their native source route and avoid Nikki
 # interception. Use a CPE-owned first section, preserving every user rule.
 if [ "$(uci -q get nikki.config 2>/dev/null || true)" = config ]; then
+ # Mihomo Fake-IP returns empty AAAA answers without an IPv6 pool, even
+ # with dns.ipv6 enabled. Nikki owns its pool routes and interception.
+ # Use fc00, outside the fd-prefixed TUN/Tailnet space, only when missing.
+ if [ "$(uci -q get nikki.mixin 2>/dev/null || true)" = mixin ] &&
+    [ -z "$(uci -q get nikki.mixin.fake_ip6_range 2>/dev/null || true)" ]; then
+  put nikki.mixin.fake_ip6_range fc00::/18
+ fi
  put nikki.cpe5g_management_direct router_access_control
  put nikki.cpe5g_management_direct.enabled 1
  put nikki.cpe5g_management_direct.dns 0
