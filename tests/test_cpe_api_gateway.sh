@@ -16,7 +16,7 @@ sh "$ROOT/Scripts/ConfigureCpeApiGateway.sh" "$TASK_TMP/true" true
 [ -x "$TASK_TMP/true/usr/sbin/cpe-api" ]
 [ -f "$TASK_TMP/true/lib/upgrade/keep.d/cpe-api" ]
 [ -x "$TASK_TMP/true/etc/uci-defaults/98-cpe-api" ]
-rg -q '^/etc/init.d/cpe-api start$' "$TASK_TMP/true/etc/uci-defaults/98-cpe-api"
+grep -Eq '^/etc/init.d/cpe-api start$' "$TASK_TMP/true/etc/uci-defaults/98-cpe-api"
 python3 - "$TASK_TMP/true/etc/uci-defaults/98-cpe-api" "$ROOT/files-container-runtime-test/etc/uci-defaults/97-containerd-test-enable" <<'PY_HOOK'
 import pathlib,sys
 app,runtime=map(pathlib.Path,sys.argv[1:])
@@ -25,9 +25,9 @@ commands=[line.strip() for line in app.read_text().splitlines() if line.startswi
 assert commands==['/etc/init.d/cpe-api enable','/etc/init.d/cpe-api start']
 PY_HOOK
 
-! rg -q 'pull|network reload|netifd' "$TASK_TMP/true/etc/init.d/cpe-api"
+! grep -Eq 'pull|network reload|netifd' "$TASK_TMP/true/etc/init.d/cpe-api"
 # Shutdown/ordinary init stop must never persist the operator disable marker.
-! sed -n '/^stop_service()/,/^}/p' "$TASK_TMP/true/etc/init.d/cpe-api" | rg -q '/usr/sbin/cpe-api stop|uci set|disabled'
+! sed -n '/^stop_service()/,/^}/p' "$TASK_TMP/true/etc/init.d/cpe-api" | grep -Eq '/usr/sbin/cpe-api stop|uci set|disabled'
 python3 - "$ROOT/.github/workflows/CPE-5G.yml" <<'PY'
 import sys
 s=open(sys.argv[1]).read(); a,b=s.split('  cpe_overlay_b:',1)
