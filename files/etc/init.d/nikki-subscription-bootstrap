@@ -3,7 +3,8 @@
 # A retained /etc/config/nikki from sysupgrade -c is restored after the ROM
 # UCI defaults have run.  Re-apply this build's private subscription default
 # during normal service startup so a prior file: profile cannot silently win
-# over the explicitly injected subscription configuration.
+# over the explicitly injected subscription configuration. Preserve an enabled
+# cached subscription while refreshing it, so DNS can reach the update server.
 START=98
 
 DEFAULTS="${NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS:-/rom/etc/uci-defaults/98-nikki-subscription}"
@@ -11,7 +12,23 @@ DEFAULTS="${NIKKI_SUBSCRIPTION_BOOTSTRAP_DEFAULTS:-/rom/etc/uci-defaults/98-nikk
 start() {
 	[ -r "$DEFAULTS" ] || return 0
 
+	local enabled_before cache_file nikki_init
+	enabled_before="$(uci -q get nikki.config.enabled 2>/dev/null || true)"
+	cache_file="${NIKKI_SUBSCRIPTION_BOOTSTRAP_CACHE_FILE:-/etc/nikki/subscriptions/subscription.yaml}"
+	nikki_init="${NIKKI_SUBSCRIPTION_BOOTSTRAP_NIKKI_INIT:-/etc/init.d/nikki}"
 	if /bin/sh "$DEFAULTS" >/dev/null 2>&1; then
+		# The private default deliberately disables fresh installs pending their
+		# first download. An enabled, cached retained installation must keep DNS
+		# running even when that download fails. Never enable a disabled router
+		# here or start a profile whose cached subscription is absent.
+		if [ "$enabled_before" = 1 ] && [ -s "$cache_file" ]; then
+			uci set nikki.config.enabled='1' || return 1
+			uci commit nikki || return 1
+			[ -x "$nikki_init" ] || return 1
+			if ! "$nikki_init" running >/dev/null 2>&1; then
+				"$nikki_init" start >/dev/null 2>&1 || return 1
+			fi
+		fi
 		logger -t nikki-subscription-bootstrap 'private subscription configuration re-applied' 2>/dev/null || true
 		return 0
 	fi
