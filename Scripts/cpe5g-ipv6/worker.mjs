@@ -4,6 +4,7 @@ import {execFileSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {shell} from './adb.mjs';
 import {read} from './probe.mjs';
+import {QuotaLedger} from './quota-ledger.mjs';
 import {update,withdraw,fromAddress,ipv6,stockUsbRoute,nativeAddress} from './model.mjs';
 import {PublicAccess,guardDefinition,guardVersion} from './public-access.mjs';
 const protocol=196,tableId=613;
@@ -45,7 +46,10 @@ export class Controller {
   if(![port,interval,lifetime,healthInterval].every(Number.isInteger)||port<1||port>65535||!['lan','router'].includes(mode)||interval<5||interval>300||lifetime<3*interval||lifetime>600||healthInterval<30||healthInterval>600)throw Error('Invalid lifetime or mode');
   Object.assign(this,{interfaceName,device,host,port,lan,mode,interval,lifetime,healthInterval,stateDir});
   this.run=run||((bin,args,input)=>execFileSync(bin,args,{input,encoding:'utf8',timeout:this.shutdownDeadline?Math.max(1,Math.min(500,this.shutdownDeadline-Date.now())):10000,killSignal:this.shutdownDeadline?'SIGKILL':'SIGTERM',stdio:['pipe','pipe','pipe']}));
-  this.adb=adb||((cmd,options)=>shell(host,port,cmd,options));this.sense=sense||(options=>read(host,port,options));this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;this.abort=new AbortController();this.publicOrigin=new PublicAccess({run:this.run,device,...publicOptions});this.publicOpen=false;
+  this.adb=adb||((cmd,options)=>shell(host,port,cmd,options));
+  const ledger=new QuotaLedger();
+  this.sense=sense||(async options=>{const s=await read(host,port,options);s.quota=ledger.account(s.quota,s.counters);return s;});
+  this.routes=new Map();this.current=null;this.lastHealth=0;this.stopping=false;this.lastTrustedQuota=null;this.recovered=false;this.abort=new AbortController();this.publicOrigin=new PublicAccess({run:this.run,device,...publicOptions});this.publicOpen=false;
  }
  running(){if(this.stopping)throw Error('CPE IPv6 controller stopping');}
  tryRun(bin,args,input){try{return this.run(bin,args,input);}catch{return '';}}

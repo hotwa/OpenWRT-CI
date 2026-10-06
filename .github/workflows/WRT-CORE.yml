@@ -434,9 +434,9 @@ jobs:
         run: |
           for test_file in ./tests/test_*.sh; do
             case "$test_file" in
-              ./tests/test_cpe_public_management.sh)
+              ./tests/test_cpe_public_management.sh|./tests/test_cpe_quota_ledger.sh)
                 # These fixtures exercise the production root-owner checks.
-                # Keep the selected Node runtime and elevate only this suite.
+                # Keep the selected Node runtime and elevate only these suites.
                 sudo -n env "PATH=$PATH" bash "$test_file"
                 ;;
               *) bash "$test_file" ;;

@@ -56,7 +56,7 @@ global_env = mapping(core, 'env', 0)
 steps = workflow_steps(core)
 smoke = steps['Repository Smoke Tests']
 assert 'case "$test_file" in' in smoke, 'privileged fixtures require a scoped suite selector'
-assert './tests/test_cpe_public_management.sh)' in smoke, 'only the root-owner suite should be elevated'
+assert './tests/test_cpe_public_management.sh|./tests/test_cpe_quota_ledger.sh)' in smoke, 'only the two root-owner suites should be elevated'
 assert 'sudo -n env "PATH=$PATH" bash "$test_file"' in smoke, \
     'root-owner fixtures must run as root with the selected Node runtime'
 assert '*) bash "$test_file" ;;' in smoke, 'ordinary suites must retain the unprivileged runner'
