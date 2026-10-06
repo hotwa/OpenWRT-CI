@@ -14,16 +14,16 @@ function fixture(t){
  t.after(()=>fs.rmSync(parent,{recursive:true,force:true}));
  return new QuotaLedger({directory:parent+'/quota',mounts});
 }
-test('first enrollment retains vendor history and subsequent use follows native increments',()=>{
- const first=advance(null,sample,'500');assert.equal(first.used,'500');
- assert.equal(advance(first,{...sample,rx:'25',tx:'12'},'8000000000').used,'507','ignore vendor wrap inflation after enrollment');
- assert.equal(advance(first,sample,'0').used,'500','vendor reset cannot replenish quota');
+test('first enrollment starts native accounting without importing disputed vendor history',()=>{
+ const first=advance(null,sample,'500');assert.equal(first.used,'30');
+ assert.equal(advance(first,{...sample,rx:'25',tx:'12'},'8000000000').used,'37','ignore vendor wrap inflation after enrollment');
+ assert.equal(advance(first,sample,'0').used,'30','vendor reset cannot replenish native quota');
  assert.equal(advance(null,sample,'0').used,'30');
 });
 test('modem cold boot adds its current counters without dropping previous usage',()=>{
  const first=advance(null,sample,'500');
- const second=advance(first,{boot:other,rx:'3',tx:'4'},'7');assert.equal(second.used,'507');
- assert.equal(advance(second,{boot:other,rx:'5',tx:'8'},'0').used,'513');
+ const second=advance(first,{boot:other,rx:'3',tx:'4'},'7');assert.equal(second.used,'37');
+ assert.equal(advance(second,{boot:other,rx:'5',tx:'8'},'0').used,'43');
 });
 test('counter regression in the same modem boot and corrupt samples refuse service',()=>{
  const first=advance(null,sample,'500');
@@ -36,11 +36,11 @@ test('counter regression in the same modem boot and corrupt samples refuse servi
  assert.doesNotMatch(accountingCommand,/vnstat.*--(?:remove|reset)/);
 });
 test('eMMC ledger survives router/process restart, modem restart and limit changes',t=>{
- const l=fixture(t);assert.equal(l.account(quota,sample).used,'500');
+ const l=fixture(t);assert.equal(l.account(quota,sample).used,'30');
  const restarted=new QuotaLedger({directory:l.directory,mounts});
- assert.equal(restarted.account({...quota,used:'0'},{...sample,rx:'25'}).used,'505');
- const capped=restarted.account({...quota,limit:'508',used:'0'},{boot:other,rx:'2',tx:'1'});
- assert.equal(capped.used,'508');assert.equal(capped.blocked,true);
+ assert.equal(restarted.account({...quota,used:'0'},{...sample,rx:'25'}).used,'35');
+ const capped=restarted.account({...quota,limit:'38',used:'0'},{boot:other,rx:'2',tx:'1'});
+ assert.equal(capped.used,'38');assert.equal(capped.blocked,true);
  assert.equal(restarted.account({...quota,enabled:false,limit:'0'},counters(`boot|${other}\nrx|2\ntx|1`)).blocked,false);
  assert.equal(fs.statSync(l.directory+'/ledger.json').mode&0o777,0o600);
 });

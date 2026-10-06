@@ -214,6 +214,8 @@ jkv quota_enabled "$s" '@.quota.enabled'
 jkv quota_limit "$s" '@.quota.limit'
 jkv quota_used "$s" '@.quota.used'
 jkv quota_blocked "$s" '@.quota.blocked'
+jkv quota_source "$s" '@.quota.source'
+jkv quota_vendor_used "$s" '@.quota.vendor_used'
 r=/var/run/cpe5g-lucky/public-ready.json
 jkv origin_ready "$r" '@.ready'
 jkv origin_hostname "$r" '@.hostname'
@@ -349,7 +351,7 @@ def status_projection(raw, include_api=False):
         "system": {k: text(k) for k in ("hostname", "kernel", "release", "model")},
         "wan": {"protocol": text("wan_protocol"), "up": boolean("wan_up"), "device": text("wan_device"), "ipv6_option": text("wan_ipv6_option"), "wan6_present": text("wan6_section") is not None, "wan6_disabled": boolean("wan6_disabled"), "wan6_auto": boolean("wan6_auto"), "cpe6_present": text("cpe6_section") is not None},
         "mwan3_interfaces": interfaces,
-        "sim": {"phase": text("sim_phase"), "detail": text("sim_detail"), "address": text("sim_address"), "public_origin_open": boolean("sim_public_origin_open"), "updated_ms": number("sim_updated"), "quota": {"enabled": boolean("quota_enabled"), "limit_bytes": number("quota_limit"), "used_bytes": number("quota_used"), "blocked": boolean("quota_blocked")}},
+        "sim": {"phase": text("sim_phase"), "detail": text("sim_detail"), "address": text("sim_address"), "public_origin_open": boolean("sim_public_origin_open"), "updated_ms": number("sim_updated"), "quota": {"enabled": boolean("quota_enabled"), "limit_bytes": number("quota_limit"), "used_bytes": number("quota_used"), "blocked": boolean("quota_blocked"), "source": "emmc-cellular-counters" if text("quota_source") == "emmc-cellular-counters" else None, "vendor_used_bytes": number("quota_vendor_used")}},
         "udx_origin": {"ready": boolean("origin_ready"), "hostname": text("origin_hostname"), "port": number("origin_port"), "source_policy": text("origin_source_policy"), "updated_ms": number("origin_updated"), "mtls_verified": boolean("origin_mtls_verified"), "origin_header_verified": boolean("origin_header_verified")},
         "api_publication": {"not_verified": True, "note": "现有 readiness 仅针对 UDX；status 不验证或部署新的 API"},
     }

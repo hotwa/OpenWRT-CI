@@ -71,8 +71,10 @@ IPv6 available to LAN and public services even while WAN is healthy.
 The CPE worker now samples the modem boot ID and native `sipa_eth0` RX/TX byte
 counters through the existing serialized ADB transport. A root-private ledger
 at `/data/cpe5g-quota/ledger.json` records accumulated usage atomically with fsync
-before allowing SIM traffic. Initial enrollment conservatively retains the
-larger of vendor history and current native counters. Later samples add native
+before allowing SIM traffic. Initial enrollment starts a separate native period
+with the current modem boot's counters; disputed vendor history is not imported.
+Earlier carrier usage is therefore outside this new period and cannot be inferred
+from this meter. Later samples add native
 counter deltas; a new modem boot adds that boot's counters without replenishing
 the previous allowance. Vendor counter resets or wrap inflation no longer
 replace the accumulated value. The configured 40 GiB limit is unchanged.

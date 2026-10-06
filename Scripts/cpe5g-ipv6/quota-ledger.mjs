@@ -15,7 +15,9 @@ export function advance(previous,sample,vendorUsed){
  if(!uuid(sample?.boot)||!decimal(sample.rx)||!decimal(sample.tx)||!decimal(vendorUsed))throw Error('Invalid quota accounting sample');
  const rx=BigInt(sample.rx),tx=BigInt(sample.tx);
  let used;
- if(previous===null)used=BigInt(vendorUsed)>rx+tx?BigInt(vendorUsed):rx+tx;
+ // Start a new, explicitly separate native accounting period. Vendor totals
+ // may contain disputed history; importing them would undo a user's clear.
+ if(previous===null)used=rx+tx;
  else{
   if(!valid(previous))throw Error('Invalid persistent quota ledger');
   if(previous.boot===sample.boot){
