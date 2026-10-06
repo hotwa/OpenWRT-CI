@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec /usr/bin/node /usr/libexec/cpe5g-ipv6/select-origin-ipv6.mjs "$@"

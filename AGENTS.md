@@ -47,11 +47,11 @@
 
 ## CPE-5G verified firmware baseline
 
-- The current production CPE feature baseline is controlled build B at 2026-07-06 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`, Linux `6.18.37`, `IPQ60XX-706-NOWIFI`. On 2026-07-12 both A and B booted successfully on RE-SS-01; B also exposed `usb0=192.168.66.2/24` and reached `192.168.66.1:6677` from OpenWrt.
+- The historical known-bootable CPE fallback is controlled NOWIFI build B at 2026-07-06 `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7`, Linux `6.18.37`, `IPQ60XX-706-NOWIFI`. On 2026-07-12 both A and B booted successfully on RE-SS-01; B also exposed `usb0=192.168.66.2/24` and reached `192.168.66.1:6677` from OpenWrt.
 - Retain 2026-06-25 `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35` as the historical known-bootable fallback. 回退源码时不得撤销无关 hotwa 功能提交。
 - Keep `.github/workflows/CPE-5G.yml` pinned to the full 40-character preferred SHA and preserve exact fetch, detached checkout and SHA mismatch failure.
 - `davidtall/immortalwrt:stable` is a candidate upstream only, never an automatic production baseline.
-- Controlled NOWIFI A remains the no-feature-overlay isolation baseline; B is promoted for CPE use. WiFi-YES still requires a separate real-device gate.
+- Controlled NOWIFI A remains the no-feature-overlay isolation baseline; historical NOWIFI B is the verified CPE fallback. All daily CPE B builds must use single-device `IPQ60XX-706-WIFI` at the same exact source SHA, as reaffirmed by the user on 2026-10-06. Wi-Fi B has booted and its IoT AP is online; record remaining per-candidate reboot and client-association gates separately rather than reverting the daily default to NOWIFI. Keep CPE A unchanged and keep Wi-Fi credentials in encrypted private CI injection only.
 - Normal CPE-5G dispatches must leave `BUILD_BASELINE_A=false` and build only B. Enable A only to isolate source/kernel/NSS boot failures from the CPE/Lucky/Tailscale/Headscale/wrtbak overlay; do not promote A as the daily firmware.
 - mwan3 is a CPE-5G B-only package and overlay. Keep Ethernet `wan` primary and `5G`/usb0 backup, preserve the explicit CPE/LAN bypass rules, and run the post-wrtbak managed reconcile. Do not enable mwan3 in `Config/GENERAL.txt`, CPE A, or ordinary QCA workflows.
 - Never perform a real WAN-loss test remotely without an independent local/serial/UBoot rescue path and a timed rollback. Existing sessions do not migrate across mwan3 failover; validate new connections plus Lucky usb0 return symmetry, Nikki marks, Tailnet, and SIM probe counters.

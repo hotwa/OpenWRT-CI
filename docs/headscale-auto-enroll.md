@@ -15,21 +15,19 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 ## Files
 
 - `/etc/config/headscale_auto_enroll` controls enrollment.
+- An explicit build hostname generates `/etc/uci-defaults/93-headscale-explicit-hostname`, which applies that name once before `94-headscale-auto-enroll` starts enrollment, including with a retained configuration.
 - `/data/tailscale/tailscaled.state` is the persistent Tailnet identity. The
   `tailscale-state-persist` service migrates an existing legacy state from
   `/etc/tailscale/` only when `/data` is a real block-backed mount; it never
-  overwrites an existing `/data` state file.
-- Block hotplug calls `tailscale-state-persist` directly under its worker lock,
-  rather than restarting its wrapper service. Repeated events with a mounted
-  `/data` and the correct state path do not call Tailscale `start` or `restart`:
-  package startup cleanup can delete the live interface addresses and routes.
-  Only a stopped daemon or a state-path migration requires startup. Loss of the
-  actual `/data` mount still stops Tailscale to protect its persistent identity.
-  The shared `WRT-CORE.yml` Tailscale overlay includes this protection for builds
-  enabling `WRT_TAILSCALE_ROUTE_RECONCILE` (default true). Already-flashed devices
-  require a hotfix or a new firmware; arbitrary external OpenWrt builds are not
-  covered. Direct repeated calls to the package's unpatched Tailscale init script
-  remain a separate risk and should be avoided.
+  overwrites an existing `/data` state file. Changing `state_file` stops and
+  starts the daemon; readiness is published only after a successful start.
+  An empty existing state or a failed migration/start holds enrollment.
+- USB block hotplug calls the persistence worker directly under its lock. An
+  already-running daemon with the correct state path is not started or restarted,
+  preserving its live addresses and routes. State-path migration, stopped daemon
+  recovery and mount-loss protection retain their checked fail-closed behavior.
+  The shared WRT-CORE overlay provides this to route-reconcile builds; arbitrary
+  external builds and direct repeated unpatched init start calls are not covered.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` starts enrollment when an interface comes up; it never restarts a live one-shot worker.
@@ -98,6 +96,7 @@ Optional non-secret environment variables:
 ```text
 HEADSCALE_LOGIN_SERVER=https://headscale.jmsu.top
 HEADSCALE_OPENWRT_HOSTNAME_PREFIX=
+HEADSCALE_OPENWRT_HOSTNAME=
 HEADSCALE_OPENWRT_ENABLE_SSH=1
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES=
 ```
@@ -112,9 +111,8 @@ For managed devices, `hostname_mode='lan-site'` derives
 `<model-short>-<active-LAN-third-octet>`, such as `cs02-11` for
 `RE-CS-02` on `192.168.11.1`. The model is injected at build time, but the
 numeric suffix comes from the validated live LAN interface, never from
-`WRT_IP`, WAN DHCP, or PPPoE. `hostname_mode='explicit'` is retained only for
-an administrator-selected break-glass label and is not automatically
-CD-eligible. A new one-shot migration recognizes only the repository's legacy
+`WRT_IP`, WAN DHCP, or PPPoE. `hostname_mode='explicit'` records an administrator-selected label, such as
+CPE-5G B's `cpe-5g-s13`, and is not automatically CD-eligible. A new one-shot migration recognizes only the repository's legacy
 `openwrt-re-...-<octet>` and `re-...-s<octet>` forms; operator-chosen names are
 not changed. The name is a label, while `/data/tailscale/tailscaled.state`
 holds the cryptographic device identity that prevents duplicate Headscale
@@ -132,6 +130,40 @@ upgrade has booted once, the same state file reconnects the existing Headscale
 node and only changes its hostname label; it does not register a `-1` node.
 
 When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll script applies `tailscale set --ssh=true` even if the node is already enrolled. This keeps recovered or LuCI-enrolled routers from staying in `RunSSH=false`.
+
+## CPE-5G B identity and first deployment
+
+CPE B passes the non-secret reusable input `WRT_HEADSCALE_HOSTNAME=cpe-5g-s13`,
+which CORE exposes as `HEADSCALE_OPENWRT_HOSTNAME`. The injector stores this
+explicit label even when the auth key is empty, while keeping registration
+`enabled=0` and removing any auth key left in a reused build root. The intended
+MagicDNS name is `cpe-5g-s13.hs.jmsu.top` after registration and preferences are
+applied. A keyless disabled auto-enroll service does not rename an existing
+control-plane node just because UCI contains the new label.
+
+For a retained-config upgrade, the generated
+`93-headscale-explicit-hostname` applies this explicit build choice before
+`94-headscale-auto-enroll` starts the service. It changes only
+`hostname_mode`, `hostname_override`, `hostname_model` and `hostname_prefix`;
+it preserves the retained `enabled` setting and never reads a key or state
+file. The four fields use this build's sanitized explicit label and optional
+prefix; CPE's empty prefix clears any retained legacy prefix. Thus the current CPE's retained `openwrt-cpe-5g-13` label becomes
+`cpe-5g-s13` without changing its enrollment policy. Successful uci-defaults
+execution removes the migration; failed UCI writes or commits leave it for a
+later retry. Later operator renames made in the UCI hostname settings remain
+local choices until another explicit-name firmware upgrade is installed.
+An empty build hostname generates no such migration and retains the existing
+LAN-derived naming behavior.
+
+The CPE preset also explicitly enables the guarded RE eMMC provisioner. The
+2026-10-03 device observation still showed `NeedsLogin`, no independent `/data`
+mount and GPT anomalies. Build-time configuration alone cannot make that
+router registered or its storage persistent: inspect and back up its exact
+layout, establish a valid `/data`, and perform one authorized enrollment first.
+No state file or private key is injected into the firmware. See
+[CPE IPv6 and backup networking](cpe-ipv6-backup.md) for deployment and
+validation boundaries. Do not reuse the fleet record for `ss01-12` or assume
+all factory flashing tools preserve `/data`.
 
 ## wrtbak recovery gate
 

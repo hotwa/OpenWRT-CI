@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "enabled": false,
+  "name": "litellm",
+  "public": {
+    "hostname": "ai.lucky.jmsu.top",
+    "routes": [
+      {"method": "GET", "path": "/v1/models"},
+      {"method": "POST", "path": "/v1/chat/completions"},
+      {"method": "POST", "path": "/v1/responses"}
+    ],
+    "cache": false
+  },
+  "upstream": {
+    "address": "192.168.13.100",
+    "port": 4000,
+    "scheme": "http",
+    "base_path": "/v1"
+  },
+  "auth": {
+    "mode": "upstream-bearer",
+    "key_ref": "env:LITELLM_PUBLIC_API_KEY"
+  },
+  "streaming": {
+    "enabled": true,
+    "keepalive_seconds": 15,
+    "first_token_timeout_seconds": 120,
+    "origin_read_timeout_seconds": 300
+  },
+  "limits": {
+    "requests_per_minute": 60,
+    "concurrency": 2,
+    "max_body_bytes": 1048576
+  }
+}

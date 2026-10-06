@@ -218,3 +218,12 @@ a personal key:
 There is intentionally no daily flash schedule yet. Before enabling one,
 record the maintenance timezone, approved rollout order, rollback/rescue path,
 and a controller-side name reconciliation result for every target.
+
+升级镜像测试也会占用 RAM：当前固定平台的 `sysupgrade -T` 会把 `/data`
+镜像复制到 `/tmp/sysupgrade.img`。`openwrt-upgrade-space check` 必须同时校验
+/tmp 容量和 MemAvailable，预留镜像分配、/etc 配置估算及 96 MiB 余量；
+zram SwapFree 不计入可用内存。内存不足时在任何镜像测试/刷写前拒绝，
+操作员需在有独立救援路径的维护窗口暂停应用后重试，不能用 force 绕过。
+测试成功后部署脚本核对临时镜像 SHA-256，复用该路径刷写，并重新检查配置
+与升级余量；缺少或不同的临时镜像直接拒绝。RE-SS-01 先前在测试阶段失联，
+此门禁修复针对已证实的工具分配行为，失联本身仍缺设备日志，不能断言 OOM。

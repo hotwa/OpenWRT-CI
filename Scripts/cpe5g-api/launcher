@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+[ -r /etc/profile.d/20-node-agent.sh ] && . /etc/profile.d/20-node-agent.sh
+command -v node >/dev/null 2>&1 || exit 1
+# Model owns validation and invokes only fixed argv. No caller command strings.
+exec node /usr/libexec/cpe5g-api/model.mjs "$@"

@@ -24,7 +24,11 @@ cmd="${1:-}"; shift || true
 key="${1:-}"
 case "$cmd" in
   get)
-    value=$(sed -n "s|^${key}=||p" "$TEST_UCI_STATE" | tail -n 1)
+    case "$key" in
+      mwan3.globals.rt_table_lookup)
+        value=$(sed -n "s|^${key}=||p" "$TEST_UCI_STATE" | tr '\n' ' ' | sed 's/ $//') ;;
+      *) value=$(sed -n "s|^${key}=||p" "$TEST_UCI_STATE" | tail -n 1) ;;
+    esac
     [ -n "$value" ] || { [ "$quiet" = 1 ] && exit 1; exit 1; }
     printf '%s\n' "$value"
     ;;
@@ -69,6 +73,32 @@ EOF
 cat >"$BIN_DIR/mwan3" <<'EOF'
 #!/bin/sh
 printf 'mwan3 %s\n' "$*" >>"$TEST_UCI_LOG"
+if [ "$1" = stop ]; then
+  # Model mwan3 versions whose broad stop cleanup also removes Nikki rules.
+  for family in 4 6; do
+    awk '{ p=$1; sub(/:$/, "", p); if (p < 1000 || p > 3999) print }' \
+      "$TEST_ROOT/iprules$family" >"$TEST_ROOT/iprules$family.next"
+    mv "$TEST_ROOT/iprules$family.next" "$TEST_ROOT/iprules$family"
+  done
+fi
+if [ "$1" = start ] && [ -f "$TEST_ROOT/mwan-start-fail" ]; then exit 1; fi
+EOF
+cat >"$BIN_DIR/ip" <<'EOF'
+#!/bin/sh
+set -eu
+family=${1#-}; shift
+case "$family" in 4|6) ;; *) exit 2 ;; esac
+case "$*" in
+  'rule show') cat "$TEST_ROOT/iprules$family" ;;
+  'rule add pref '* )
+    [ "$#" = 10 ] && [ "$1" = rule ] && [ "$2" = add ] &&
+      [ "$3" = pref ] && [ "$5" = from ] && [ "$6" = all ] &&
+      [ "$7" = fwmark ] && [ "$9" = lookup ] || exit 2
+    printf '%s: from all fwmark %s lookup %s\n' "$4" "$8" "${10}" >>"$TEST_ROOT/iprules$family"
+    printf 'ip -%s %s\n' "$family" "$*" >>"$TEST_UCI_LOG"
+    ;;
+  *) exit 2 ;;
+esac
 EOF
 cat >"$BIN_DIR/ubus" <<'EOF'
 #!/bin/sh
@@ -128,6 +158,15 @@ case "$*" in
   *) exit 1 ;;
 esac
 EOF
+cat >"$BIN_DIR/mwan3-compat" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in 'check ip'|'check ip6') ;; *) exit 2 ;; esac
+# Model a conditional foreign jump into an owned chain, which the native
+# compatibility helper must reject before making changes.
+[ ! -f "$TEST_ROOT/mangle-foreign" ] || exit 1
+printf 'compat %s\n' "$*" >>"$TEST_UCI_LOG"
+EOF
 chmod +x "$BIN_DIR"/*
 
 export PATH="$BIN_DIR:$PATH"
@@ -140,12 +179,30 @@ export CPE5G_RECONCILE_LOCK_DIR="$WORK_DIR/reconcile.lock"
 export CPE5G_IPTABLES_SAVE="$BIN_DIR/iptables-save"
 export CPE5G_IP6TABLES_SAVE="$BIN_DIR/ip6tables-save"
 export CPE5G_NFT="$BIN_DIR/nft"
+export CPE5G_MWAN3_COMPAT="$BIN_DIR/mwan3-compat"
+export CPE5G_IP="$BIN_DIR/ip"
+for family in 4 6; do
+  printf '%s\n' \
+    '0: from all lookup local' \
+    '1004: from all fwmark 0x80/0xff lookup 80' \
+    '1005: from all fwmark 0x81/0xff lookup 81' \
+    '4001: from all fwmark 0x80/0xff lookup 82' \
+    '4002: from 192.0.2.0/24 fwmark 0x80/0xff lookup 80' \
+    '32766: from all lookup main' >"$WORK_DIR/iprules$family"
+done
 printf '%s\n' \
   'network.wan=interface' \
+  'network.wan.proto=dhcp' \
+  'network.wan.ipv6=auto' \
+  'network.wan6=interface' \
+  'network.wan6.auto=1' \
+  'network.wan6.disabled=0' \
   'network.5G=interface' \
   'network.lan=interface' \
   'network.lan.ipaddr=192.168.13.1' \
   'network.lan.netmask=255.255.255.0' \
+  'mwan3.globals=globals' \
+  'mwan3.globals.rt_table_lookup=220' \
   'mwan3.https=rule' \
   'mwan3.https.sticky=1' \
   'mwan3.https.dest_port=443' \
@@ -156,6 +213,8 @@ printf '%s\n' \
   'mwan3.default_rule_v4.use_policy=balanced' \
   'mwan3.default_rule_v4.family=ipv4' \
   'mwan3.default_rule_v6=rule' \
+  'mwan3.default_rule_v6.dest_ip=::/0' \
+  'mwan3.default_rule_v6.family=ipv6' \
   'mwan3.default_rule_v6.use_policy=balanced' \
   'mwan3.user_rule=rule' \
   'mwan3.user_rule.dest_ip=203.0.113.0/24' >"$STATE"
@@ -165,18 +224,55 @@ touch "$WORK_DIR/mangle-ip-incompatible" "$WORK_DIR/mangle-ip6-incompatible"
 "$RECONCILE"
 "$RECONCILE"
 
-[ ! -e "$WORK_DIR/mangle-ip-incompatible" ]
-[ ! -e "$WORK_DIR/mangle-ip6-incompatible" ]
-grep -q '^nft delete ip mangle$' "$LOG"
-grep -q '^nft delete ip6 mangle$' "$LOG"
+[ -e "$WORK_DIR/mangle-ip-incompatible" ]
+[ -e "$WORK_DIR/mangle-ip6-incompatible" ]
+grep -q '^compat check ip$' "$LOG"
+grep -q '^compat check ip6$' "$LOG"
+if grep -q '^nft delete ' "$LOG"; then
+  echo 'reconcile deleted a shared mangle table' >&2
+  exit 1
+fi
 
 grep -q '^mwan3.user_rule=rule$' "$STATE"
 grep -q '^mwan3.user_rule.dest_ip=203.0.113.0/24$' "$STATE"
-if grep -q '^mwan3\.\(https\|default_rule_v4\)=' "$STATE"; then
-  echo "stock IPv4 catch-all/example rules still shadow CPE failover" >&2
+if grep -q '^mwan3\.\(https\|default_rule_v4\|default_rule_v6\)=' "$STATE"; then
+  echo "stock catch-all/example rules still shadow CPE policies" >&2
   exit 1
 fi
-grep -q '^mwan3.default_rule_v6=rule$' "$STATE"
+grep -q '^network.wan.ipv6=0$' "$STATE"
+grep -q '^network.wan6.auto=0$' "$STATE"
+grep -q '^network.wan6.disabled=1$' "$STATE"
+grep -q '^network.5G.ipv6=0$' "$STATE"
+grep -q '^network.wan.proto=dhcp$' "$STATE"
+grep -q '^network.wan.metric=10$' "$STATE"
+grep -q '^network.5G.metric=20$' "$STATE"
+grep -q '^mwan3.wan.interval=5$' "$STATE"
+grep -q '^mwan3.wan.failure_interval=2$' "$STATE"
+grep -q '^mwan3.wan.down=3$' "$STATE"
+grep -q '^mwan3.wan.up=5$' "$STATE"
+grep -q '^mwan3.5G.interval=60$' "$STATE"
+grep -q '^mwan3.cpe5g_default.use_policy=cpe5g_failover$' "$STATE"
+[ "$(grep -c '^mwan3.5G.track_ip=' "$STATE")" -eq 3 ]
+[ "$(grep -c '^ubus call network reload$' "$LOG")" -eq 1 ]
+grep -q '^mwan3.cpe5g_v6.family=ipv6$' "$STATE"
+grep -q '^mwan3.cpe5g_v6.dest_ip=::/0$' "$STATE"
+grep -q '^mwan3.cpe5g_v6.use_policy=default$' "$STATE"
+grep -q '^mwan3.cpe5g_tailnet.dest_ip=100.64.0.0/10$' "$STATE"
+grep -q '^mwan3.cpe5g_private.dest_ip=192.168.0.0/16$' "$STATE"
+grep -q '^mwan3.cpe5g_tailnet.use_policy=default$' "$STATE"
+grep -q '^mwan3.cpe5g_private.use_policy=default$' "$STATE"
+grep -q '^mwan3.globals.rt_table_lookup=220$' "$STATE"
+[ "$(grep -c '^mwan3.globals.rt_table_lookup=52$' "$STATE")" -eq 1 ]
+for family in 4 6; do
+  [ "$(grep -c '^1004: from all fwmark 0x80/0xff lookup 80$' "$WORK_DIR/iprules$family")" -eq 1 ]
+  [ "$(grep -c '^1005: from all fwmark 0x81/0xff lookup 81$' "$WORK_DIR/iprules$family")" -eq 1 ]
+  grep -q '^4001: from all fwmark 0x80/0xff lookup 82$' "$WORK_DIR/iprules$family"
+  grep -q '^4002: from 192.0.2.0/24 fwmark 0x80/0xff lookup 80$' "$WORK_DIR/iprules$family"
+done
+if grep -Eq '^ip -[46] rule add .*lookup (82|52)$' "$LOG"; then
+  echo "reconcile invented non-Nikki policy rules" >&2
+  exit 1
+fi
 [ "$(grep -c '^mwan3.wan.track_ip=' "$STATE")" -eq 3 ] || {
   echo "repeat reconcile duplicated or lost WAN track targets" >&2
   exit 1
@@ -199,7 +295,46 @@ grep -q '^mwan3 start$' "$LOG"
 rule_order="$(sed -n 's/^mwan3\.\([^.=]*\)=rule$/\1/p' "$STATE")"
 [ "$(printf '%s\n' "$rule_order" | sed -n '1p')" = cpe5g_cpe ]
 [ "$(printf '%s\n' "$rule_order" | sed -n '2p')" = cpe5g_lan ]
+[ "$(printf '%s\n' "$rule_order" | sed -n '3p')" = cpe5g_tailnet ]
+[ "$(printf '%s\n' "$rule_order" | sed -n '4p')" = cpe5g_private ]
+[ "$(printf '%s\n' "$rule_order" | sed -n '5p')" = cpe5g_v6 ]
+
+# A PPPoE WAN keeps its credentials/protocol and cannot spawn wan_6.
+sed -i 's/^network.wan.proto=.*/network.wan.proto=pppoe/; s/^network.wan.ipv6=.*/network.wan.ipv6=auto/' "$STATE"
+"$RECONCILE"
+grep -q '^network.wan.proto=pppoe$' "$STATE"
+grep -q '^network.wan.ipv6=0$' "$STATE"
 [ "$(printf '%s\n' "$rule_order" | tail -n 1)" = cpe5g_default ]
+
+# Enabling native IPv6 after an old restore must repair shared usb0, while
+# retaining the WAN IPv4 policy. A second reconcile must not reload netifd.
+printf '%s\n' 'cpe5g_ipv6.main.enabled=1' >>"$STATE"
+: >"$LOG"
+"$RECONCILE"
+grep -q '^network.5G.ipv6=1$' "$STATE"
+grep -q '^network.wan.ipv6=0$' "$STATE"
+grep -q '^network.wan.proto=pppoe$' "$STATE"
+[ "$(grep -c '^ubus call network reload$' "$LOG")" -eq 1 ]
+: >"$LOG"
+"$RECONCILE"
+if grep -q '^ubus call network reload$' "$LOG"; then
+  echo 'native USB IPv6 reconcile must not repeat a network reload' >&2
+  exit 1
+fi
+# Both explicit disable and absence of the native overlay keep the original
+# IPv4-only cellular interface behavior.
+sed -i 's/^cpe5g_ipv6.main.enabled=.*/cpe5g_ipv6.main.enabled=0/' "$STATE"
+: >"$LOG"
+"$RECONCILE"
+grep -q '^network.5G.ipv6=0$' "$STATE"
+[ "$(grep -c '^ubus call network reload$' "$LOG")" -eq 1 ]
+: >"$LOG"
+"$RECONCILE"
+if grep -q '^ubus call network reload$' "$LOG"; then
+  echo 'disabled native IPv6 reconcile must be idempotent' >&2
+  exit 1
+fi
+sed -i '/^cpe5g_ipv6.main.enabled=/d' "$STATE"
 
 # Current CPE images write the LAN address in CIDR form and omit a separate
 # netmask option. This must produce the same direct-network bypass as the
@@ -227,6 +362,19 @@ printf '%s\n' \
   'mwan3.https.use_policy=user_https' >>"$STATE"
 "$RECONCILE"
 grep -q '^mwan3.https.use_policy=user_https$' "$STATE"
+printf '%s\n' \
+  'mwan3.default_rule_v6=rule' \
+  'mwan3.default_rule_v6.dest_ip=::/0' \
+  'mwan3.default_rule_v6.family=ipv6' \
+  'mwan3.default_rule_v6.use_policy=user_v6' >>"$STATE"
+"$RECONCILE"
+grep -q '^mwan3.default_rule_v6.use_policy=user_v6$' "$STATE"
+
+# Even an unchanged policy plus an extra selector is no longer a stock rule.
+sed -i 's/^mwan3.default_rule_v6.use_policy=.*/mwan3.default_rule_v6.use_policy=balanced/' "$STATE"
+printf '%s\n' 'mwan3.default_rule_v6.src_ip=2001:db8::/64' >>"$STATE"
+"$RECONCILE"
+grep -q '^mwan3.default_rule_v6.src_ip=2001:db8::/64$' "$STATE"
 
 # Simulate an older wrtbak restore deleting only project-owned sections. The
 # same reconcile must recreate them while preserving the user's rule.
@@ -236,6 +384,16 @@ grep -q '^mwan3.cpe5g_default=rule$' "$STATE"
 grep -q '^mwan3.wan=interface$' "$STATE"
 grep -q '^mwan3.5G=interface$' "$STATE"
 grep -q '^mwan3.user_rule=rule$' "$STATE"
+
+# An old restore with no explicit wan6 remains valid; disabling PPPoE's
+# dynamic IPv6 child must not create a partially configured wan6 section.
+sed -i '/^network\.wan6[=.]/d' "$STATE"
+"$RECONCILE"
+if grep -q '^network\.wan6[=.]' "$STATE"; then
+  echo "reconcile created a wan6 interface on an IPv4-only restore" >&2
+  exit 1
+fi
+printf '%s\n' 'network.wan6=interface' 'network.wan6.auto=0' 'network.wan6.disabled=1' >>"$STATE"
 
 # A terminal wrtbak receipt must invoke the same reconcile path in practice.
 sed -i '/^mwan3\.cpe5g_/d; /^mwan3\.wan/d; /^mwan3\.5G/d' "$STATE"
@@ -293,7 +451,7 @@ rm -rf "$WORK_DIR/reconcile.lock"
 
 # A failed netifd reload restores the prior network options and reports
 # failure; it must not silently leave a partially applied routing baseline.
-sed -i 's/^network.wan.metric=.*/network.wan.metric=99/' "$STATE"
+sed -i 's/^network.wan.metric=.*/network.wan.metric=99/; s/^network.wan.ipv6=.*/network.wan.ipv6=auto/; s/^network.5G.ipv6=.*/network.5G.ipv6=1/; s/^network.wan6.auto=.*/network.wan6.auto=1/; s/^network.wan6.disabled=.*/network.wan6.disabled=0/' "$STATE"
 touch "$WORK_DIR/ubus-fail"
 if "$RECONCILE" >/dev/null 2>&1; then
   echo "reconcile ignored a failed network reload" >&2
@@ -301,13 +459,28 @@ if "$RECONCILE" >/dev/null 2>&1; then
 fi
 rm -f "$WORK_DIR/ubus-fail"
 grep -q '^network.wan.metric=99$' "$STATE"
+grep -q '^network.wan.ipv6=auto$' "$STATE"
+grep -q '^network.5G.ipv6=1$' "$STATE"
+grep -q '^network.wan6.auto=1$' "$STATE"
+grep -q '^network.wan6.disabled=0$' "$STATE"
 
-# An incompatible table with any non-mwan chain is not owned by this preset.
-# Reconcile must fail closed instead of deleting another package's state.
+# Nikki rules must also survive a mwan3 start failure after its stop cleanup.
+touch "$WORK_DIR/mwan-start-fail"
+if "$RECONCILE" >/dev/null 2>&1; then
+  echo "reconcile ignored a failed mwan3 start" >&2
+  exit 1
+fi
+rm -f "$WORK_DIR/mwan-start-fail"
+for family in 4 6; do
+  grep -q '^1004: from all fwmark 0x80/0xff lookup 80$' "$WORK_DIR/iprules$family"
+  grep -q '^1005: from all fwmark 0x81/0xff lookup 81$' "$WORK_DIR/iprules$family"
+done
+
+# An ambiguous foreign hook must be rejected without deleting any table.
 touch "$WORK_DIR/mangle-foreign"
 : >"$LOG"
 if "$RECONCILE" >/dev/null 2>&1; then
-  echo "reconcile deleted or accepted a foreign mangle table" >&2
+  echo "reconcile accepted an ambiguous foreign hook" >&2
   exit 1
 fi
 if grep -q '^nft delete ip mangle$' "$LOG"; then

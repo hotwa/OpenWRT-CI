@@ -48,6 +48,10 @@ on:
         required: false
         type: boolean
         default: false
+      WRT_ENCRYPT_ARTIFACT:
+        required: false
+        type: boolean
+        default: false
       WRT_SPLIT_DEVICE_ARTIFACTS:
         required: false
         type: boolean
@@ -73,6 +77,22 @@ on:
         type: string
         default: 'prebuilt'
       WRT_CONTAINER_RUNTIME_VERSION:
+        required: false
+        type: string
+        default: ''
+      WRT_CPE_API_GATEWAY:
+        required: false
+        type: boolean
+        default: false
+      WRT_CPE_WIFI:
+        required: false
+        type: boolean
+        default: false
+      WRT_CPE_IPV6:
+        required: false
+        type: boolean
+        default: false
+      WRT_HEADSCALE_HOSTNAME:
         required: false
         type: string
         default: ''
@@ -125,7 +145,26 @@ on:
         required: false
         type: boolean
         default: false
+      DEBUG_SSH_ON_FAILURE:
+        description: 'Hold the runner on package or compile failure unless the caller opts out'
+        required: false
+        type: boolean
+        default: true
     secrets:
+      CPE_LUCKY_REMOTE_BUNDLE_1:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_2:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_3:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_4:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_5:
+        required: false
+      CPE_LUCKY_REMOTE_BUNDLE_6:
+        required: false
+      CPE_WIFI_PASSWORD:
+        required: false
       HEADSCALE_OPENWRT_AUTHKEY:
         required: false
       HEADSCALE_CI_AUTHKEY:
@@ -173,6 +212,7 @@ env:
   WRT_PACKAGE: ${{inputs.WRT_PACKAGE}}
   WRT_TEST: ${{inputs.WRT_TEST}}
   WRT_BUILD_ONLY: ${{inputs.WRT_BUILD_ONLY}}
+  WRT_ENCRYPT_ARTIFACT: ${{inputs.WRT_ENCRYPT_ARTIFACT}}
   WRT_SPLIT_DEVICE_ARTIFACTS: ${{inputs.WRT_SPLIT_DEVICE_ARTIFACTS}}
   WRT_EXPECTED_DEVICE: ${{inputs.WRT_EXPECTED_DEVICE}}
   WRT_LAN_TAILNET: ${{inputs.WRT_LAN_TAILNET}}
@@ -180,6 +220,10 @@ env:
   WRT_CONTAINER_RUNTIME_TEST: ${{inputs.WRT_CONTAINER_RUNTIME_TEST}}
   WRT_CONTAINER_RUNTIME_MODE: ${{inputs.WRT_CONTAINER_RUNTIME_MODE}}
   WRT_CONTAINER_RUNTIME_VERSION: ${{inputs.WRT_CONTAINER_RUNTIME_VERSION}}
+  WRT_CPE_API_GATEWAY: ${{inputs.WRT_CPE_API_GATEWAY}}
+  WRT_CPE_WIFI: ${{inputs.WRT_CPE_WIFI}}
+  WRT_CPE_IPV6: ${{inputs.WRT_CPE_IPV6}}
+  WRT_HEADSCALE_HOSTNAME: ${{inputs.WRT_HEADSCALE_HOSTNAME}}
   WRT_CPE_5G: ${{inputs.WRT_CPE_5G}}
   WRT_FEATURE_OVERLAY: ${{inputs.WRT_FEATURE_OVERLAY}}
   WRT_TAILSCALE_ROUTE_RECONCILE: ${{inputs.WRT_TAILSCALE_ROUTE_RECONCILE}}
@@ -308,6 +352,20 @@ jobs:
       - name: Check Go
         run: go version
 
+      - name: Guard CPE WiFi Inputs
+        run: |
+          set -euo pipefail
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            [ "${WRT_CPE_5G:-false}" = true ] &&
+              [ "${WRT_FEATURE_OVERLAY:-false}" = true ] &&
+              [ "${WRT_ENCRYPT_ARTIFACT:-false}" = true ] &&
+              [ "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 ] &&
+              [ "${WRT_CONFIG:-}" = IPQ60XX-706-WIFI ] || {
+              echo 'ERROR: CPE IoT WiFi requires the encrypted RE-SS-01 feature preset' >&2
+              exit 1
+            }
+          fi
+
       - name: Initialization Values
         run: |
           echo "WRT_DATE=$(TZ=UTC-8 date +"%y.%m.%d-%H.%M.%S")" >> $GITHUB_ENV
@@ -375,9 +433,17 @@ jobs:
       - name: Repository Smoke Tests
         run: |
           for test_file in ./tests/test_*.sh; do
-            bash "$test_file"
+            case "$test_file" in
+              ./tests/test_cpe_public_management.sh)
+                # These fixtures exercise the production root-owner checks.
+                # Keep the selected Node runtime and elevate only this suite.
+                sudo -n env "PATH=$PATH" bash "$test_file"
+                ;;
+              *) bash "$test_file" ;;
+            esac
           done
           python3 -m unittest tests.test_nikki_dns_overlay_patch
+          python3 -m unittest tests.test_nikki_router_selector_guard
 
       - name: Compute Build Cache Identity
         run: |
@@ -416,9 +482,31 @@ jobs:
           add_file "config/device/${WRT_CONFIG}" "$device_config"
           add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
           add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
+          add_file script/patch-nikki-router-selector-guard "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
+          add_value cpe/wifi                    "${WRT_CPE_WIFI:-false}"
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            add_file cpe/wifi-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh"
+          fi
+          add_value cpe/ipv6                    "${WRT_CPE_IPV6:-false}"
+          if [ "${WRT_CPE_5G:-false}" = true ]; then
+            add_file cpe/mwan3-compat-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh"
+            add_file cpe/mwan3-compat-patcher "$GITHUB_WORKSPACE/Scripts/patch_mwan3_nft_compat.py"
+            add_file cpe/mwan3-compat-runtime "$GITHUB_WORKSPACE/Scripts/cpe5g-mwan3-nft-compat"
+          fi
+          if [ "${WRT_CPE_IPV6:-false}" = true ]; then
+            add_file cpe/ipv6-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh"
+            add_file cpe/lucky-private-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh"
+            printf '%s\t%s\n' cpe/ipv6-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6")" >> "$manifest"
+          fi
+          add_value cpe/api-gateway "${WRT_CPE_API_GATEWAY:-false}"
+          if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+            add_file cpe/api-image-fetcher "$GITHUB_WORKSPACE/Scripts/fetch_cpe_api_image.py"
+            add_file cpe/api-generator "$GITHUB_WORKSPACE/Scripts/ConfigureCpeApiGateway.sh"
+            printf '%s\t%s\n' cpe/api-modules "$(wrt_cache_tree_digest "$GITHUB_WORKSPACE/Scripts/cpe5g-api")" >> "$manifest"
+          fi
           add_value container/test              "${WRT_CONTAINER_RUNTIME_TEST:-false}"
           add_value container/mode              "${WRT_CONTAINER_RUNTIME_MODE:-prebuilt}"
           add_value container/version           "${WRT_CONTAINER_RUNTIME_VERSION:-latest}"
@@ -563,6 +651,16 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/fetch_opencode_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/fetch_multica_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
           $GITHUB_WORKSPACE/Scripts/finalize_agent_runtime_baseline.sh "$GITHUB_WORKSPACE/wrt/files"
+          if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+            test "${WRT_FEATURE_OVERLAY:-true}" = true &&
+            test "${WRT_CPE_5G:-false}" = true &&
+            test "${WRT_CPE_IPV6:-false}" = true &&
+            test "${WRT_CONTAINER_RUNTIME_TEST:-false}" = true &&
+            test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+              echo "ERROR: API gateway is restricted to the complete CPE B overlay" >&2
+              exit 1
+            }
+          fi
           if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
             case "${WRT_EXPECTED_DEVICE:-}" in
               jdcloud_re-ss-01|jdcloud_re-cs-02|jdcloud_re-cs-07) ;;
@@ -613,6 +711,33 @@ jobs:
               chmod +x ./wrt/files/etc/init.d/containerd-test ./wrt/files/etc/uci-defaults/97-containerd-test-enable
             fi
             $GITHUB_WORKSPACE/Scripts/ConfigureCpe5G.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            if [ "${WRT_CPE_5G:-false}" = true ]; then
+              python3 -B "$GITHUB_WORKSPACE/Scripts/patch_mwan3_nft_compat.py" \
+                "$GITHUB_WORKSPACE/wrt/feeds/packages/net/mwan3/files/lib/mwan3/mwan3.sh" \
+                "$GITHUB_WORKSPACE/wrt/feeds/packages/net/mwan3/files/etc/init.d/mwan3"
+            fi
+            if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+              test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+                echo "ERROR: CPE IPv6 route audit requires WRT_REQUIRED_DEVICE=jdcloud_re-ss-01" >&2
+                exit 1
+              }
+              mkdir -p "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit"
+              cp -r "$GITHUB_WORKSPACE/Scripts/cpe5g-ipv6/route-audit-package/." "$GITHUB_WORKSPACE/wrt/package/cpe6-route-audit/"
+            fi
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeIpv6.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_IPV6:-false}"
+            if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+              test "${WRT_CPE_5G:-false}" = true &&
+              test "${WRT_CPE_IPV6:-false}" = true &&
+              test "${WRT_CONTAINER_RUNTIME_TEST:-false}" = true &&
+              test "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-ss-01 || {
+                echo "ERROR: API gateway requires CPE B, native IPv6 and container runtime on RE-SS-01" >&2
+                exit 1
+              }
+            fi
+            if [ "${WRT_CPE_API_GATEWAY:-false}" = true ]; then
+              python3 -B "$GITHUB_WORKSPACE/Scripts/fetch_cpe_api_image.py" "$GITHUB_WORKSPACE/wrt/files"
+            fi
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeApiGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_API_GATEWAY:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureLanTailnetGateway.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_LAN_TAILNET:-true}"
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
@@ -866,6 +991,13 @@ jobs:
       - name: Inject Private Firmware Configuration
         if: inputs.WRT_FEATURE_OVERLAY == true
         env:
+          CPE_WIFI_PASSWORD: ${{secrets.CPE_WIFI_PASSWORD}}
+          CPE_LUCKY_REMOTE_BUNDLE_1: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_1}}
+          CPE_LUCKY_REMOTE_BUNDLE_2: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_2}}
+          CPE_LUCKY_REMOTE_BUNDLE_3: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_3}}
+          CPE_LUCKY_REMOTE_BUNDLE_4: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_4}}
+          CPE_LUCKY_REMOTE_BUNDLE_5: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_5}}
+          CPE_LUCKY_REMOTE_BUNDLE_6: ${{secrets.CPE_LUCKY_REMOTE_BUNDLE_6}}
           HEADSCALE_OPENWRT_AUTHKEY: ${{secrets.HEADSCALE_OPENWRT_AUTHKEY}}
           MULTICA_TOKEN: ${{secrets.MULTICA_TOKEN}}
           MULTICA_SERVER_URL: ${{secrets.MULTICA_SERVER_URL}}
@@ -884,13 +1016,16 @@ jobs:
             trap 'rm -f "$guard_env"' EXIT
             credential_supplied=false
             for credential_name in \
+              CPE_WIFI_PASSWORD CPE_LUCKY_REMOTE_BUNDLE_1 CPE_LUCKY_REMOTE_BUNDLE_2 \
+              CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 \
+              CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6 \
               HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
               NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
             [ "${WRT_WAN_PROTOCOL:-dhcp}" = pppoe ] && credential_supplied=true
-            $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
+            HEADSCALE_OPENWRT_HOSTNAME="${WRT_HEADSCALE_HOSTNAME:-}" $GITHUB_WORKSPACE/Scripts/HeadscaleAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/MulticaAutoEnroll.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/CommandCodeProviderConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             bash "$GITHUB_WORKSPACE/Scripts/PiCliProxyApiProviderConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
@@ -898,6 +1033,8 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             bash "$GITHUB_WORKSPACE/Scripts/GecoosacAutoConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
+            $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
             [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
             [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]
@@ -980,7 +1117,43 @@ jobs:
           sed -i -E '/^CONFIG_PACKAGE_luci-app-wrtbak=/d' .config
           printf '%s\n' '# CONFIG_PACKAGE_luci-app-wrtbak is not set' >> .config
 
+          if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+            echo 'CONFIG_PACKAGE_cpe6-route-audit=y' >> .config
+          fi
           make defconfig -j$(nproc)
+          if [ "${WRT_CPE_IPV6:-false}" = "true" ]; then
+            grep -Fxq 'CONFIG_PACKAGE_cpe6-route-audit=y' .config || {
+              echo 'ERROR: CPE route audit package was dropped by defconfig' >&2
+              exit 1
+            }
+          fi
+          if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+            for package in kmod-ath11k-ahb kmod-mac80211 kmod-cfg80211 \
+              ath11k-firmware-ipq6018-ddwrt ipq-wifi-jdcloud_re-ss-01 \
+              wifi-scripts wireless-regdb wpad-openssl hostapd-common iw iwinfo; do
+              grep -Fxq "CONFIG_PACKAGE_${package}=y" .config || {
+                echo "ERROR: CPE WiFi package was dropped by defconfig: $package" >&2
+                exit 1
+              }
+            done
+            [ "$(grep -c '^CONFIG_TARGET_DEVICE_.*=y$' .config)" -eq 1 ] &&
+              grep -Fxq 'CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y' .config || {
+              echo 'ERROR: CPE WiFi config must retain exactly the RE-SS-01 target' >&2
+              exit 1
+            }
+            ! grep -Eq '^CONFIG_(ATH11K_NSS_SUPPORT|NSS_DRV_WIFI_EXT_VDEV_ENABLE)=y$' .config || {
+              echo 'ERROR: CPE WiFi must retain the controlled WiFi NSS offload policy' >&2
+              exit 1
+            }
+            grep -Fxq "set \${si}.disabled='1'" package/network/config/wifi-scripts/files/lib/wifi/mac80211.uc || {
+              echo 'ERROR: fresh CPE stock APs must remain disabled until the private IoT preset is applied' >&2
+              exit 1
+            }
+            ! grep -q 'ipq6018-nowifi.dtsi' target/linux/qualcommax/dts/ipq6000-re-ss-01.dts || {
+              echo 'ERROR: NOWIFI DTS reached the wireless CPE candidate' >&2
+              exit 1
+            }
+          fi
           # zram-swap only sets a UCI preference.  Verify that the target
           # kernel actually exposes lz4 before building an image; otherwise
           # the device silently starts with its lzo-rle fallback.
@@ -1206,7 +1379,11 @@ jobs:
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
               --arg container_runtime_mode "${WRT_CONTAINER_RUNTIME_RESOLVED_MODE:-disabled}" \
-              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode}' \
+              --arg cpe_5g "${WRT_CPE_5G:-false}" \
+              --arg cpe_ipv6 "${WRT_CPE_IPV6:-false}" \
+              --arg emmc_data_provisioning "${WRT_EMMC_DATA_PROVISIONING:-false}" \
+              --arg headscale_hostname "${WRT_HEADSCALE_HOSTNAME:-}" \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt
@@ -1220,17 +1397,43 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      - name: Encrypt Firmware Artifact
+        if: inputs.WRT_ENCRYPT_ARTIFACT == true
+        run: |
+          set -euo pipefail
+          unset CPE5G_ARTIFACT_TEST_ALLOW_MISSING_SUMS
+          if [[ "$WRT_TEST" == true ]]; then
+            export CPE5G_ARTIFACT_TEST_ALLOW_MISSING_SUMS=1
+          fi
+          "$GITHUB_WORKSPACE/Scripts/FetchAge.sh" "$RUNNER_TEMP/cpe-age"
+          "$GITHUB_WORKSPACE/Scripts/EncryptFirmwareArtifact.sh" \
+            "$RUNNER_TEMP/cpe-age/age" \
+            "$GITHUB_WORKSPACE/wrt/upload" \
+            "$GITHUB_WORKSPACE/Config/cpe5g-artifact-recipient.pub" \
+            "$GITHUB_WORKSPACE/wrt/encrypted-upload"
+
+      - name: Upload Encrypted Firmware Artifact
+        if: inputs.WRT_ENCRYPT_ARTIFACT == true
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-private-encrypted
+          path: ./wrt/encrypted-upload/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: false
+
       - name: Split Public Firmware Artifacts By Device
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         run: |
           cd ./wrt/
           "$GITHUB_WORKSPACE/Scripts/SplitFirmwareArtifacts.sh" ./upload ./artifact-groups
 
-      # The release job receives only this immutable, public-only handoff. A
-      # private, TEST, or build-only firmware has no release contract at all.
+      # The release job receives only this immutable, public-only handoff. An
+      # encrypted, private, TEST, or build-only firmware has no release contract.
       - name: Define Public Release Input
         id: release_contract
-        if: env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         run: |
           set -euo pipefail
           artifact_name="release-input-${CI_NAME}-${WRT_CONFIG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -1246,7 +1449,7 @@ jobs:
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload Immutable Public Release Input
-        if: steps.release_contract.outputs.eligible == 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && steps.release_contract.outputs.eligible == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.release_contract.outputs.artifact_name }}
@@ -1256,7 +1459,7 @@ jobs:
           overwrite: false
 
       - name: Upload Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && (inputs.WRT_SPLIT_DEVICE_ARTIFACTS == false || env.WRT_PRIVATE_BUILD == 'true' || env.WRT_BUILD_ONLY == 'true' || env.WRT_TEST == 'true')
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-${{env.WRT_ARTIFACT_PRIVACY_SUFFIX}}
@@ -1265,7 +1468,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-ss-01 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-ss-01
@@ -1274,7 +1477,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-cs-02 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-02
@@ -1283,7 +1486,7 @@ jobs:
           retention-days: 14
 
       - name: Upload jdcloud_re-cs-07 Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-jdcloud_re-cs-07
@@ -1292,7 +1495,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Other Device Firmware Artifact
-        if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
+        if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{env.CI_NAME}}-${{env.WRT_CONFIG}}_${{env.WRT_DATE}}-public-other-devices
@@ -1301,8 +1504,8 @@ jobs:
           retention-days: 14
 
       # ------------------------------------------------------------------
-      # CI Debug Gate: failure of custom_packages/compile_firmware, or
-      # explicit DEBUG_SSH=true, enrolls the runner into the Headless
+      # CI Debug Gate: permitted custom_packages/compile_firmware failure,
+      # or explicit DEBUG_SSH=true, enrolls the runner into the Headless
       # Tailnet (tag:ci-debug) with Tailscale SSH and holds it for up to
       # 90 minutes. Release by: touch /tmp/continue-ci
       # ------------------------------------------------------------------
@@ -1311,8 +1514,10 @@ jobs:
         if: >-
           always() && (
             env.DEBUG_SSH == 'true' ||
-            steps.custom_packages.outcome == 'failure' ||
-            steps.compile_firmware.outcome == 'failure'
+            (inputs.DEBUG_SSH_ON_FAILURE && (
+              steps.custom_packages.outcome == 'failure' ||
+              steps.compile_firmware.outcome == 'failure'
+            ))
           )
         continue-on-error: true
         shell: bash
@@ -1379,7 +1584,7 @@ jobs:
     # validates this nested reusable workflow before it evaluates this guard.
     # The compiler remains the read-only `build` job above.
     needs: build
-    if: needs.build.outputs.release_eligible == 'true'
+    if: inputs.WRT_ENCRYPT_ARTIFACT != true && needs.build.outputs.release_eligible == 'true'
     uses: ./.github/workflows/WRT-RELEASE.yml
     permissions:
       contents: write

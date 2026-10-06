@@ -55,7 +55,9 @@ For each device, sequentially:
 5. Record container and Multica state so post-boot comparisons are possible.
 6. Transfer with resumable `rsync` over SSH to a candidate-specific file under a verified spacious filesystem, normally `/data`.
 7. Compare the remote SHA-256 with the artifact checksum.
-8. Run `sysupgrade -T <exact-image>` and require success before the real upgrade.
+8. Inspect the installed `sysupgrade` before `-T`: some versions copy every image outside `/tmp` into tmpfs even for a test. Require `MemAvailable` to cover the image, the complete retained-config archive and an explicit safety margin before that copy; do not rely on a free `/data` filesystem or treat nominal swap capacity as guaranteed RAM. During the authorized maintenance window, stop only identified application services as needed, preserve enable/restart intent, and keep an independent management path. If the reservation fails, restore the paused services and leave the device unflashed.
+9. Run `sysupgrade -T <exact-image>` and require success. If it created `/tmp/sysupgrade.img`, verify that exact temporary file's checksum and reuse it for the actual upgrade rather than allocating another full image. Recheck space for the configuration archive and upgrade machinery.
+10. A changing database or stale package conffile entry can abort retained-config backup before any flash. Quiesce its owner, verify all existing configuration is in a private consistent archive, and record the omitted absent paths. `sysupgrade -f <verified-archive> <verified-image>` can preserve that archive without regenerating the failing list. Never create placeholder database files, use `-n` or force an image merely to bypass this failure.
 
 Do not flash devices in parallel. Finish reconnect and minimum health checks on one device before starting the next.
 

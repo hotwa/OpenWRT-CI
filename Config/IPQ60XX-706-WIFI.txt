@@ -1,0 +1,62 @@
+# RE-SS-01 CPE Wi-Fi candidate derived from IPQ60XX-706-NOWIFI.
+# Retain the controlled 706 kernel/NSS/memory settings and the single device.
+# Firmware source remains pinned by CPE-5G.yml. Wi-Fi requires a real-device
+# boot/radio/client gate before this variant is promoted as a verified baseline.
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq60xx=y
+CONFIG_TARGET_MULTI_PROFILE=y
+CONFIG_TARGET_PER_DEVICE_ROOTFS=y
+#设备列表
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
+
+#内核配置
+CONFIG_KERNEL_ARM_PMU=y
+CONFIG_KERNEL_CFQ_GROUP_IOSCHED=y
+CONFIG_KERNEL_CGROUP_DEVICE=y
+CONFIG_KERNEL_CGROUP_FREEZER=y
+CONFIG_KERNEL_CGROUP_HUGETLB=y
+CONFIG_KERNEL_CGROUP_NET_PRIO=y
+CONFIG_KERNEL_CGROUP_PERF=y
+CONFIG_KERNEL_HUGETLBFS=y
+CONFIG_KERNEL_HUGETLB_PAGE=y
+CONFIG_KERNEL_MEMCG_SWAP_ENABLED=y
+CONFIG_KERNEL_NET_CLS_CGROUP=y
+CONFIG_KERNEL_PERF_EVENTS=y
+# CONFIG_KERNEL_PREEMPT_RCU is not set
+
+#NSS配置
+CONFIG_FEED_nss_packages=n
+CONFIG_FEED_sqm_scripts_nss=n
+CONFIG_IPQ_MEM_PROFILE_1024=n
+CONFIG_IPQ_MEM_PROFILE_512=y
+CONFIG_ATH11K_MEM_PROFILE_1G=n
+CONFIG_ATH11K_MEM_PROFILE_512M=y
+
+# RE-SS-01 onboard IPQ6018 radios: driver capabilities remain available,
+# while the CPE private IoT preset limits the 2.4 GHz AP to HT20/WPA2.
+CONFIG_TARGET_DEVICE_PACKAGES_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01="ipq-wifi-jdcloud_re-ss-01"
+CONFIG_DRIVER_11AC_SUPPORT=y
+CONFIG_DRIVER_11AX_SUPPORT=y
+CONFIG_PACKAGE_hostapd-common=y
+CONFIG_PACKAGE_iw=y
+CONFIG_PACKAGE_iwinfo=y
+CONFIG_PACKAGE_kmod-ath=y
+CONFIG_PACKAGE_kmod-ath11k=y
+CONFIG_PACKAGE_kmod-ath11k-ahb=y
+# RE-SS-01 has no external PCI Wi-Fi radio requiring this driver.
+# CONFIG_PACKAGE_kmod-ath11k-pci is not set
+CONFIG_PACKAGE_kmod-cfg80211=y
+CONFIG_PACKAGE_kmod-mac80211=y
+CONFIG_PACKAGE_wifi-scripts=y
+CONFIG_PACKAGE_wireless-regdb=y
+CONFIG_PACKAGE_wpad-openssl=y
+CONFIG_PACKAGE_ath11k-firmware-ipq6018-ddwrt=y
+CONFIG_PACKAGE_ipq-wifi-jdcloud_re-ss-01=y
+
+# Retain the controlled baseline's Wi-Fi NSS offload policy. Enabling the
+# radio does not opt in to ath11k NSS mesh offload or extended Wi-Fi vdevs.
+# CONFIG_ATH11K_NSS_SUPPORT is not set
+# CONFIG_NSS_DRV_WIFI_EXT_VDEV_ENABLE is not set
+
+CONFIG_PACKAGE_sqm-scripts-nss=y
+CONFIG_PACKAGE_kmod-qca-nss-crypto=y

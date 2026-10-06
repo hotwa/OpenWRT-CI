@@ -16,8 +16,8 @@ grep -q 'Scripts/PrivateFirmwareGuard.sh' "$WORKFLOW" || {
 	exit 1
 }
 
-grep -q "if: env.WRT_PRIVATE_BUILD != 'true'" "$WORKFLOW" || {
-	echo "Release Firmware step is not gated for private builds"
+grep -Fq "if: inputs.WRT_ENCRYPT_ARTIFACT != true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$WORKFLOW" || {
+	echo "public release input is not gated for encrypted or private builds"
 	exit 1
 }
 
@@ -33,7 +33,7 @@ if printf '%s\n' "$GLOBAL_ENV" | grep -Fq 'secrets.'; then
 	echo "workflow-level env exposes a secret to every build step"
 	exit 1
 fi
-for secret_name in HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN MULTICA_SERVER_URL \
+for secret_name in CPE_WIFI_PASSWORD HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN MULTICA_SERVER_URL \
 	MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS \
 	OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD \
 	NIKKI_SUBSCRIPTION_URL CLIPROXYAPI_API_KEY; do
@@ -50,8 +50,8 @@ grep -Fq 'if [ "$credential_supplied" = true ]; then' "$WORKFLOW" || {
 	echo "secret injection is not fail-closed when guard classification disagrees"
 	exit 1
 }
-grep -Fq "if: inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true'" "$WORKFLOW" || {
-	echo "public split artifacts are not gated against secret-bearing firmware"
+grep -Fq "if: inputs.WRT_ENCRYPT_ARTIFACT != true && inputs.WRT_SPLIT_DEVICE_ARTIFACTS == true && env.WRT_PRIVATE_BUILD != 'true' && env.WRT_BUILD_ONLY != 'true' && env.WRT_TEST != 'true'" "$WORKFLOW" || {
+	echo "public split artifacts are not gated against encrypted or secret-bearing firmware"
 	exit 1
 }
 

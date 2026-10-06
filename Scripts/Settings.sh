@@ -26,6 +26,34 @@ elif [ -f "$WIFI_UC" ]; then
 	sed -i "s/encryption='.*'/encryption='psk2+ccmp'/g" $WIFI_UC
 fi
 
+# CPE B generates no stock APs with the upstream shared password. The private
+# IoT reconciler enables only its managed AP after the first-boot recovery gate.
+# Patch the pinned generator itself so S10 wifi detection precedes S20 network
+# with disabled stock interfaces, rather than waiting for the late worker.
+if [ "${WRT_CPE_WIFI:-false}" = true ]; then
+	[ ! -f "$WIFI_SH" ] && [ -f "$WIFI_UC" ] || {
+		echo 'ERROR: CPE WiFi requires the pinned ucode wireless generator' >&2
+		exit 1
+	}
+	python3 - "$WIFI_UC" <<'PY_CPE_STOCK'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text()
+enabled = "set ${si}.disabled='0'"
+disabled = "set ${si}.disabled='1'"
+counts = (text.splitlines().count(enabled), text.splitlines().count(disabled))
+if counts == (1, 0):
+    lines = text.splitlines(keepends=True)
+    path.write_text(''.join(line.replace(enabled, disabled, 1)
+                            if line.rstrip("\r\n") == enabled else line
+                            for line in lines))
+elif counts != (0, 1):
+    sys.exit('ERROR: unexpected CPE stock wireless interface template')
+PY_CPE_STOCK
+	[ "$?" -eq 0 ] || exit 1
+fi
+
 CFG_FILE="./package/base-files/files/bin/config_generate"
 #修改默认IP地址
 sed -i "s/192\.168\.[0-9]*\.[0-9]*/$WRT_IP/g" $CFG_FILE

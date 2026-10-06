@@ -301,7 +301,8 @@ link_atomically() {
 	[ ! -e "$link" ] || [ -L "$link" ] || return 1
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$target" "$temporary" || return 1
-	mv -f "$temporary" "$link" || { rm -f "$temporary"; return 1; }
+	# Replace the link itself, never follow a directory target into /opt.
+	mv -fT "$temporary" "$link" || { rm -f "$temporary"; return 1; }
 }
 
 publish_node_link() {
@@ -312,7 +313,7 @@ publish_node_link() {
 	ln -s "$node_dir" "$temporary" || return 1
 	# Never overwrite an un-migrated real /data/node directory.
 	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || { rm -f "$temporary"; return 1; }
-	mv -f "$temporary" "$DATA_ROOT/node" || { rm -f "$temporary"; return 1; }
+	mv -fT "$temporary" "$DATA_ROOT/node" || { rm -f "$temporary"; return 1; }
 }
 
 publish_pi_models() {

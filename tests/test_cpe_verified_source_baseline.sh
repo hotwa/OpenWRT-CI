@@ -13,12 +13,20 @@ ROLLBACK_SOURCE_SHA='42a1f64b5dbd2a99d05daca94ae5a87eebff59b4'
 VERIFIED_RUN_ID='29160402065'
 VERIFIED_B_ARTIFACT_SHA='bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d'
 
+# Select one mapping and stop at the next sibling or ancestor key. Extra
+# inputs/comments must not make a valid field fall outside a line-count window.
+yaml_mapping_block() {
+  local file="$1" indent="$2" key="$3"
+  sed -n "/^${indent}${key}:\$/,/^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/p" "$file" |
+    sed "1b; /^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/d"
+}
+
 grep -q "WRT_COMMIT: $VERIFIED_SOURCE_SHA" "$CPE_WORKFLOW" || {
   echo "CPE-5G does not pin the verified firmware source commit"
   exit 1
 }
 
-grep -A4 '^      WRT_COMMIT:' "$CORE_WORKFLOW" | grep -q 'type: string' || {
+yaml_mapping_block "$CORE_WORKFLOW" '      ' WRT_COMMIT | grep -q 'type: string' || {
   echo "WRT-CORE does not declare the optional WRT_COMMIT string input"
   exit 1
 }

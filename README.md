@@ -15,8 +15,9 @@ https://github.com/VIKINGYFY/immortalwrt.git
 - CI 工作流上游：`davidtall/DaeWRT-CI`。
 - 固件源码候选上游：`davidtall/immortalwrt:stable`。该移动分支只用于跟踪候选更新，不是自动生产基线。
 - 上游合并策略见 `docs/upstream-merge-policy.md`。默认只做小原子吸收，不能用上游覆盖删除 hotwa 的京东云设备、Nikki、wrtbak/private build、CPE-5G 或 Headscale/Tailscale guard。
-- CPE-5G 当前生产基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
+- CPE-5G 历史无无线回退基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
 - A 纯底层对照使用同一 SHA/NOWIFI 配置、关闭 feature overlay，也已完成刷写并正常进入系统；保留为后续启动问题隔离基线。
+- 2026-10-03 无线候选：CPE B 改用单机型 `IPQ60XX-706-WIFI`，继续固定上述完整源码 SHA；增加 RE-SS-01 无线驱动、IPQ6018 固件及板级校准文件。2.4 GHz IoT AP 为 `CPE-s13-IoT`，`HT20`、WPA2/CCMP，密码仅由私有 CI Secret 注入。2026-10-05 Action `37282283649` 已保留配置刷写并完成两次软重启，2.4 GHz AP 在线；断电冷启动后 AP/容器/身份恢复，实际 IoT 关联仍待验收，已验证 NOWIFI B 和 A 隔离基线仍保留，详见 [无线预设](docs/cpe-wifi.md)。
 - 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
 
 | 组件 | 当前已验证版本 | 来源提交 |
@@ -30,13 +31,14 @@ https://github.com/VIKINGYFY/immortalwrt.git
 | qca-ssdk | `d9a19649`，APK `6.18.37.2025.11.14~d9a19649-r1` | tree `0ce02e13bdce01e62c1caf5e15d0e1f2ded0d1c1` |
 | Qualcommax 6.18 内核补丁 | `target/linux/qualcommax/patches-6.18` | tree `d211c3263007c73642721596c4004424b32016a8` |
 | RE-SS-01 DTS/DTB | `target/linux/qualcommax/dts/ipq6000-re-ss-01.dts`；FIT 描述 `OpenWrt jdcloud_re-ss-01` | DTS blob `a278a87acb783e546cc473878cb8fe5ca3d50a92` |
+| CPE 无线候选配置 | `IPQ60XX-706-WIFI`；`kmod-ath11k-ahb`、`ath11k-firmware-ipq6018-ddwrt`、`ipq-wifi-jdcloud_re-ss-01` | 与已验证源码 SHA 相同；Action `37282283649` 刷写及两次软重启通过，冷启动恢复通过、IoT 关联待验；不提升 NOWIFI 基线 |
 | RE-SS-01 factory pipeline | `append-kernel | pad-to 6144k | append-rootfs | append-metadata` | `ipq60xx.mk` blob `44a7716b4009d8be76c4c54fa399cf89bec4a838` |
 
 Release 的 Source code tar.gz 只代表 `davidtall/DaeWRT-CI` 的 CI 脚本、配置和补丁层，不是 ImmortalWrt 内核源码。上表的内核、NSS、DTS 与 factory provenance 来自实际 sysupgrade 元数据以及完整 ImmortalWrt SHA。复现固件必须使用完整源码 SHA，不能拼接单项对象。普通 QCA 构建不受这个 CPE 专属固定影响。
 
-`CPE-5G` 一次建立两个 NOWIFI 受控构建：A 固定同一 SHA、使用从 7.06 CI tag 派生且仅缩减设备选择到 RE-SS-01 的 `IPQ60XX-706-NOWIFI` 配置、关闭 CPE/Lucky/Tailscale/Headscale/wrtbak feature overlay并使用 `192.168.10.1`；B 使用同一 SHA 和同一配置，只增加 `usb0`/`192.168.66.0/24`、`192.168.13.1` LAN 及上述 feature overlay。只有 A、B 均通过实机启动门禁后，才另行测试 `IPQ60XX-WIFI-YES`。
+`CPE-5G` 历史 A/B NOWIFI 对照已在 2026-07-12 通过启动门禁。A 保留同一 SHA、`IPQ60XX-706-NOWIFI`、关闭 feature overlay 和 `192.168.10.1`，用于底层隔离。2026-10-03 按用户 IoT 无线需求，B 新候选采用单机型 `IPQ60XX-706-WIFI`，保留原内核/NSS 选项和 `192.168.13.1` CPE 功能，增加无线组件。不能用历史 NOWIFI 启动结果替代无线候选的设备验收。
 
-日常触发 `CPE-5G` 时默认 `BUILD_BASELINE_A=false`，因此只构建已验证的 B 生产固件。只有遇到无法启动、NSS/网口异常或需要区分“底层源码问题”和“hotwa feature overlay 问题”时，才显式设置 `BUILD_BASELINE_A=true` 额外构建 A；A 不是日常升级固件，也不替代 B。
+用户在 2026-10-06 确认今后日常 CPE 固件均使用 Wi-Fi。日常触发 `CPE-5G` 默认 `BUILD_BASELINE_A=false`，只构建 B `IPQ60XX-706-WIFI`；需要隔离启动、NSS 或网口故障时显式启用 A。B 的 artifact 名称包含 `CPE-5G-RE-SS-01-WIFI-B` 和 `IPQ60XX-706-WIFI`，准确标识型号和无线构建；历史 NOWIFI artifact 不能重命名为无线固件。
 
 CPE-5G B 与普通 feature-overlay 构建共享 wrtbak/Headscale 首启门禁。factory 启动时先等待 wrtbak 判断是否恢复已有 `tailscaled.state`；仅在恢复终态确认没有可复用身份时才执行 Headscale 新注册，避免刷机产生临时残留节点。
 
@@ -44,9 +46,15 @@ CPE-5G B 还单独内置 mwan3：以太 WAN 是主线路（network/member metric
 
 ### CPE IPv6 入站与 Lucky
 
+CPE-5G B 的受管原生 SIM IPv6、ESA 回源认证和 Lucky 原生 DDNS/ACME 配置见 [CPE Lucky 公网入口](docs/cpe-lucky-public-origin.md)。该私有配置仅进入加密产物；固件刷写及冷启动验收须另行记录。
+
+CPE 的只读 SSH 检查与内网 API 发布规划可使用 [cpe-5g skill](.agents/skills/cpe-5g/SKILL.md)。[服务发布设计](docs/cpe-service-publishing.md) 说明 LiteLLM/vLLM、Bearer/SSE、ESA 及升级恢复要求；当前已授权 UDX Host 与 `ai.lucky.jmsu.top` 的三个精确 CPA API 路由；其他服务仍需逐项批准和扩展。
+
 当前推荐公网服务链路为：`CPE 公网动态 IPv6:外部端口 -> CPE IPv6-to-IPv4 relay -> OpenWrt usb0 192.168.66.2:Lucky入口端口 -> Lucky反向代理 -> 192.168.13.x:服务端口`。Lucky 应监听 `192.168.66.2` 或 `0.0.0.0` 的指定入口端口；LAN 服务本身无需“转发到 192.168.66.2”。只开放明确需要的端口和 Host 规则，避免把整个 `192.168.13.0/24` 暴露给公网。
 
-蜂窝网络当前只观察到 CPE 自身获得运营商 `/64` 地址，尚未证明运营商提供 DHCPv6-PD。仅发送 RA 不能把同一个 `/64` 正常路由给 OpenWrt LAN；若无可委派前缀，需要 RA relay/NDP proxy、邻居缓存维护、回程路由和 IPv6 防火墙协同，重启换前缀时还要重新收敛，属于中高难度且运营商相关的实验功能。生产环境继续采用 CPE IPv6 端口转发；PD/RA/NDP 只在独立实验分支和可回滚设备上开发。
+2026-10-03 已用现有 UDX710 固件实测 OpenWrt 与隔离 LAN 节点的原生 `/128` IPv6 出站，并从三个公网探测点取得 LAN 节点 HTTP 200；无需为此升级 UDX710。B 新增 Ethernet IPv4 主用/USB IPv4 备份、蜂窝 `/64` LAN 延伸、40 GiB 既有限额读取和 eMMC 身份持久化配置，名称采用用户选择的 `cpe-5g-s13`（注册及应用后为 `cpe-5g-s13.hs.jmsu.top`）。真实 Mac `en8` 已在双端 600 秒回滚实验中自动 SLAAC 并完成 IPv6 HTTPS，离线 RA 门禁也抓到 Router Lifetime 0；新 netifd 自动化、更多客户端、额度门禁、换前缀和重启仍待实机，运营商 DHCPv6-PD 未获证明。默认 `ra_dns=0` 继续使用既有 IPv4 DHCP DNS 管线。平时 IPv6 仍使用 SIM。2026-10-05 已验证真实 eMMC `/data` 挂载、原 Tailnet 身份保留、容器自动启动及两次软重启；现场修复经断电冷启动保留，SIM 换前缀后公网恢复，但 Lucky DDNS 查询权限报错尚待修复；替代固件仍需独立刷写验收。配置与验收详见 [CPE IPv6、备份和持久身份](docs/cpe-ipv6-backup.md)。
+
+CPE A、B 产物（含配置测试包）统一使用 `private-encrypted` 加密交付，完整 payload 用固定 age v1.3.2 加密到维护公钥，SSH 维护私钥留在本机。公开仓库的 `private` 后缀不限制 artifact 下载权限；解密后仍需验证原 checksum、metadata、型号和镜像。A 功能隔离和普通 QCA/fleet 的原交付格式保持原样，命令见 [CPE 加密交付](docs/cpe-ipv6-backup.md#加密交付与本机解密)。
 
 2026-07-12 实机门禁记录：GitHub Actions run [`29160402065`](https://github.com/hotwa/OpenWRT-CI/actions/runs/29160402065) 成功；B artifact digest 为 `sha256:bad3ff165840c982ed2ae337532ca456eb940560ae71665196cfa4245ce7631d`，B sysupgrade SHA256 为 `bb69688f6a4385e897d1cf6f9c355d22d279d94e9b9e3e87d9a15c434682485b`；A artifact digest 为 `sha256:e43afee3cb0a277e463ecb85f3ca991ea804d7dda6f56c434e30452c32dc67e7`。A、B 均已确认可启动，因此 B 现作为 CPE 功能生产基线；WiFi-YES 仍需单独测试，不能由本次 NOWIFI 结果推断。
 

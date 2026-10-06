@@ -1,0 +1,106 @@
+#!/bin/sh
+# CPE-only mwan3 view of a shared nft mangle table. Never translate or remove
+# foreign expressions; Node and /data are intentionally not boot dependencies.
+set -f
+fail() { printf '%s\n' 'CPE mwan3 nft compatibility check failed' >&2; exit 1; }
+[ "$#" -ge 2 ] || fail
+operation=$1
+family=$2
+shift 2
+case "$family" in ip) binary=iptables;; ip6) binary=ip6tables;; *) fail;; esac
+
+inventory() {
+	local data tables present=true
+	if ! data="$(nft -j list table "$family" mangle 2>/dev/null)"; then
+		# ENOENT and a parser/permission failure are not interchangeable. Prove
+		# absence against the table inventory before returning an empty view.
+		tables="$(nft -j list tables 2>/dev/null)" || return 1
+		printf '%s' "$tables" | jq -e --arg family "$family" '
+		 type == "object" and (.nftables | type == "array") and
+		 all(.nftables[]; type == "object" and
+		  (if keys == ["table"] then (.table | type == "object" and (.family | type == "string") and (.name | type == "string"))
+		   elif keys == ["metainfo"] then (.metainfo | type == "object") else false end)) and
+		 ([.nftables[] | .table? | select(.family == $family and .name == "mangle")] | length == 0)
+		' >/dev/null || return 1
+		data='{"nftables":[]}'
+		present=false
+	fi
+	printf '%s' "$data" | jq -ce --arg family "$family" --argjson present "$present" '
+	 def owned: type == "string" and startswith("mwan3_");
+	 def valid_name: type == "string" and startswith("mwan3_") and
+	  (.[6:] | length > 0 and (explode | all(.[];
+	   (. >= 48 and . <= 57) or (. >= 65 and . <= 90) or
+	   (. >= 97 and . <= 122) or . == 95 or . == 46 or . == 45)));
+	 def integer: type == "number" and . > 0 and floor == .;
+	 def exact_hook($names):
+	  (.chain == "PREROUTING" or .chain == "OUTPUT") and
+	  (.handle | integer) and (($names | index("mwan3_hook")) != null) and
+	  (.expr | type == "array" and length == 2) and
+	  (.expr[0] | type == "object" and keys == ["counter"]) and
+	  (.expr[0].counter | type == "object" and keys == ["bytes","packets"] and
+	   all(.[]; type == "number" and . >= 0 and floor == .)) and
+	  (.expr[1] == {"jump":{"target":"mwan3_hook"}});
+	 if type != "object" or (.nftables | type != "array") then error("inventory") else . end |
+	 ([.nftables[] | .table? | select(.family == $family and .name == "mangle")] | length) as $tables |
+	 if ($present and $tables != 1) or (($present | not) and $tables != 0) then error("table identity") else . end |
+	 [.nftables[] | .chain? | select(.family == $family and .table == "mangle")] as $chains |
+	 [$chains[] | select(.name | owned)] as $ours |
+	 if any($ours[]; (.name | valid_name | not) or has("hook") or has("type")) or
+	  (($ours | map(.name) | unique | length) != ($ours | length)) then error("chain ownership") else . end |
+	 ($ours | map(.name) | sort) as $names |
+	 [.nftables[] | .rule? | select(.family == $family and .table == "mangle") |
+	  select(.chain | owned | not) |
+	  select(any(.expr[]?; ((.jump.target? // .goto.target? // "") | owned)))] as $references |
+	 if any($references[]; (exact_hook($names) | not)) or
+	  (($references | map(.handle) | unique | length) != ($references | length)) then error("foreign reference") else . end |
+	 {chains:$names,hooks:[$references[] | {chain,handle}]}
+	' 2>/dev/null
+}
+
+view() {
+	local normal state chains chain part result hooks
+	[ "$#" -gt 0 ] || return 1
+	if normal="$("$@" -S 2>/dev/null)"; then
+		printf '%s\n' "$normal"
+		return 0
+	fi
+	state="$(inventory)" || return 1
+	chains="$(printf '%s' "$state" | jq -r '.chains[]')" || return 1
+	result=
+	for chain in $chains; do
+		part="$("$@" -S "$chain" 2>/dev/null)" || return 1
+		# Each native own-chain reader must succeed and name that chain only.
+		printf '%s\n' "$part" | awk -v chain="$chain" '
+		 $1 == "-N" && $2 == chain && NF == 2 { declarations++; next }
+		 $1 == "-A" && $2 == chain { next }
+		 { exit 1 }
+		 END { if (declarations != 1) exit 1 }
+		' || return 1
+		result="${result}${part}
+"
+	done
+	hooks="$(printf '%s' "$state" | jq -r '.hooks[] | "-A " + .chain + " -j mwan3_hook"')" || return 1
+	printf '%s' "$result"
+	[ -z "$hooks" ] || printf '%s\n' "$hooks"
+	return 0
+}
+
+case "$operation" in
+	view) view "$@" || fail;;
+	check)
+		[ "$#" -eq 0 ] || fail
+		# Always validate foreign references, including parseable conditional
+		# hooks, before a service stop can change routes or owned chains.
+		inventory >/dev/null || fail
+		view "$binary" -w 10 -t mangle >/dev/null || fail
+		;;
+	remove-hooks)
+		[ "$#" -eq 0 ] || fail
+		state="$(inventory)" || fail
+		plan="$(printf '%s' "$state" | jq -r --arg family "$family" '.hooks[] | "delete rule " + $family + " mangle " + .chain + " handle " + (.handle | tostring)')" || fail
+		# nft applies all exact-handle deletions as one transaction. No base
+		# chain, foreign rule, or whole table is flushed or deleted.
+		[ -z "$plan" ] || printf '%s\n' "$plan" | nft -f - || fail
+		;;
+	*) fail;;
+esac

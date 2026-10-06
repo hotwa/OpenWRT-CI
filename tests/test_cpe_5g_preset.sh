@@ -7,6 +7,14 @@ WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 DOC="$ROOT_DIR/docs/cpe-5g-preset.md"
 
+# Select one mapping and stop at the next sibling or ancestor key. Extra
+# inputs/comments must not make a valid field fall outside a line-count window.
+yaml_mapping_block() {
+  local file="$1" indent="$2" key="$3"
+  sed -n "/^${indent}${key}:\$/,/^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/p" "$file" |
+    sed "1b; /^ \{0,${#indent}\}[[:alnum:]_-]\{1,\}:/d"
+}
+
 grep -q '^CONFIG_PACKAGE_luci-app-lucky=y$' "$GENERAL" || {
   echo "Lucky is not enabled in the shared firmware package selection"
   exit 1
@@ -22,18 +30,33 @@ grep -q "name: CPE-5G" "$WORKFLOW" || {
   exit 1
 }
 
-grep -A35 '^  cpe_overlay_b:' "$WORKFLOW" | grep -q 'WRT_IP: 192.168.13.1' || {
+baseline_block="$(yaml_mapping_block "$WORKFLOW" '  ' baseline_a)"
+cpe_block="$(yaml_mapping_block "$WORKFLOW" '  ' cpe_overlay_b)"
+yaml_mapping_block "$WORKFLOW" '      ' DEBUG_SSH | grep -q 'default: false' || {
+  echo "CPE debug must remain disabled by default"
+  exit 1
+}
+for control in baseline_a cpe_overlay_b; do
+  block="$(yaml_mapping_block "$WORKFLOW" '  ' "$control")"
+  printf '%s\n' "$block" | grep -Fq 'DEBUG_SSH_ON_FAILURE: false' || {
+    echo "CPE control $control must opt out of automatic failure holds"
+    exit 1
+  }
+  printf '%s\n' "$block" | grep -Fq 'DEBUG_SSH: ${{ inputs.DEBUG_SSH }}' || {
+    echo "CPE control $control must preserve explicit test debugging"
+    exit 1
+  }
+done
+printf '%s\n' "$cpe_block" | grep -q 'WRT_IP: 192.168.13.1' || {
   echo "CPE-5G B control does not use 192.168.13.1"
   exit 1
 }
 
-grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' "$WORKFLOW" || {
-  echo "CPE-5G A/B controls must build the IPQ60XX no-WiFi profile"
+printf '%s\n' "$baseline_block" | grep -q 'WRT_CONFIG: IPQ60XX-706-NOWIFI' || {
+  echo "CPE-5G A must retain the IPQ60XX no-WiFi isolation profile"
   exit 1
 }
 
-baseline_block="$(sed -n '/^  baseline_a:/,/^  cpe_overlay_b:/p' "$WORKFLOW")"
-cpe_block="$(sed -n '/^  cpe_overlay_b:/,$p' "$WORKFLOW")"
 printf '%s\n' "$cpe_block" | grep -q 'CONFIG_PACKAGE_mwan3=y' || {
   echo "CPE-5G B does not install mwan3"
   exit 1
@@ -66,6 +89,25 @@ printf '%s\n' "$cpe_block" | grep -q 'WRT_LAN_TAILNET: true' || {
 	exit 1
 }
 
+for setting in 'WRT_CPE_WIFI: true' 'WRT_CONFIG: IPQ60XX-706-WIFI' 'WRT_EMMC_DATA_PROVISIONING: true' 'WRT_HEADSCALE_HOSTNAME: cpe-5g-s13' 'WRT_CPE_IPV6: true'; do
+  printf '%s\n' "$cpe_block" | grep -Fq "$setting" || {
+    echo "CPE B is missing $setting" >&2
+    exit 1
+  }
+  if printf '%s\n' "$baseline_block" | grep -Fq "$setting"; then
+    echo "CPE isolation A must not include B setting $setting" >&2
+    exit 1
+  fi
+done
+
+# Both controls receive private Samba credentials, independently of feature flags.
+for control in baseline_a cpe_overlay_b; do
+  yaml_mapping_block "$WORKFLOW" '  ' "$control" | grep -Fq 'WRT_ENCRYPT_ARTIFACT: true' || {
+    echo "CPE control $control must encrypt its artifact" >&2
+    exit 1
+  }
+done
+
 grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   echo "CPE-5G workflow must enable the CPE network bootstrap"
   exit 1
@@ -76,8 +118,22 @@ grep -q 'WRT_CPE_5G: true' "$WORKFLOW" || {
   exit 1
 }
 
-grep -A4 'WRT_CPE_5G:' "$CORE" | grep -q 'default: false' || {
+yaml_mapping_block "$CORE" '      ' WRT_CPE_5G | grep -q 'default: false' || {
   echo "reusable workflow must disable the CPE network bootstrap by default"
+  exit 1
+}
+
+encrypt_input="$(yaml_mapping_block "$CORE" '      ' WRT_ENCRYPT_ARTIFACT)"
+printf '%s\n' "$encrypt_input" | grep -q 'type: boolean' || {
+  echo "reusable workflow artifact encryption input must be boolean"
+  exit 1
+}
+printf '%s\n' "$encrypt_input" | grep -q 'default: false' || {
+  echo "reusable workflow must disable artifact encryption by default"
+  exit 1
+}
+yaml_mapping_block "$CORE" '' env | grep -Fq '  WRT_ENCRYPT_ARTIFACT: ${{inputs.WRT_ENCRYPT_ARTIFACT}}' || {
+  echo "reusable workflow does not forward the artifact encryption input"
   exit 1
 }
 
@@ -97,7 +153,7 @@ done
   exit 1
 }
 
-grep -q 'CI_NAME: CPE-706-B-6.18-MANUAL' "$WORKFLOW" || {
+grep -q 'CI_NAME: CPE-5G-RE-SS-01-WIFI-B-6.18' "$WORKFLOW" || {
   echo "CPE-5G workflow must be pinned to the QCA-6.18 build track"
   exit 1
 }

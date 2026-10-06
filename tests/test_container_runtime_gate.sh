@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
+import re
 
 try:
     import tomllib
@@ -69,7 +70,19 @@ script = "set -euo pipefail\n" + "\n".join(blocks) + "\n"
 assert "fetch_container_runtime.sh" in blocks[0]
 assert "files-container-runtime-test/. ./wrt/files/" in blocks[1]
 
+# Exercise the real CPE B caller inputs as well as synthetic device cases.
+# A caller can enable the runtime while accidentally leaving its device empty.
+cpe_b = (root / ".github/workflows/CPE-5G.yml").read_text().split("  cpe_overlay_b:", 1)[1]
+def caller_scalar(name, default=""):
+    match = re.search(r"^      " + re.escape(name) + r": ([^\n]+)$", cpe_b, re.M)
+    return match.group(1).strip().strip("'\"") if match else default
+assert caller_scalar("WRT_CONTAINER_RUNTIME_TEST") == "true"
+assert caller_scalar("WRT_CONTAINER_RUNTIME_MODE") == "prebuilt"
+assert caller_scalar("WRT_REQUIRED_DEVICE") == "jdcloud_re-ss-01"
+
 for enabled, device, expected_ok in (("false", "unsupported", True),
+                                     (caller_scalar("WRT_CONTAINER_RUNTIME_TEST"),
+                                      caller_scalar("WRT_EXPECTED_DEVICE"), True),
                                      ("true", "jdcloud_re-ss-01", True),
                                      ("true", "jdcloud_re-cs-02", True),
                                      ("true", "jdcloud_re-cs-07", True),

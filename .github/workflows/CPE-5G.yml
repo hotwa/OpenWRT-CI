@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       DEBUG_SSH:
-        description: 'Hold runner with Tailscale SSH for live debugging'
+        description: 'Test only: explicitly hold runner with Tailscale SSH for live debugging'
         required: false
         type: boolean
         default: false
@@ -54,6 +54,7 @@ jobs:
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
+      DEBUG_SSH_ON_FAILURE: false
       WRT_CONFIG: IPQ60XX-706-NOWIFI
       WRT_THEME: argon
       WRT_NAME: CPE-706-A
@@ -66,6 +67,7 @@ jobs:
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
+      WRT_ENCRYPT_ARTIFACT: true
       WRT_CPE_5G: false
       WRT_FEATURE_OVERLAY: false
       WRT_TAILSCALE_ROUTE_RECONCILE: false
@@ -96,9 +98,17 @@ jobs:
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+      CPE_WIFI_PASSWORD: ${{ secrets.CPE_WIFI_PASSWORD }}
+      CPE_LUCKY_REMOTE_BUNDLE_1: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_1 }}
+      CPE_LUCKY_REMOTE_BUNDLE_2: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_2 }}
+      CPE_LUCKY_REMOTE_BUNDLE_3: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_3 }}
+      CPE_LUCKY_REMOTE_BUNDLE_4: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_4 }}
+      CPE_LUCKY_REMOTE_BUNDLE_5: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_5 }}
+      CPE_LUCKY_REMOTE_BUNDLE_6: ${{ secrets.CPE_LUCKY_REMOTE_BUNDLE_6 }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
-      WRT_CONFIG: IPQ60XX-706-NOWIFI
+      DEBUG_SSH_ON_FAILURE: false
+      WRT_CONFIG: IPQ60XX-706-WIFI
       WRT_THEME: argon
       WRT_NAME: CPE-5G
       WRT_SSID: CPE-5G
@@ -111,8 +121,19 @@ jobs:
       WRT_PACKAGE: |
         CONFIG_PACKAGE_mwan3=y
         CONFIG_PACKAGE_luci-app-mwan3=y
+        CONFIG_PACKAGE_haproxy=y
       WRT_TEST: ${{ inputs.TEST }}
       WRT_CPE_5G: true
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
+      WRT_CONTAINER_RUNTIME_TEST: true
+      WRT_CONTAINER_RUNTIME_MODE: prebuilt
+      WRT_CONTAINER_RUNTIME_VERSION: '2.4.1'
+      WRT_CPE_API_GATEWAY: true
+      WRT_CPE_WIFI: true
+      WRT_CPE_IPV6: true
+      WRT_ENCRYPT_ARTIFACT: true
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRT_HEADSCALE_HOSTNAME: cpe-5g-s13
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_LAN_TAILNET: true
@@ -121,6 +142,6 @@ jobs:
       WRT_WAN_SSH_SOURCE: ''
       WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
       WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
-      CI_NAME: CPE-706-B-6.18-MANUAL
+      CI_NAME: CPE-5G-RE-SS-01-WIFI-B-6.18
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
