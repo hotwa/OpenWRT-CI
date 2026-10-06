@@ -38,8 +38,14 @@ fi
 GETTEXT_MAKEFILE="./libs/gettext-full/Makefile"
 GETTEXT_OLD_HASH="6164ec7aa61653ac9cdfb41d5c2344563b21f707da1562712e48715f1d2052a6"
 GETTEXT_NEW_HASH="fcc0187f597aef6bc5bc95c629db1126315beb196b20570eaec6a4941850f7c5"
+# Reviewed full-source candidate already ships gettext 1.0. Keep its recipe intact.
+GETTEXT_1_0_HASH="71132a3fb71e68245b8f2ac4e9e97137d3e5c02f415636eb508ae607bc01add7"
 if [ -f "$GETTEXT_MAKEFILE" ]; then
-	if grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE"; then
+	if grep -q '^PKG_VERSION:=1\.0$' "$GETTEXT_MAKEFILE" && \
+		grep -q "^PKG_HASH:=$GETTEXT_1_0_HASH\$" "$GETTEXT_MAKEFILE"; then
+		cd "$PKG_PATH" && echo "gettext-full is already at reviewed 1.0!"
+	elif grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE" && \
+		grep -q "^PKG_HASH:=$GETTEXT_NEW_HASH\$" "$GETTEXT_MAKEFILE"; then
 		cd "$PKG_PATH" && echo "gettext-full is already at 0.24.2!"
 	elif grep -q '^PKG_VERSION:=0\.24\.1$' "$GETTEXT_MAKEFILE" && \
 		grep -q "^PKG_HASH:=$GETTEXT_OLD_HASH\$" "$GETTEXT_MAKEFILE"; then
@@ -54,7 +60,7 @@ if [ -f "$GETTEXT_MAKEFILE" ]; then
 		}
 		cd "$PKG_PATH" && echo "gettext-full has been bumped to 0.24.2!"
 	else
-		echo "ERROR: gettext-full Makefile matches neither 0.24.1 (expected) nor 0.24.2 — source pin may have drifted" >&2
+		echo "ERROR: gettext-full version/hash is not reviewed (0.24.1, 0.24.2, 1.0) — source pin may have drifted" >&2
 		exit 1
 	fi
 fi
