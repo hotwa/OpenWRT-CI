@@ -68,6 +68,43 @@ WAN and cellular use; usb0 total is not a SIM billing total. WAN IPv4 being
 primary does not suppress SIM IPv6: the current approved policy keeps cellular
 IPv6 available to LAN and public services even while WAN is healthy.
 
+### Dual-uplink accounting contract
+
+Count the actual cellular egress regardless of WAN/mwan3 online state:
+
+| Actual path | Independent SIM ledger |
+|---|---|
+| Healthy Ethernet WAN IPv4 over DHCP or PPPoE | Excluded |
+| SIM IPv6 while Ethernet WAN is healthy | Included |
+| Backup SIM IPv4 and IPv6 during WAN failure | Included |
+| Lucky public-service traffic carried over SIM IPv6 | Included |
+| Local LAN or USB management/ADB traffic that does not cross cellular | Excluded |
+
+The billing-oriented total is native modem `sipa_eth0` RX delta plus TX delta,
+not OpenWrt `usb0`, LAN totals, or a sum of WAN and SIM counters. Count each
+native increment once; WAN failure or recovery does not reset the ledger.
+Tailscale/Nikki traffic follows the same rule: its actual cellular transport
+counts, rather than its inner address or application's selected protocol.
+Native interface totals cover both IPv4 and IPv6 and modem-originated traffic;
+they are not a per-client or per-protocol breakdown.
+
+A second passive 30.093-second check on 2026-10-06 showed WAN RX+TX increasing
+by 12,160,230 bytes while native cellular RX+TX increased by 6,620 bytes. This
+supports outlet separation in that sample, not exact carrier billing equality
+or a controlled family-by-family transfer test.
+
+Before treating a configured cap as the carrier's remaining allowance, verify
+the operator's billing-cycle start, already-used amount and GB/GiB unit. The
+current 40 GiB threshold equals 42,949,672,960 bytes; it is not a verified 40 GB
+carrier allowance. The independent native period does not recover earlier
+operator usage. Reconcile that baseline only with administrator authorization;
+do not silently import disputed vendor history or infer a new cycle from clear.
+Leave a verified safety reserve for detection latency and unpersisted traffic
+around sudden modem power loss. The default worker delay is 15 seconds after
+each cycle, so command execution can make the actual interval longer. Kernel
+interface counters are transport statistics, not the operator's billing record:
+https://docs.kernel.org/networking/statistics.html.
+
 The CPE worker now samples the modem boot ID and native `sipa_eth0` RX/TX byte
 counters through the existing serialized ADB transport. A root-private ledger
 at `/data/cpe5g-quota/ledger.json` records accumulated usage atomically with fsync

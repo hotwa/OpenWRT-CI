@@ -44,6 +44,17 @@ test('eMMC ledger survives router/process restart, modem restart and limit chang
  assert.equal(restarted.account({...quota,enabled:false,limit:'0'},counters(`boot|${other}\nrx|2\ntx|1`)).blocked,false);
  assert.equal(fs.statSync(l.directory+'/ledger.json').mode&0o777,0o600);
 });
+test('native quota gates retain vendor evidence without following its inflation or clear',t=>{
+ const l=fixture(t);
+ const first=l.account({...quota,limit:'35',used:'8000000000',blocked:true},sample);
+ assert.equal(first.used,'30');assert.equal(first.blocked,false);
+ assert.equal(first.vendor_used,'8000000000');assert.equal(first.source,'emmc-cellular-counters');
+ const restarted=new QuotaLedger({directory:l.directory,mounts});
+ const cleared=restarted.account({...quota,limit:'35',used:'0',blocked:false},{...sample,rx:'23',tx:'12'});
+ assert.equal(cleared.used,'35');assert.equal(cleared.blocked,true);
+ assert.equal(cleared.vendor_used,'0');assert.equal(cleared.source,'emmc-cellular-counters');
+ assert.equal(restarted.account({...quota,limit:'35',used:'0',blocked:false},{...sample,rx:'23',tx:'12'}).used,'35','repeated sample is not counted twice');
+});
 test('missing, read-only, or RAM /data cannot bootstrap an unaccounted SIM session',t=>{
  const l=fixture(t);
  for(const raw of ['', 'tmpfs /data tmpfs rw 0 0', '/dev/mmcblk0p27 /data ext4 ro 0 0']){
