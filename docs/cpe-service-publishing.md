@@ -214,3 +214,26 @@ RAM 拒绝。拟仅在现有 cpe-origin.jmsu.top 域名资源内增加该查询�
 清除 DNS 备注的假设未能解决错误，原备注已恢复，未固化该猜测。
 现场补丁不等于新版 ROM：修复构建 Action 37311261178 使用 c3865fd，
 默认关闭 debug gate；产物与再次刷写结果需单独记录。
+
+
+2026-10-06 的后续 Wi-Fi B 固件 Action `37400726446` 已保留配置安装，ROM
+`50e37ae3e08b9fd3673107c8324909646dde87b4`，sysupgrade SHA-256
+`8ca493923868964d9a6cff3adcbdce6173cc23954c9224718ae68c8cd844d0e3`。
+源码仍为 `0bad892975fe49fd180f99b414a7f168bb694dd7`、Linux 6.18.37。
+用户提供的 Action `37314293234` 为 NOWIFI，未刷入；替代构建保留批准的
+Wi-Fi/API 功能，并包含与 `338c6ba` 等价的 USB 热插拔修复。
+此前 agent-runtime 符号链接、Python profile、旧 uhttpd 探针与 Nikki IPv6 池
+修复已固化进本次 ROM，不再仅是旧固件的现场补丁。
+
+升级启动后 PPPoE、WAN IPv6 禁用、WAN/5G 探针、SIM 原生 IPv6 与配额保护
+恢复；同一 CLIProxyAPI 容器自动运行、原 Tailnet 与 Multica Agent 身份保留，
+当前 Pi runtime 在线。Node 24.20.0、Python 3.13.15、Pi 1.0.3 可查询。
+2.4 GHz IoT AP 保持信道 1/HT20/WPA2-CCMP；未测试物联网终端实际关联。
+同次公网 UDX 与 API 无认证均为 401、有效认证均为 200，API 模型为空；
+provider 登录与真实推理/SSE 尚未验收。当前启动未发现 fatal/OOM/文件系统错误。
+
+SIM 换前缀后公网已自动恢复，但单条 Lucky 原生 DDNS 任务仍为 SYNC_FAILURE。
+专用账号查询权限失败的独立证据不能直接证明当前闭源 Lucky 的失败原因；
+仍需核对实际错误与云权限。本次未修改 RAM 策略，不能声称 DDNS 已修复。
+本次固件仅完成升级后的启动验收，没有追加两次软重启、断电冷启动或物理
+USB 插拔测试；旧 `7754eb8` 的重启记录不能作为 `50e37ae` 的这些验收。

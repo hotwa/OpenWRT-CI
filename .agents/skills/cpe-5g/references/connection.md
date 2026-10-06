@@ -48,7 +48,8 @@ TLS/HTTP 与 usb0 双向抓包成功，Cloudflare 同类直连超时；不能推
 
 SIM 换前缀后必须分别检查受管地址、原生 DDNS 任务状态和实际公网认证响应。
 公网恢复不能替代 DDNS 任务验收；当前专用账号的 DescribeSubDomainRecords
-查询权限报错尚待云侧修复。Lucky 原生 API 更新已有 DDNS 任务使用
+独立查询权限报错，原生任务仍为 SYNC_FAILURE。闭源 Lucky 的实际失败原因
+须结合任务错误核对，不能仅由该独立查询推断。Lucky 原生 API 更新已有 DDNS 任务使用
 PUT /api/ddns?key=<TaskKey>；POST /api/ddns 会创建新任务，即使 body 带旧 key。
 修改前核对原 TaskKey、单条 origin 记录范围并保存私有备份，修改后核对任务数
 与其它字段，不能靠猜测 URL 后缀删除任务。

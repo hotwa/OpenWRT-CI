@@ -1,5 +1,8 @@
 # API 发布：实现与部署边界
 
+
+2026-10-06 更新：已保留配置安装 Wi-Fi B Action `37400726446`，ROM `50e37ae`；USB 热插拔修复及上述 agent-runtime/Python/uhttpd/Nikki 修复已包含在 ROM。升级启动后同一 API 容器自动恢复，原 Tailnet/Multica Agent 身份、PPPoE、SIM IPv6、IoT AP 和公网认证检查通过。Lucky 原生 DDNS 仍为 SYNC_FAILURE，公网可达不能替代任务验收，实际原因需继续核对。此版本未追加两次软重启、断电冷启动或物理 USB 插拔；旧版本记录不得移作新版验收。provider 登录与推理/SSE 仍待验收。
+
 ## 固定 CPE B 模型入口
 
 仓库已实现 CPE B 独立、无浏览器的 CLIProxyAPI 容器。2026-10-05 已安装 Action `37282283649`（ROM `7754eb8`），保留配置与真实 eMMC `/data`；同一容器在两次软重启及断电冷启动后自动恢复，配置哈希与身份保持一致，资源限额和 loopback 绑定正常。公网 UDX 无认证 401、有效认证 200；API 有效 Bearer 200 空列表、无认证 401。无 OAuth/provider，不能据此宣称推理可用。历史间歇 ESA 522 仍需长期观察，真实 JSON/SSE 推理、取消和无缓存待验收；冷启动换前缀后公网恢复，DDNS 查询权限报错仍待修复。现场补丁解决 agent-runtime 目录符号链接更新、Python profile export、旧 uhttpd 探针与 Nikki 缺失 IPv6 Fake-IP 池；旧 ROM 不包含这些补丁。执行前阅读 firmware 仓库的 `docs/cpe-api-container.md`、`docs/container-runtime-test.md`、`docs/cpe-service-publishing.md` 与 `Scripts/cpe5g-api/model.mjs`、`Scripts/cpe5g-ipv6/api-service-registry.mjs`。
