@@ -17,8 +17,8 @@ sh -n "$SPACE_GUARD"
 sh -n "$SPACE_INIT"
 grep -Fq 'jdcloud,re-ss-01)' "$SPACE_GUARD"
 grep -Fq 'size=512m /tmp' "$SPACE_GUARD"
-grep -Fq 'image_kib + 49152' "$SPACE_GUARD"
-grep -Fq 'memory-plus-swap' "$SPACE_GUARD"
+grep -Fq 'allocation_kib + config_kib + 98304' "$SPACE_GUARD"
+grep -Fq 'MemAvailable=' "$SPACE_GUARD"
 grep -Fq 'openwrt-upgrade-space prepare' "$SPACE_INIT"
 grep -Fq 'guard_remote="$remote_path.space-check"' "$SCRIPT"
 grep -Fq 'remote upgrade-space guard checksum mismatch' "$SCRIPT"
@@ -29,11 +29,13 @@ grep -Fq '[ "$boot_commit" = "$expected_commit" ]' "$SCRIPT"
 # sysupgrade's image test or the mutating upgrade command.
 space_first_line="$(grep -nF "\$guard_remote' check '\$remote_path" "$SCRIPT" | head -n 1 | cut -d: -f1)"
 test_line="$(grep -nF 'sysupgrade -T' "$SCRIPT" | cut -d: -f1)"
-space_last_line="$(grep -nF "\$guard_remote' check '\$remote_path" "$SCRIPT" | tail -n 1 | cut -d: -f1)"
+space_last_line="$(grep -nF "\$guard_remote' check '\$verified_path" "$SCRIPT" | tail -n 1 | cut -d: -f1)"
 upgrade_line="$(grep -nF 'sysupgrade -c' "$SCRIPT" | cut -d: -f1)"
 [ "$space_first_line" -lt "$test_line" ] && [ "$test_line" -lt "$space_last_line" ] && [ "$space_last_line" -lt "$upgrade_line" ]
-[ "$(grep -Fc "\$guard_remote' check '\$remote_path" "$SCRIPT")" -eq 2 ]
+[ "$(grep -Fc "\$guard_remote' check '\$remote_path" "$SCRIPT")" -eq 1 ]
 
+grep -Fq 'verified tmp image checksum mismatch' "$SCRIPT"
+grep -Fq "sysupgrade -c '\$verified_path'" "$SCRIPT"
 bash "$SCRIPT" validate-inventory --inventory "$INVENTORY" >/dev/null
 # shellcheck source=/dev/null
 . "$SCRIPT"

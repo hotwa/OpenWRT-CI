@@ -256,7 +256,7 @@ fetch_verify() {
 
 upgrade_record() {
 	local record="$1" ssh_config="$2" image="$3" expected_commit="$4"
-	local id fqdn image_name remote_path local_sha remote_sha guard_local guard_remote local_guard_sha remote_guard_sha boot_before boot_after boot_commit attempt=0
+	local id fqdn image_name remote_path verified_path local_sha remote_sha guard_local guard_remote local_guard_sha remote_guard_sha boot_before boot_after boot_commit attempt=0
 	id="$(jq -r '.id' <<<"$record")"
 	fqdn="$(jq -r '.magicdns' <<<"$record")"
 	[ -f "$image" ] || die "verified image is missing for $id"
@@ -280,11 +280,16 @@ upgrade_record() {
 	[ "$local_guard_sha" = "$remote_guard_sha" ] || die "$id remote upgrade-space guard checksum mismatch"
 	remote_exec "$ssh_config" "$fqdn" "chmod 0755 '$guard_remote' && '$guard_remote' check '$remote_path'"
 	remote_exec "$ssh_config" "$fqdn" "sysupgrade -T '$remote_path'"
-	remote_exec "$ssh_config" "$fqdn" "'$guard_remote' check '$remote_path'"
+	# The pinned platform stages the image here even during -T. Verify and reuse
+	# that copy; missing or different bytes must abort before a flash command.
+	verified_path=/tmp/sysupgrade.img
+	remote_sha="$(remote_exec "$ssh_config" "$fqdn" "sha256sum '$verified_path' | cut -d ' ' -f1")"
+	[ "$local_sha" = "$remote_sha" ] || die "$id verified tmp image checksum mismatch"
+	remote_exec "$ssh_config" "$fqdn" "'$guard_remote' check '$verified_path'"
 	boot_before="$(remote_exec "$ssh_config" "$fqdn" cat /proc/sys/kernel/random/boot_id)"
 	echo "sysupgrade starting: $id"
 	set +e
-	remote_exec "$ssh_config" "$fqdn" "sysupgrade -c '$remote_path'"
+	remote_exec "$ssh_config" "$fqdn" "sysupgrade -c '$verified_path'"
 	set -e
 
 	while [ "$attempt" -lt 60 ]; do
