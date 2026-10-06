@@ -27,7 +27,7 @@ python3 scripts/cpe5g.py api-status --profile /root/.config/cpe-5g/profile.json
 仓库已实现 CPE B 独立 headless CLIProxyAPI v8.0.13 ARM64 容器（nerdctl 2.4.1、`127.0.0.1:8317`）及 `ai.lucky.jmsu.top` 的三个精确 API 路由，经 Lucky `16802`、HAProxy `18443` 与 ESA mTLS。2026-10-05：Action `37282283649` 已解密、校验并保留配置刷入，ROM `7754eb8`；容器在两次软重启和断电冷启动中自动恢复，`/data`、Tailnet/Multica/Pi 身份保留。公网 UDX 无认证 401/有效认证 200，API 无认证 401/有效 Bearer 200 空列表。Agent 链接、Python PATH、旧 uhttpd 探针和 Nikki AAAA 池已现场修复；这些补丁与 ROM 版本须区分。历史 ESA 522 仍需观察，provider 登录、公网实际推理/SSE 和取消尚待验收；冷启动换前缀后公网恢复，但 DDNS 查询权限错误待修复。`api-status` 仅检查固定运行时/容器资源与独立 `api-ready.json`，不读取 config、keys 或 auth，不证明公网推理。私有管理 SSH forward、全新 OAuth 与明确 upstream 配置读发布参考。脚本无 `publish` 命令，离线规格也不是固定 CPA 的运行注册格式。
 
 
-2026-10-06 更新：已保留配置安装 Wi-Fi B Action `37400726446`，ROM `50e37ae`；USB 热插拔修复及上述 agent-runtime/Python/uhttpd/Nikki 修复已包含在 ROM。升级启动后同一 API 容器自动恢复，原 Tailnet/Multica Agent 身份、PPPoE、SIM IPv6、IoT AP 和公网认证检查通过。Lucky 原生 DDNS 仍为 SYNC_FAILURE，公网可达不能替代任务验收，实际原因需继续核对。此版本未追加两次软重启、断电冷启动或物理 USB 插拔；旧版本记录不得移作新版验收。provider 登录与推理/SSE 仍待验收。
+2026-10-06 更新：Wi-Fi B Action `37400726446`、ROM `50e37ae` 包含 USB 热插拔及 agent-runtime/Python/uhttpd/Nikki 修复。当前 ROM 加现场 Lucky 持久化补丁已通过一次断电冷启动：`/data/lucky` bind 到 `/etc/lucky`，16 个 LKCF 保留，Tailnet/PPPoE 恢复，SIM 换前缀后实际 AAAA 自动更新，公网 UDX 无认证 401/有效认证 200。原 DDNS 权限错误已通过专用 RAM 策略 v3 修复；启动时短暂连接拒绝随后恢复，仍应分别核验任务、权威记录和公网响应。随后新增的 `/data/cpe5g-quota/ledger.json` 按模块 boot ID 与蜂窝原生 RX/TX 增量连续计量，保守保留历史用量，避免厂商计数回退或溢出重获额度；新计量补丁尚待再次物理冷启动，USB 实际插拔、真实耗尽/账期切换也未验收。CPA 新部署和 provider 配置任务已暂停，现有容器/域名保持；实际推理/SSE 仍待验收。
 
 ```bash
 python3 scripts/cpe5g.py validate --service /path/to/service.json
