@@ -1,3 +1,4 @@
+# Candidate branch only: Linux 6.18.52 / NSS changes; real-device promotion pending.
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 VIKINGYFY
 
@@ -63,7 +64,7 @@ jobs:
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
-      WRT_COMMIT: 0bad892975fe49fd180f99b414a7f168bb694dd7
+      WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: ''
       WRT_TEST: ${{ inputs.TEST }}
@@ -116,7 +117,7 @@ jobs:
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
-      WRT_COMMIT: 0bad892975fe49fd180f99b414a7f168bb694dd7
+      WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_PACKAGE: |
         CONFIG_PACKAGE_mwan3=y

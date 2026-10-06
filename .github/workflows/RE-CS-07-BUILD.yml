@@ -1,3 +1,4 @@
+# Candidate branch only: Linux 6.18.52 / NSS changes; real-device promotion pending.
 name: RE-CS-07 Build Only
 
 on:
@@ -57,7 +58,7 @@ jobs:
       WRT_PW: 无
       WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
       WRT_BRANCH: main
-      WRT_COMMIT: a4638cd4389183f1a1fcad0441f491ca11c97757
+      WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-07
