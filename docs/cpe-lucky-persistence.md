@@ -52,10 +52,21 @@ change, not uninterrupted availability during boot or every future carrier event
 
 ## Cellular usage continuity
 
-The same cold boot exposed a separate vendor vnStat defect: its total dropped
-from the previously observed 26,361,560,944 bytes, then jumped by about 8 GB while
-the native cellular counters remained small. A fresh timestamp alone cannot
-prove accounting continuity. Do not reset or rewrite the modem's history.
+The user clarified that the observed vendor-total decrease followed a manual
+clear; it must not be attributed to a cold-boot reset. Separately, the field
+vendor total reached about 8 GB while current native cellular counters were
+small. The exact cause of that history discrepancy remains unproven. Upstream
+UDX710-TOOLS `src/system/traffic.c` removes the vnStat database on clear without
+first stopping the daemon; cached state being written back is a plausible risk,
+not a confirmed diagnosis of the installed binary. Preserve modem history and
+compare independent counters before drawing conclusions.
+
+A 30.08-second live sample showed PPPoE WAN RX+TX rising by 6,178,442 bytes while
+modem `sipa_eth0` rose by only 4,030 bytes. OpenWrt `usb0` rose by 106,637 bytes,
+including local management/ADB traffic. These counters distinguish this sample's
+WAN and cellular use; usb0 total is not a SIM billing total. WAN IPv4 being
+primary does not suppress SIM IPv6: the current approved policy keeps cellular
+IPv6 available to LAN and public services even while WAN is healthy.
 
 The CPE worker now samples the modem boot ID and native `sipa_eth0` RX/TX byte
 counters through the existing serialized ADB transport. A root-private ledger
@@ -74,11 +85,19 @@ billing window and verified usage before starting a new accounting period.
 This is a conservative continuity safeguard, not a carrier billing meter;
 unsampled traffic around sudden power loss remains a measurement limitation.
 
-The existing device was seeded with the previously observed 26,361,560,944-byte
-floor plus the new boot's native counters. This preserves a conservative reserve
-and does not claim that the old vendor value matches the carrier bill. Live native
-increments and a controller restart pass. This accounting patch was installed
-after the physical cold boot; a further physical boot remains its separate gate.
+An initial maintenance seed conservatively added the previously observed
+26,361,560,944-byte floor. After the user explained the manual clear, that exact
+maintenance-added floor was removed, with a private backup; the modem database
+and configured limit were not changed. The current device ledger retains only
+its new native accounting period. Do not restore disputed historical values
+against an administrator's intended reset. Clearing the vendor UI and rebasing
+this independent eMMC ledger are separate operations; a new verified accounting
+period requires an explicit administrator decision, not automatic inference
+from a lower vendor total.
+
+Live native increments and a controller restart pass. This accounting patch was
+installed after the physical cold boot; a further physical boot remains its
+separate gate.
 
 ## Acceptance boundaries
 
