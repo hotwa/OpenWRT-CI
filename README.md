@@ -22,17 +22,18 @@ https://github.com/VIKINGYFY/immortalwrt.git
 
 ### 6.18.52 / NSS 候选分支
 
-`codex/nss-6.18.52-candidate` 的 CPE-5G、RE-Mesh（RE-SS-01 / RE-CS-02）、RE-CS-07 构建固定到 `VIKINGYFY/immortalwrt@0fb9b10cb9df51fb076470e1dd93d1c30dd89d83`，Linux `6.18.52`。这是完整源码候选接入，不是把几个 NSS patch 单独移植到旧内核；尚未编译/实机验收，不提升下表已验证生产基线。main 和现有设备仍使用原版本。详细设备树、USB/WCSS 风险和组件对象见 [候选审查](docs/nss-6.18.52-candidate.md)。
+`codex/nss-6.18.52-candidate` 的 CPE-5G、RE-Mesh（RE-SS-01 / RE-CS-02）、RE-CS-07 构建固定到 `VIKINGYFY/immortalwrt@0fb9b10cb9df51fb076470e1dd93d1c30dd89d83`，Linux `6.18.52`。四台 `567c319` 已编译及刷入，CS07、SS01、CPE 两次软重启通过，冷启动/USB 实插待验；CS02 CN 监管规则更新失败，需恢复原上游带宽 clamp 补丁后单独重编验收。main 尚未合并候选，不提升下表已验证生产基线。补丁作用域、摘要、设备树及验收限制见 [候选审查](docs/nss-6.18.52-candidate.md)。
 
 | 候选组件 | 精确版本 / 对象 | 验证状态 |
 | --- | --- | --- |
-| Linux | `6.18.52`；tarball SHA256 `2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8` | 未编译、未实机 |
+| Linux | `6.18.52`；tarball SHA256 `2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8` | 四台已启动，三台两次软重启通过；CS02 无线验收失败 |
 | qca-nss-dp | `d8f802f0-r1`；tree `2bc15a723ed64c342026828774c99202683366c7` | patches 更新 |
 | qca-nss-drv | `6aa14c7-r18`；tree `e34e64453e3325896fc05d5009014b398c76b96b` | patches / files 更新 |
 | qca-nss-ecm | `8c7355b-r9`；tree `a7ade4e097e7047c9ce1e457dbf139d31b6076ee` | patches / 构建条件更新 |
 | qca-ssdk | `d9a19649-r2`；tree `60e4b67d8923489d163f791e9c6f04674dc5ed1f` | patches 更新 |
 | Qualcommax 内核补丁 | tree `46ebeb603056b335f74cb84672ac4e1a4cfc0b8d` | USB / WCSS 等需设备验收 |
 | RE-SS-01 DTS | blob `a278a87acb783e546cc473878cb8fe5ca3d50a92` | 文件不变，继承的 SoC DTSI 有变 |
+| CS02 ath11k 监管补丁 | 恢复原 `a4638cd` 的 `990-ath11k-clamp-reg-rule-bandwidth.patch`；SHA256 `dd4ad38515ad746630d28dae3669cfef7be3ddb6dc1fd552586a0cf137d1c38a` | backports 7.2 零 fuzz / C 回归通过；单独重编及实机待验 |
 
 | 组件 | 当前已验证版本 | 来源提交 |
 | --- | --- | --- |

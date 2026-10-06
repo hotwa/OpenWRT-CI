@@ -484,6 +484,11 @@ jobs:
           add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
           add_file script/patch-nikki-router-selector-guard "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+          if [ "${WRT_REQUIRED_DEVICE:-}" = jdcloud_re-cs-02 ] &&
+             [ "${WRT_COMMIT:-}" = 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83 ]; then
+            add_file cs02/regulatory-installer "$GITHUB_WORKSPACE/Scripts/restore_recs02_regulatory_clamp.sh"
+            add_file cs02/regulatory-patch "$GITHUB_WORKSPACE/Scripts/patches/990-ath11k-clamp-reg-rule-bandwidth.patch"
+          fi
           add_file script/Settings.sh           "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           add_value input/package               "${WRT_PACKAGE:-}"
           add_value cpe/wifi                    "${WRT_CPE_WIFI:-false}"

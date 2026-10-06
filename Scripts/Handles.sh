@@ -4,6 +4,8 @@
 
 . "$(dirname "$(realpath "$0")")/retry.sh"
 
+bash "$(dirname "$(realpath "$0")")/restore_recs02_regulatory_clamp.sh" || exit 1
+
 PKG_PATH="$GITHUB_WORKSPACE/$WRT_DIR/package/"
 
 preload_nikki_geodata() {
