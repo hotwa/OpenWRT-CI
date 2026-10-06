@@ -9,11 +9,35 @@ case "$ENABLE" in true|false) ;; *) exit 1;; esac
 [ -x "$FILES/usr/libexec/cpe5g-mwan3-gated-reconcile" ] || { echo 'CPE IPv6 requires the CPE-only network overlay' >&2; exit 1; }
 SOURCE="$(CDPATH= cd -- "$(dirname "$0")/cpe5g-ipv6" && pwd)"
 mkdir -p "$FILES/usr/libexec/cpe5g-ipv6" "$FILES/usr/share/cpe5g-origin" "$FILES/lib/netifd/proto" "$FILES/lib/upgrade/keep.d" "$FILES/usr/sbin" "$FILES/etc/init.d" "$FILES/etc/uci-defaults" "$FILES/etc/config" "$FILES/etc/cpe5g" "$FILES/www/luci-static/resources/protocol"
-for module in adb model probe worker audit-bootstrap quota-logger local-failover public-access select-origin-ipv6 lucky-origin deploy-origin-certificate restore-lucky-private reconcile-lucky-managed api-service-registry; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
+for module in adb model probe worker audit-bootstrap quota-logger quota-ledger local-failover public-access select-origin-ipv6 lucky-origin deploy-origin-certificate restore-lucky-private reconcile-lucky-managed api-service-registry; do cp "$SOURCE/$module.mjs" "$FILES/usr/libexec/cpe5g-ipv6/$module.mjs"; done
 for command in select-origin-ipv6 deploy-origin-certificate; do
  cp "$SOURCE/$command" "$FILES/usr/libexec/cpe5g-ipv6/$command"
  chmod 755 "$FILES/usr/libexec/cpe5g-ipv6/$command"
 done
+for command in cpe5g-lucky-persist cpe5g-lucky-start; do
+ cp "$(dirname "$0")/$command" "$FILES/usr/libexec/$command"
+ chmod 755 "$FILES/usr/libexec/$command"
+done
+# Override only the CPE B Lucky launcher; ordinary routers retain their package
+# service. A procd worker waits for eMMC and restore before opening any listener.
+cat > "$FILES/etc/init.d/lucky" <<'EOF'
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+START=99
+STOP=15
+start_service() {
+ [ "$(uci -q get lucky.lucky.enabled 2>/dev/null || true)" = 1 ] || return 0
+ procd_open_instance
+ procd_set_param command /usr/libexec/cpe5g-lucky-start
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_set_param term_timeout 10
+ procd_set_param respawn 3600 5 0
+ procd_close_instance
+}
+service_triggers() { procd_add_reload_trigger lucky; }
+EOF
+chmod 755 "$FILES/etc/init.d/lucky"
 # Public access stays closed in ordinary images; a private, encrypted build
 # injects the validated per-device policy and native Lucky configuration.
 printf '%s\n' '{"enabled":false}' > "$FILES/etc/cpe5g/public-origin.json"
@@ -22,6 +46,8 @@ cat > "$FILES/lib/upgrade/keep.d/cpe5g-lucky" <<'EOF'
 /etc/lucky/
 /etc/cpe5g/public-origin.json
 /etc/cpe5g-lucky/
+/data/lucky/
+/data/cpe5g-quota/
 EOF
 cp "$SOURCE/proto.sh" "$FILES/lib/netifd/proto/cpe6.sh"
 cp "$SOURCE/reconcile.sh" "$FILES/usr/libexec/cpe5g-ipv6-reconcile"
@@ -102,6 +128,9 @@ while :; do
  [ "$ready" = 0 ] || break
  sleep 5
 done
+# Bind before certificate restore or API reads. The same lock serializes the
+# Lucky launcher and this worker; persistent data is authoritative on reboot.
+/usr/libexec/cpe5g-lucky-persist
 # Keep-config upgrades may restore older Lucky files over the private image.
 # Restore only missing coherent material, then add only missing CPE entries.
 # Either failure keeps the public listener closed until procd retries.

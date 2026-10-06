@@ -47,9 +47,25 @@ TLS/HTTP 与 usb0 双向抓包成功，Cloudflare 同类直连超时；不能推
 
 
 SIM 换前缀后必须分别检查受管地址、原生 DDNS 任务状态和实际公网认证响应。
-公网恢复不能替代 DDNS 任务验收；当前专用账号的 DescribeSubDomainRecords
-独立查询权限报错，原生任务仍为 SYNC_FAILURE。闭源 Lucky 的实际失败原因
-须结合任务错误核对，不能仅由该独立查询推断。Lucky 原生 API 更新已有 DDNS 任务使用
+公网恢复不能替代 DDNS 任务验收。2026-10-06 已核实专用 RAM 策略缺少
+DescribeSubDomainRecords、DescribeDomainRecordInfo、UpdateDomainRecordRemark；
+v3 只补到 cpe-origin.jmsu.top 域资源。原生任务和冷启动换前缀后的实际 AAAA 更新
+均已通过。新错误仍须结合任务 Message 核对，不能把启动时连接拒绝当成权限回归。Lucky 原生 API 更新已有 DDNS 任务使用
 PUT /api/ddns?key=<TaskKey>；POST /api/ddns 会创建新任务，即使 body 带旧 key。
 修改前核对原 TaskKey、单条 origin 记录范围并保存私有备份，修改后核对任务数
 与其它字段，不能靠猜测 URL 后缀删除任务。
+
+
+## Lucky 与 SIM 额度的持久状态
+
+Lucky 配置以 `/data/lucky` 为准，真实 bind mount 到 `/etc/lucky`，不能改成
+符号链接；严格证书读取器会拒绝 symlink 父目录。检查同一 inode 和真实 eMMC
+挂载，不把存在目录视作挂载成功。配置完整备份仍须包含 CPE 私有证书/受管清单
+及 UCI；保留配置升级的迁移由 CPE B overlay 实现，工厂重分区不保证存活。
+
+厂商 vnStat 曾在模块断电后回退并虚增。OpenWrt 的 `/data/cpe5g-quota/ledger.json`
+保留历史已用量并累计原生蜂窝增量；状态中的 `quota.source` 可区分新计量。
+账本缺失持久盘、损坏或同一模块 boot ID 内计数倒退时，SIM 双栈和公网门禁关闭，
+WAN/LAN 保持。不要删除账本、重置模块统计或自动清零来解除限额；新账期需根据
+用户授权和运营商实际窗口核对。连续计量是保守保护，断电时未采样尾段不能证明
+等于运营商计费数。实机耗尽不得用消耗剩余额度或修改历史计数伪造。

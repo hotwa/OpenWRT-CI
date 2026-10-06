@@ -1,0 +1,91 @@
+#!/bin/sh
+# CPE B only. Keep /etc/lucky a real mount point for strict certificate readers.
+set -eu
+umask 077
+SOURCE=/data/lucky
+TARGET=/etc/lucky
+STAGE=''
+fail() { logger -t cpe5g-lucky-persist "$1"; exit 1; }
+safe_dir() {
+ [ -d "$1" ] && [ ! -L "$1" ] || return 1
+ owner=$(stat -c '%u' "$1")
+ mode=$(stat -c '%a' "$1")
+ [ "$owner" = 0 ] && [ "$((0$mode & 0022))" = 0 ]
+}
+data_ready() {
+ awk '$2 == "/data" && $1 ~ /^\/dev\// && ($3 == "ext4" || $3 == "f2fs") && $4 ~ /(^|,)rw(,|$)/ { ready=1 } END { exit !ready }' /proc/mounts
+}
+valid_marker() {
+ [ -f "$SOURCE/.cpe5g-persist-v1" ] && [ ! -L "$SOURCE/.cpe5g-persist-v1" ] &&
+ [ "$(stat -c '%u:%a' "$SOURCE/.cpe5g-persist-v1")" = 0:600 ] &&
+ [ "$(cat "$SOURCE/.cpe5g-persist-v1")" = 1 ]
+}
+restore_ready() {
+ case "$(uci -q get wrtbak.main.firstboot_auto_enabled 2>/dev/null || true)" in
+  1|true|yes|on|enabled)
+   if [ -x /etc/init.d/wrtbak-firstboot-auto ] && command -v wrtbak >/dev/null 2>&1; then
+    state=$(jsonfilter -i /root/wrtbak/firstboot/gate.json -e '@.state' 2>/dev/null || true)
+    case "$state" in already_done|restored|no_backup|failed_final|disabled) ;; *) return 1;; esac
+   fi ;;
+ esac
+}
+# Called by supervised workers, never in boot's synchronous hot path.
+while ! data_ready || ! restore_ready; do sleep 5; done
+safe_dir /data || fail 'unsafe data directory'
+mkdir -p /var/run/cpe5g-lucky-persist
+safe_dir /var/run/cpe5g-lucky-persist || fail 'unsafe persistence lock directory'
+[ ! -L /var/run/cpe5g-lucky-persist/lock ] || fail 'unsafe persistence lock'
+exec 9>/var/run/cpe5g-lucky-persist/lock
+flock -w 30 9 || fail 'persistence lock unavailable'
+data_ready && restore_ready || fail 'data or restore gate changed'
+# wrtbak/sysupgrade may retain the old package launcher. Replace only this
+# CPE-owned launcher from a ROM that advertises the guarded worker. Do this
+# after restore; preserve the administrator's enabled/port/safe UCI settings.
+if [ -f /rom/etc/init.d/lucky ] && grep -q '/usr/libexec/cpe5g-lucky-start' /rom/etc/init.d/lucky &&
+ ! cmp -s /rom/etc/init.d/lucky /etc/init.d/lucky; then
+ launcher=$(ubus call service list '{"name":"lucky"}' | jsonfilter -e '@.lucky.instances.*.command[0]' 2>/dev/null || true)
+ case "$launcher" in
+  /usr/libexec/cpe5g-lucky-start|'') ;;
+  /usr/bin/lucky) /etc/init.d/lucky stop ;;
+  *) fail 'unrecognized Lucky service launcher' ;;
+ esac
+ cp /rom/etc/init.d/lucky /etc/init.d/.lucky-cpe5g-new
+ chmod 755 /etc/init.d/.lucky-cpe5g-new
+ mv /etc/init.d/.lucky-cpe5g-new /etc/init.d/lucky
+ # Never stop/restart this worker if procd already uses the guarded launcher.
+ # That would kill the lock holder before it could finish restoring startup.
+ [ "$launcher" = /usr/libexec/cpe5g-lucky-start ] || /etc/init.d/lucky start
+fi
+[ ! -L "$TARGET" ] && [ ! -L "$SOURCE" ] || fail 'configuration directory is a symlink'
+mkdir -p "$TARGET"
+safe_dir "$TARGET" || fail 'unsafe Lucky directory'
+if awk '$5 == "/etc/lucky" { found=1 } END { exit !found }' /proc/self/mountinfo; then
+ safe_dir "$SOURCE" && valid_marker &&
+ [ "$(stat -c '%d:%i' "$SOURCE")" = "$(stat -c '%d:%i' "$TARGET")" ] || fail 'foreign Lucky mount'
+ exit 0
+fi
+! pgrep -x lucky >/dev/null 2>&1 || fail 'stop Lucky before mounting persistent data'
+if [ ! -e "$SOURCE" ]; then
+ # Migrating an active writer could lose its last update. Stop Lucky first.
+ ! pgrep -x lucky >/dev/null 2>&1 || fail 'stop Lucky before initial migration'
+ STAGE=$(mktemp -d /data/.lucky-stage.XXXXXX)
+ trap '[ -z "$STAGE" ] || rm -rf "$STAGE"' EXIT HUP INT TERM
+ cp -a "$TARGET/." "$STAGE/"
+ chmod 700 "$STAGE"
+ [ ! -L "$STAGE/.cpe5g-persist-v1" ] || fail 'unsafe restored migration marker'
+ if [ -e "$STAGE/.cpe5g-persist-v1" ]; then
+  [ -f "$STAGE/.cpe5g-persist-v1" ] && [ "$(cat "$STAGE/.cpe5g-persist-v1")" = 1 ] || fail 'invalid restored migration marker'
+ fi
+ printf '1\n' > "$STAGE/.cpe5g-persist-v1"
+ chmod 600 "$STAGE/.cpe5g-persist-v1"
+ sync
+ [ ! -e "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail 'migration destination changed'
+ mv "$STAGE" "$SOURCE"
+ STAGE=''
+ sync
+fi
+safe_dir "$SOURCE" && valid_marker || fail 'unrecognized persistent Lucky data'
+# Persistent settings win over retained or ROM defaults; never merge old LKCF.
+mount -o bind "$SOURCE" "$TARGET"
+[ "$(stat -c '%d:%i' "$SOURCE")" = "$(stat -c '%d:%i' "$TARGET")" ] || fail 'Lucky bind mount verification failed'
+logger -t cpe5g-lucky-persist 'Lucky configuration mounted from persistent data'

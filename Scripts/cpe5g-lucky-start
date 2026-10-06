@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+/usr/libexec/cpe5g-lucky-persist
+port=$(uci -q get lucky.lucky.port 2>/dev/null || printf 16601)
+safe=$(uci -q get lucky.lucky.safe 2>/dev/null || true)
+case "$port" in ''|*[!0-9]*) exit 1;; esac
+[ "$port" -gt 0 ] && [ "$port" -le 65535 ] || exit 1
+/usr/bin/lucky -setconf -key AdminWebListenPort -value "$port" -cd /etc/lucky
+# -rCancelSafeURL is a control-socket command and fails before Lucky starts.
+# Apply both nonempty and empty SafeURL using the offline configuration path.
+/usr/bin/lucky -setconf -key SafeURL -value "$safe" -cd /etc/lucky
+exec /usr/bin/lucky -cd /etc/lucky

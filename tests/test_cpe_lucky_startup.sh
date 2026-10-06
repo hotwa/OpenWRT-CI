@@ -65,6 +65,9 @@ elif name=='nikki':
  assert args in [['status'],['reload']],args
  event('nikki',action=args[0])
  if args==['status'] and not settings.get('nikki_running',True):sys.exit(1)
+elif name=='cpe5g-lucky-persist':
+ event('persist')
+ if settings.get('fail_persist'):sys.exit(32)
 elif name=='wrtbak':
  event('unexpected-wrtbak-execution')
  sys.exit(91)
@@ -105,7 +108,7 @@ def run_case(name, *, mounts=EXT4, enabled=None, implementation=False,
     mock = case_root/'mock.py'
     mock.write_text(mock_source)
     mock.chmod(0o755)
-    for command in ['uci', 'jsonfilter', 'sleep', 'node']:
+    for command in ['uci', 'jsonfilter', 'sleep', 'node', 'cpe5g-lucky-persist']:
         (case_root/'bin'/command).symlink_to(mock)
     (case_root/'bin/awk').symlink_to(awk)
     if implementation and binary:
@@ -122,6 +125,7 @@ def run_case(name, *, mounts=EXT4, enabled=None, implementation=False,
                  '/sys/fs/cgroup', '/usr/libexec/cpe5g-ipv6']:
         rewritten = rewritten.replace(path, str(case_root/path.lstrip('/')))
     rewritten = rewritten.replace('/usr/bin/node',str(case_root/'bin/node'))
+    rewritten = rewritten.replace('/usr/libexec/cpe5g-lucky-persist',str(case_root/'bin/cpe5g-lucky-persist'))
     wrapper = case_root/'wrapper.sh'
     wrapper.write_text(rewritten)
     env = dict(os.environ, PATH=str(case_root/'bin'),
@@ -133,6 +137,8 @@ def run_case(name, *, mounts=EXT4, enabled=None, implementation=False,
     sleeps = [e for e in events if e['event']=='sleep']
     assert len(sleeps)==expected_sleeps,(name,sleeps)
     nodes = [e['module'] for e in events if e['event']=='node']
+    if nodes:
+        assert [e['event'] for e in events].index('persist') < [e['event'] for e in events].index('node'), events
     if expected_nodes is not None:
         assert nodes==expected_nodes,(name,nodes)
         assert not any(e['event']=='nikki' for e in events),(name,events)
