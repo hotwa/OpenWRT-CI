@@ -26,6 +26,8 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
   already-running daemon with the correct state path is not started or restarted,
   preserving its live addresses and routes. State-path migration, stopped daemon
   recovery and mount-loss protection retain their checked fail-closed behavior.
+  The shared WRT-CORE overlay provides this to route-reconcile builds; arbitrary
+  external builds and direct repeated unpatched init start calls are not covered.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
 - `/etc/hotplug.d/iface/95-headscale-auto-enroll` starts enrollment when an interface comes up; it never restarts a live one-shot worker.

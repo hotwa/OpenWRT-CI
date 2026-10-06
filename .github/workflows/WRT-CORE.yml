@@ -187,6 +187,8 @@ on:
         required: false
       NIKKI_SUBSCRIPTION_URL:
         required: false
+      GECOOSAC_WIFI_PASSWORD:
+        required: false
       COMMANDCODE_API_KEY:
         required: false
       CLIPROXYAPI_API_KEY:
@@ -852,6 +854,16 @@ jobs:
           cp -f ./files/etc/init.d/nikki-subscription-sync ./wrt/files/etc/init.d/nikki-subscription-sync
           cp -f ./files/etc/hotplug.d/iface/99-nikki-subscription ./wrt/files/etc/hotplug.d/iface/99-nikki-subscription
           cp -f ./files/usr/sbin/nikki-subscription-sync ./wrt/files/usr/sbin/nikki-subscription-sync
+          if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
+            mkdir -p ./wrt/files/etc/gecoosac-auto ./wrt/files/usr/libexec ./wrt/files/lib/upgrade/keep.d
+            cp -f ./files/etc/gecoosac-auto/profile.json ./wrt/files/etc/gecoosac-auto/profile.json
+            cp -f ./files/usr/libexec/gecoosac-auto.js ./wrt/files/usr/libexec/gecoosac-auto.js
+            cp -f ./files/usr/sbin/gecoosac-auto ./wrt/files/usr/sbin/gecoosac-auto
+            cp -f ./files/etc/init.d/gecoosac-auto ./wrt/files/etc/init.d/gecoosac-auto
+            cp -f ./files/etc/uci-defaults/99-gecoosac-auto ./wrt/files/etc/uci-defaults/99-gecoosac-auto
+            cp -f ./files/lib/upgrade/keep.d/gecoosac-auto ./wrt/files/lib/upgrade/keep.d/gecoosac-auto
+            chmod 0755 ./wrt/files/usr/sbin/gecoosac-auto ./wrt/files/usr/libexec/gecoosac-auto.js ./wrt/files/etc/init.d/gecoosac-auto ./wrt/files/etc/uci-defaults/99-gecoosac-auto
+          fi
           cp -f ./files/etc/uci-defaults/99-enable-nikki-dns-failopen ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen
           mkdir -p ./wrt/files/etc/agent-tools
           cp -f ./files/etc/agent-tools/README.md ./wrt/files/etc/agent-tools/README.md
@@ -995,6 +1007,7 @@ jobs:
           OPENWRT_WAN_PPPOE_USERNAME: ${{secrets.OPENWRT_WAN_PPPOE_USERNAME}}
           OPENWRT_WAN_PPPOE_PASSWORD: ${{secrets.OPENWRT_WAN_PPPOE_PASSWORD}}
           NIKKI_SUBSCRIPTION_URL: ${{secrets.NIKKI_SUBSCRIPTION_URL}}
+          GECOOSAC_WIFI_PASSWORD: ${{secrets.GECOOSAC_WIFI_PASSWORD}}
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
@@ -1007,7 +1020,7 @@ jobs:
               CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 \
               CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6 \
               HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
-              NIKKI_SUBSCRIPTION_URL \
+              NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
@@ -1018,6 +1031,7 @@ jobs:
             bash "$GITHUB_WORKSPACE/Scripts/PiCliProxyApiProviderConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
+            bash "$GITHUB_WORKSPACE/Scripts/GecoosacAutoConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"

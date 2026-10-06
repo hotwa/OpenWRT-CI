@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+for node in /opt/node/bin/node /usr/bin/node; do
+  [ -x "$node" ] || continue
+  exec "$node" /usr/libexec/gecoosac-auto.js
+done
+logger -t gecoosac-auto 'firmware Node baseline is unavailable'
+exit 1

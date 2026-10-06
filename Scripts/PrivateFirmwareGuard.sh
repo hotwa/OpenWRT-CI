@@ -50,6 +50,25 @@ reasons=
 wrtbak_config="$TARGET_FILES/etc/config/wrtbak"
 headscale_authkey="$TARGET_FILES/etc/tailscale/headscale.authkey"
 
+# A managed AP preset is a private credential even when no other injector ran.
+gecoosac_profile="$TARGET_FILES/etc/gecoosac-auto/profile.json"
+if [ -r "$gecoosac_profile" ]; then
+	if python3 - "$gecoosac_profile" <<'PY'
+import json, sys
+try:
+    profile = json.load(open(sys.argv[1], encoding='utf-8'))
+except (ValueError, OSError):
+    # An unreadable credential profile must never be classified as public.
+    sys.exit(0)
+if not isinstance(profile, dict):
+    sys.exit(0)
+sys.exit(0 if profile.get('fallback_key') or profile.get('ac_password', 'admin') != 'admin' else 1)
+PY
+	then
+		add_reason gecoosac-wifi-password
+	fi
+fi
+
 if [ -r "$wrtbak_config" ]; then
 	access_key="$(uci_option_value "$wrtbak_config" remote s3 access_key)"
 	secret_key="$(uci_option_value "$wrtbak_config" remote s3 secret_key)"

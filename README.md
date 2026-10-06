@@ -15,7 +15,7 @@ https://github.com/VIKINGYFY/immortalwrt.git
 - CI 工作流上游：`davidtall/DaeWRT-CI`。
 - 固件源码候选上游：`davidtall/immortalwrt:stable`。该移动分支只用于跟踪候选更新，不是自动生产基线。
 - 上游合并策略见 `docs/upstream-merge-policy.md`。默认只做小原子吸收，不能用上游覆盖删除 hotwa 的京东云设备、Nikki、wrtbak/private build、CPE-5G 或 Headscale/Tailscale guard。
-- CPE-5G 当前生产基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
+- CPE-5G 历史无无线回退基线：B 功能对照，2026-07-06 / `0bad892975fe49fd180f99b414a7f168bb694dd7` / Linux `6.18.37` / `IPQ60XX-706-NOWIFI`。2026-07-12 已在 `jdcloud,re-ss-01` 完成刷写并进入系统，`usb0=192.168.66.2/24`，OpenWrt 本机访问 CPE `192.168.66.1:6677` 返回 HTTP 200。
 - A 纯底层对照使用同一 SHA/NOWIFI 配置、关闭 feature overlay，也已完成刷写并正常进入系统；保留为后续启动问题隔离基线。
 - 2026-10-03 无线候选：CPE B 改用单机型 `IPQ60XX-706-WIFI`，继续固定上述完整源码 SHA；增加 RE-SS-01 无线驱动、IPQ6018 固件及板级校准文件。2.4 GHz IoT AP 为 `CPE-s13-IoT`，`HT20`、WPA2/CCMP，密码仅由私有 CI Secret 注入。2026-10-05 Action `37282283649` 已保留配置刷写并完成两次软重启，2.4 GHz AP 在线；断电冷启动后 AP/容器/身份恢复，实际 IoT 关联仍待验收，已验证 NOWIFI B 和 A 隔离基线仍保留，详见 [无线预设](docs/cpe-wifi.md)。
 - 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
@@ -38,7 +38,7 @@ Release 的 Source code tar.gz 只代表 `davidtall/DaeWRT-CI` 的 CI 脚本、�
 
 `CPE-5G` 历史 A/B NOWIFI 对照已在 2026-07-12 通过启动门禁。A 保留同一 SHA、`IPQ60XX-706-NOWIFI`、关闭 feature overlay 和 `192.168.10.1`，用于底层隔离。2026-10-03 按用户 IoT 无线需求，B 新候选采用单机型 `IPQ60XX-706-WIFI`，保留原内核/NSS 选项和 `192.168.13.1` CPE 功能，增加无线组件。不能用历史 NOWIFI 启动结果替代无线候选的设备验收。
 
-日常触发 `CPE-5G` 默认 `BUILD_BASELINE_A=false`，只构建 B 无线候选；需要隔离启动、NSS 或网口故障时显式启用 A。B 的 artifact 名称包含 `CPE-5G-RE-SS-01-WIFI-B` 和 `IPQ60XX-706-WIFI`，准确标识型号和无线构建；历史 NOWIFI artifact 不能重命名为无线固件。
+用户在 2026-10-06 确认今后日常 CPE 固件均使用 Wi-Fi。日常触发 `CPE-5G` 默认 `BUILD_BASELINE_A=false`，只构建 B `IPQ60XX-706-WIFI`；需要隔离启动、NSS 或网口故障时显式启用 A。B 的 artifact 名称包含 `CPE-5G-RE-SS-01-WIFI-B` 和 `IPQ60XX-706-WIFI`，准确标识型号和无线构建；历史 NOWIFI artifact 不能重命名为无线固件。
 
 CPE-5G B 与普通 feature-overlay 构建共享 wrtbak/Headscale 首启门禁。factory 启动时先等待 wrtbak 判断是否恢复已有 `tailscaled.state`；仅在恢复终态确认没有可复用身份时才执行 Headscale 新注册，避免刷机产生临时残留节点。
 

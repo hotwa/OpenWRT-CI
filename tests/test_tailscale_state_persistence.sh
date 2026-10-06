@@ -17,6 +17,8 @@ grep -Fq 'START=96' "$INIT"
 grep -Fq '/data/tailscale/tailscaled.state' "$ROOT_DIR/files/etc/config/tailscale"
 grep -Fq 'tailscale-state-persist' "$WORKFLOW"
 grep -Fq 'data_is_persistent_mount' "$WORKER"
+grep -Fxq '/usr/sbin/tailscale-state-persist >/dev/null 2>&1 || true' "$HOTPLUG"
+! grep -q 'init.d/tailscale-state-persist restart' "$HOTPLUG"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -38,7 +40,7 @@ cat >"$BIN_DIR/uci" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"$TEST_CALLS"
 case "$1 $2" in
-  '-q get') cat "$TEST_CONFIG" ;;
+  '-q get') cat "$TEST_CONFIG" 2>/dev/null ;;
   '-q set') printf '%s\n' "${3#*=}" >"$TEST_CONFIG" ;;
 esac
 EOF
@@ -110,6 +112,25 @@ run_worker
 ! grep -Fxq 'init stop' "$CALLS"
 ! grep -Fxq 'init start' "$CALLS"
 [ -f "$READY_FILE" ]
+
+# Concurrent events must not clear the active worker's readiness.
+mkdir "$WORK_DIR/lock"
+: >"$CALLS"
+run_worker
+[ -f "$READY_FILE" ]
+[ ! -s "$CALLS" ]
+rmdir "$WORK_DIR/lock"
+# A stopped service still recovers with the authoritative identity.
+rm -f "$WORK_DIR/running"
+: >"$CALLS"
+run_worker
+grep -Fxq 'init start' "$CALLS"
+# A running daemon must stop/start when its configured path changes.
+printf '%s\n' '/etc/tailscale/tailscaled.state' >"$CURRENT_CONFIG"
+: >"$CALLS"
+run_worker
+grep -Fxq 'init stop' "$CALLS"
+grep -Fxq 'init start' "$CALLS"
 
 rm -f "$WORK_DIR/running"
 : >"$CALLS"

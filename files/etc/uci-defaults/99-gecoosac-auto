@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null || true)" in
+  jdcloud,re-cs-07|jdcloud,re-ss-01|jdcloud,re-cs-02) ;;
+  *) exit 0 ;;
+esac
+[ -x /usr/bin/gecoosac ] || exit 0
+mkdir -p /etc/crontabs
+touch /etc/crontabs/root
+# Serialize with other managed cron writers.
+lock /var/lock/root-crontab
+trap 'lock -u /var/lock/root-crontab' EXIT HUP INT TERM
+tmp="$(mktemp /etc/crontabs/.gecoosac-auto.XXXXXX)"
+sed '/#gecoosac-auto$/d' /etc/crontabs/root > "$tmp"
+printf '%s\n' '*/2 * * * * /usr/sbin/gecoosac-auto >/dev/null 2>&1 #gecoosac-auto' >> "$tmp"
+chmod 600 "$tmp"
+mv "$tmp" /etc/crontabs/root
+/etc/init.d/gecoosac disable
+/etc/init.d/gecoosac-auto enable
+/etc/init.d/cron reload >/dev/null 2>&1 || true
+# procd does not block first boot while the AC API starts.
+/etc/init.d/gecoosac-auto start
