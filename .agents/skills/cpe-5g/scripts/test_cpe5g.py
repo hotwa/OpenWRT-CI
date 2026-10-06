@@ -13,6 +13,21 @@ spec.loader.exec_module(m)
 
 
 class StatusFixtures(unittest.TestCase):
+    def test_cellular_ledger_and_vendor_total_are_distinct(self):
+        raw = "schema\tcpe5g-read-only-v1\nquota_used\t1748484\nquota_vendor_used\t8003632777\nquota_source\temmc-cellular-counters\nquota_blocked\tfalse\n"
+        q = m.status_projection(raw)["sim"]["quota"]
+        self.assertEqual(q["used_bytes"], 1748484)
+        self.assertEqual(q["vendor_used_bytes"], 8003632777)
+        self.assertEqual(q["source"], "emmc-cellular-counters")
+        self.assertFalse(q["blocked"])
+
+    def test_unknown_accounting_source_and_non_numeric_vendor_field_are_not_exposed(self):
+        raw = "schema\tcpe5g-read-only-v1\nquota_source\tDO_NOT_DISPLAY\nquota_vendor_used\tDO_NOT_DISPLAY\n"
+        q = m.status_projection(raw)["sim"]["quota"]
+        self.assertIsNone(q["source"])
+        self.assertIsNone(q["vendor_used_bytes"])
+        self.assertNotIn("DO_NOT_DISPLAY", str(q))
+
     def test_missing_runtime_is_unknown_not_ready(self):
         result = m.status_projection("schema\tcpe5g-read-only-v1\napi_nerdctl_present\tfalse\napi_containerd_socket\tfalse\n", include_api=True)
         self.assertFalse(result["api"]["runtime"]["binary_present"])

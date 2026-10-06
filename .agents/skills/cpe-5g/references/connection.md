@@ -63,8 +63,12 @@ Lucky 配置以 `/data/lucky` 为准，真实 bind mount 到 `/etc/lucky`，不�
 挂载，不把存在目录视作挂载成功。配置完整备份仍须包含 CPE 私有证书/受管清单
 及 UCI；保留配置升级的迁移由 CPE B overlay 实现，工厂重分区不保证存活。
 
-厂商 vnStat 曾在模块断电后回退并虚增。OpenWrt 的 `/data/cpe5g-quota/ledger.json`
-保留历史已用量并累计原生蜂窝增量；状态中的 `quota.source` 可区分新计量。
+用户说明曾主动清零厂商统计；回退不能归因为断电，旧历史与原生计数的差异原因
+仍需核实。OpenWrt 的 `/data/cpe5g-quota/ledger.json` 累计原生蜂窝增量，
+其统计与 UDX 后台清零是两个独立状态；不能擅自补回用户已明确清除的历史。
+只读 `status` 的 `quota.source` 标识新计量，`used_bytes` 是账本用量，
+`vendor_used_bytes` 保留厂商统计作为对照；未知来源返回 null，不推断正常。WAN 健康时 SIM IPv6 仍向 LAN 提供网络，
+所以仍可产生真实 SIM 消耗；usb0 也包括本地管理/ADB，不能直接作 SIM 用量。
 账本缺失持久盘、损坏或同一模块 boot ID 内计数倒退时，SIM 双栈和公网门禁关闭，
 WAN/LAN 保持。不要删除账本、重置模块统计或自动清零来解除限额；新账期需根据
 用户授权和运营商实际窗口核对。连续计量是保守保护，断电时未采样尾段不能证明
