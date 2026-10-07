@@ -322,6 +322,7 @@ EOF
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
+		MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context \
 		PATH="$agent_path" \
 		CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url" \
 		CLIPROXYAPI_API_KEY="$cliproxyapi_api_key" \

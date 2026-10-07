@@ -94,9 +94,13 @@ if (!Array.isArray(catalog.openwrtPiExtensions)) die('catalog has no openwrtPiEx
 if (catalog.openwrtPiLazyExtensions !== undefined && !Array.isArray(catalog.openwrtPiLazyExtensions)) {
   die('catalog openwrtPiLazyExtensions must be an array when present');
 }
+if (catalog.openwrtPiOptionalExtensions !== undefined && !Array.isArray(catalog.openwrtPiOptionalExtensions)) {
+  die('catalog openwrtPiOptionalExtensions must be an array when present');
+}
 const allPiExtensions = [...new Set([
   ...catalog.openwrtPiExtensions,
   ...(catalog.openwrtPiLazyExtensions || []),
+  ...(catalog.openwrtPiOptionalExtensions || []),
 ])];
 
 const piRoot = path.join(nodeModules, '@earendil-works', 'pi-coding-agent');

@@ -432,6 +432,11 @@ start() {
 		fi
 	fi
 
+	# Optional Magic Context config persists without enabling background jobs.
+	mkdir -p "$ROOT_HOME/.config" || return 1
+	link_directory "$DATA_ROOT/cortexkit/config" "$ROOT_HOME/.config/cortexkit" cortexkit || \
+		log_warn "cannot link persistent CortexKit config"
+
 	# Home symlinks for the daemons and CLIs.
 	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || log_warn "cannot link /root/.multica"
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || \
