@@ -833,6 +833,11 @@ jobs:
           cp -f ./files/etc/npmrc ./wrt/files/etc/npmrc
           cp -f ./files/root/.npmrc ./wrt/files/root/.npmrc
           cp -f ./files/etc/data-runtime.env ./wrt/files/etc/data-runtime.env
+          # Recover early USB storage add events without changing fstab policy.
+          cp -f ./files/usr/sbin/usb-boot-automount ./wrt/files/usr/sbin/usb-boot-automount
+          cp -f ./files/etc/init.d/usb-boot-automount ./wrt/files/etc/init.d/usb-boot-automount
+          cp -f ./files/etc/uci-defaults/98-enable-usb-boot-automount ./wrt/files/etc/uci-defaults/98-enable-usb-boot-automount
+          chmod 0755 ./wrt/files/usr/sbin/usb-boot-automount ./wrt/files/etc/init.d/usb-boot-automount ./wrt/files/etc/uci-defaults/98-enable-usb-boot-automount
           cp -f ./files/etc/init.d/data-runtime ./wrt/files/etc/init.d/data-runtime
           cp -f ./files/etc/init.d/agent-data-prep ./wrt/files/etc/init.d/agent-data-prep
           cp -f ./files/etc/init.d/agent-runtime-baseline-readonly ./wrt/files/etc/init.d/agent-runtime-baseline-readonly
