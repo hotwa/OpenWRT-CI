@@ -20,22 +20,22 @@ https://github.com/VIKINGYFY/immortalwrt.git
 - 2026-10-03 无线候选：CPE B 改用单机型 `IPQ60XX-706-WIFI`，继续固定上述完整源码 SHA；增加 RE-SS-01 无线驱动、IPQ6018 固件及板级校准文件。2.4 GHz IoT AP 为 `CPE-s13-IoT`，`HT20`、WPA2/CCMP，密码仅由私有 CI Secret 注入。2026-10-05 Action `37282283649` 已保留配置刷写并完成两次软重启，2.4 GHz AP 在线；断电冷启动后 AP/容器/身份恢复，实际 IoT 关联仍待验收，已验证 NOWIFI B 和 A 隔离基线仍保留，详见 [无线预设](docs/cpe-wifi.md)。
 - 历史已知可启动回退点：2026-06-25 / `42a1f64b5dbd2a99d05daca94ae5a87eebff59b4` / Linux `6.18.35`。
 
-### 6.18.52 / NSS 候选分支
+### 6.18.52 / NSS 接入与实机验收
 
-`codex/nss-6.18.52-candidate` 的 CPE-5G、RE-Mesh（RE-SS-01 / RE-CS-02）、RE-CS-07 构建固定到 `VIKINGYFY/immortalwrt@0fb9b10cb9df51fb076470e1dd93d1c30dd89d83`，Linux `6.18.52`。四台 `567c319` 已编译及刷入，CS07、SS01、CPE 两次软重启通过，冷启动/USB 实插待验；CS02 CN 监管规则更新失败，需恢复原上游带宽 clamp 补丁后单独重编验收。main 尚未合并候选，不提升下表已验证生产基线。补丁作用域、摘要、设备树及验收限制见 [候选审查](docs/nss-6.18.52-candidate.md)。
+CPE-5G、RE-Mesh（RE-SS-01 / RE-CS-02）、RE-CS-07 构建固定到 `VIKINGYFY/immortalwrt@0fb9b10cb9df51fb076470e1dd93d1c30dd89d83`，Linux `6.18.52`。CS07、SS01、CPE 已刷入 `567c319`，CS02 已刷入监管修复版 `863a288`；四台两次软重启通过。CS02 三组实际监管规则均 CN、Call trace 为 0；安装通用补挂脚本后，用户断电上电验收 USB 自动挂载及读写成功，核心服务和原 agent 身份恢复。用户明确允许此结果后合入 main，其他三台物理门禁暂缓，CPE UDX710 拔插不要求；不能把暂缓项标为实测通过。下表旧生产基线保留为历史回退参考。详细来源、产物摘要、数据库事故及验收限制见 [接入审查](docs/nss-6.18.52-candidate.md)。
 
 | 候选组件 | 精确版本 / 对象 | 验证状态 |
 | --- | --- | --- |
-| Linux | `6.18.52`；tarball SHA256 `2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8` | 四台已启动，三台两次软重启通过；CS02 无线验收失败 |
+| Linux | `6.18.52`；tarball SHA256 `2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8` | 四台启动及两次软重启通过；CS02 无线修复与冷启动 USB 通过，其他物理门禁暂缓 |
 | qca-nss-dp | `d8f802f0-r1`；tree `2bc15a723ed64c342026828774c99202683366c7` | patches 更新 |
 | qca-nss-drv | `6aa14c7-r18`；tree `e34e64453e3325896fc05d5009014b398c76b96b` | patches / files 更新 |
 | qca-nss-ecm | `8c7355b-r9`；tree `a7ade4e097e7047c9ce1e457dbf139d31b6076ee` | patches / 构建条件更新 |
 | qca-ssdk | `d9a19649-r2`；tree `60e4b67d8923489d163f791e9c6f04674dc5ed1f` | patches 更新 |
 | Qualcommax 内核补丁 | tree `46ebeb603056b335f74cb84672ac4e1a4cfc0b8d` | USB / WCSS 等需设备验收 |
 | RE-SS-01 DTS | blob `a278a87acb783e546cc473878cb8fe5ca3d50a92` | 文件不变，继承的 SoC DTSI 有变 |
-| CS02 ath11k 监管补丁 | 恢复原 `a4638cd` 的 `990-ath11k-clamp-reg-rule-bandwidth.patch`；SHA256 `dd4ad38515ad746630d28dae3669cfef7be3ddb6dc1fd552586a0cf137d1c38a` | backports 7.2 零 fuzz / C 回归通过；单独重编及实机待验 |
+| CS02 ath11k 监管补丁 | 恢复原 `a4638cd` 的 `990-ath11k-clamp-reg-rule-bandwidth.patch`；SHA256 `dd4ad38515ad746630d28dae3669cfef7be3ddb6dc1fd552586a0cf137d1c38a` | backports 7.2 零 fuzz / C 回归通过；CS02 实机 CN / 0 Call trace、两次软重启及冷启动通过 |
 
-| 组件 | 当前已验证版本 | 来源提交 |
+| 组件 | 历史已验证回退版本 | 来源提交 |
 | --- | --- | --- |
 | 固件源码 commit | `VIKINGYFY/immortalwrt@0bad892975fe49fd180f99b414a7f168bb694dd7` | 7.06 产物 `/etc/openwrt_release` 的 `r0-0bad892` 解析结果；构建必须精确 detached checkout |
 | Linux kernel | `6.18.37` | `target/linux/generic/kernel-6.18` blob `efbfe514334d0ec7ea223dfd217ee03a9842c8e3`；tarball SHA256 `a83cd200e6646db52866b8309e9137b9e9048b613cbda10ced2b811aae125255` |

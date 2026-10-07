@@ -6,13 +6,17 @@
 固定完整源码 `VIKINGYFY/immortalwrt@0fb9b10cb9df51fb076470e1dd93d1c30dd89d83`。
 只更新 CPE-5G、RE-Mesh（RE-CS-02 / RE-SS-01）、RE-CS-07 的源码 pin。
 这是完整源码候选升级，包含内核及通用补丁依赖，不声称只 cherry-pick NSS 补丁；不合并上游 CI 仓库。
-本分支保留机型配置、网络/代理策略、运行时 pin 和 private Secret 映射；未提升生产基线。
+本分支保留机型配置、网络/代理策略、运行时 pin 和 private Secret 映射；用户在 CS02 冷启动 USB 通过后明确授权合入 main，其余物理门禁暂缓，见下文限制。
 
 ## 当前实机状态与 CS02 修复
 
-`567c319` 三个 Action 已成功，四台已保留配置刷入。CS07、SS01、CPE 已通过两次软重启；冷启动及 USB 物理插拔仍待验收。CS02 网络、三组无线、容器和原 agent 身份恢复，但首次启动及一次诊断软重启均出现 9 条监管规则 Call trace，PCI radio 的 CN 更新返回 `-22`，实际 self-managed 规则仍为 US。因此该候选尚不能提升为生产版本。
+`567c319` 三个 Action 已成功，四台已保留配置刷入。CS07、SS01、CPE 两次软重启通过。CS02 原先 9 条监管 Call trace / CN 更新 `-22` 问题已在 `863a288` 修复；实际 global/phy0/phy1/phy2 均 CN，Call trace 0，两次软重启通过。用户确认断电上电后，新通用 USB 补挂脚本自动挂载到设备配置的 `/mnt/kioxia`，读写通过；只读离线 exFAT 检查为 clean，核心网络、NSS、eMMC、Gecoos、原验收容器与原 agent/runtime ID 恢复。
 
-原源码 `a4638cd` 中的 `990-ath11k-clamp-reg-rule-bandwidth.patch` 在新源码中被删除。候选分支为 CS02 恢复这一完整、已审阅的补丁，SHA256 为 `dd4ad38515ad746630d28dae3669cfef7be3ddb6dc1fd552586a0cf137d1c38a`。补丁将监管规则带宽限制在已有频率范围内，不改国家码、功率或频率端点，不取消 cfg80211 验证。安装器限于 CS02 + 完整源码 `0fb9b10` + backports 7.2 精确版本和包 hash；遇到未知版本或冲突补丁立即失败。源码包上零 fuzz 应用检查、编译后的 C 规则测试及安装器作用域/漂移/幂等测试通过。只重编 CS02；是否消除实机告警仍待新产物验收。
+用户明确暂缓 CS07、SS01、CPE 的剩余物理验收，并要求 CPE 保留 UDX710 不做拔插测试；这些项目未实测，不标为通过。依据用户在 CS02 新脚本冷启动成功后的明确指令合入 main。CS02 新建应用 `garage-cs02` 仍依赖未配置的 `/mnt/garage-data`；它不是原固件验收容器，未宣称恢复成功、未改其数据路径。
+
+USB 通用恢复已独立通过 PR #32 合 main（`f44557031fe9761646ab12349fcf766978b1b36e`），不固定 UUID，不创建免密码 SMB。按 sysfs USB 祖先仅重放未挂载存储的原生 fstools add 事件，开机窗口有界；共享与稳定挂载点保留为设备配置。现场冷启动的通用脚本与 PR #32 代码一致。
+
+原源码 `a4638cd` 中的 `990-ath11k-clamp-reg-rule-bandwidth.patch` 在新源码中被删除。候选分支为 CS02 恢复这一完整、已审阅的补丁，SHA256 为 `dd4ad38515ad746630d28dae3669cfef7be3ddb6dc1fd552586a0cf137d1c38a`。补丁将监管规则带宽限制在已有频率范围内，不改国家码、功率或频率端点，不取消 cfg80211 验证。安装器限于 CS02 + 完整源码 `0fb9b10` + backports 7.2 精确版本和包 hash；遇到未知版本或冲突补丁立即失败。源码包上零 fuzz 应用检查、编译后的 C 规则测试及安装器作用域/漂移/幂等测试通过。只重编 CS02；Action `37523641754` 成功，实机告警已消除。
 
 CS02 本次升级还发生备份流程事故：完整数据库目录没有被 sysupgrade 清单覆盖，覆盖断言失败后命令串仍继续刷机。已恢复上一版完整 Gecoos 数据库快照并保留残留目录；近期数据库修改未证明保留。修订升级 skill：暂停数据库后独立枚举、核验归档内容及 CURRENT/MANIFEST 依赖，刷机要求成功覆盖记录和精确归档摘要，任何前置失败都必须停止。
 
@@ -60,7 +64,7 @@ Upstream source: VIKINGYFY/immortalwrt `0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
 Accepted: 完整源码候选 pin（含 Linux 6.18.52 / NSS / SSDK / USB / WCSS 依赖），范围限三条机型构建入口。
 Rejected: 不导入 DaeWRT-CI 的设备删除、代理替换或运行时/私有配置覆盖；davidtall/immortalwrt stable 42180ada 是 CPE 基线祖先，不作升级。
 Protected: AI agent runtime、Tailscale/Headscale、Nikki、JDCloud 设备、Wrtbak disabled guard、CPE Wi-Fi B / A isolation、SIM native ledger、Lucky eMMC 与加密产物。
-Verified: GitHub tree/blob/contents 比较；本地护栏结果记录于 PR。编译/实机门禁待执行。
+Verified: GitHub tree/blob/contents 比较；本地护栏结果记录于 PR。四台编译/刷写及两次软重启通过；CS02 冷启动/USB 通过，其他物理项目按用户指令暂缓。
 Device impact: CPE-5G、RE-SS-01、RE-CS-02、RE-CS-07；普通 QCA/WLG 构建入口不修改。
 
 ## 验收与回退
@@ -69,3 +73,16 @@ Device impact: CPE-5G、RE-SS-01、RE-CS-02、RE-CS-07；普通 QCA/WLG 构建�
 CPE 另验 UDX usb0、SIM IPv6、公网回源、mwan3 标记和配额账本；真实故障测试必须有独立救援和限时恢复。
 USB 实际拔插不能用 mock 测试代替。编译成功不等于硬件启动通过。
 回退只恢复对应 workflow 源码 pin：CPE 回到 `0bad892975fe49fd180f99b414a7f168bb694dd7`，其他三个设备回到 `a4638cd4389183f1a1fcad0441f491ca11c97757`，保留无关 hotwa 功能提交和 `/data`。
+
+## 已刷入产物
+
+所有产物完整文件校验和与完整源码 SHA 均已核验。设备保持各自精确 workflow 提交，后续文档合并提交不冒充已刷固件。
+
+| 设备 | workflow 提交 | Action | sysupgrade SHA256 |
+| --- | --- | --- | --- |
+| RE-CS-02 | `863a28839356ab967cc38f1369652d5fec5e08da` | `37523641754` | `dcf1d2a7962e27a0670262403bf89779f59a520088810b28266c739c3b3a5591` |
+| RE-SS-01 | `567c31956729e3552ded5d166f4c32f425e63d01` | `37482768819` | `8e754575e049c88d0260fd941a2fb055cfc63cc4128151de4fda385cd569f8be` |
+| RE-CS-07 | `567c31956729e3552ded5d166f4c32f425e63d01` | `37482778679` | `1c7edcf3d43591421e53b41b274c0bd281e6472a5d22619c95042cf114c7bb85` |
+| CPE Wi-Fi B | `567c31956729e3552ded5d166f4c32f425e63d01` | `37482786828` | `a2fb43748ad217e26f63b40b48db61bd7b897daa0b4265019f41f4f58a489679` |
+
+修复版 CS02 ZIP SHA256：`5a2094642f4b25b2d2c2662958b6782728ca0b872dc15a18cdf9f4458c28f63f`。其他私有 ZIP 摘要、备份 coverage receipt 和逐次启动证据保留在本机私有 ledger，不公开配置或凭据。
