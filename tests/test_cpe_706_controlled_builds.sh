@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
 CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 CONFIG="$ROOT_DIR/Config/IPQ60XX-706-NOWIFI.txt"
-SHA='0bad892975fe49fd180f99b414a7f168bb694dd7'
+SHA='0fb9b10cb9df51fb076470e1dd93d1c30dd89d83'
 
 # Select one mapping and stop at the next sibling or ancestor key. Extra
 # inputs/comments must not make a valid field fall outside a line-count window.
@@ -79,7 +79,7 @@ for job in baseline_a cpe_overlay_b; do
 done
 
 [ "$(grep -c "WRT_COMMIT: $SHA" "$WORKFLOW")" -eq 2 ] || {
-  echo 'A and B must use the same immutable 7.06 source SHA'
+  echo 'A and B must use the same immutable candidate source SHA'
   exit 1
 }
 
