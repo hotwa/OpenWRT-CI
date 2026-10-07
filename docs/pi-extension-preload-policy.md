@@ -116,3 +116,7 @@ TPS 扩展会重复统计、提示和状态展示。需要独立 `pi-tps` 时，
 插件的可选 onnxruntime-node 不提供受验证 musl 基线，固件在架构检查前移除该后端及嵌套副本，保留 WASM 依赖。优先使用远端 Embedding，避免在 SS01/CPE 下载本地模型；不要因一次导入通过就自动开启本地推理。
 
 交互 shell 与 Multica daemon 都传递同一个 MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context；/root/.config/cortexkit 通过既有保留迁移机制指向 /data/cortexkit/config。插件不默认加载，所以不会仅因预装就启动记忆维护或增加 API 调用。管理员启用时需审阅 compaction、Historian、Dreamer 和 Hindsight 的分工，并使用一致的远端 Embedding 模型。保留配置中的凭据不得提交仓库。
+
+## Multica default runtime
+
+All firmware targets default to Pi, including private auto-enrollment and missing-config fallbacks. Explicit retained OpenCode selections remain supported; upgrades do not overwrite user runtime choices. Agent data preparation no longer promotes Pi to OpenCode. Pi native MCP configuration is device-side; Multica-managed MCP injection into Pi must be verified separately. Memory savings versus OpenCode have not been measured under an identical workload.

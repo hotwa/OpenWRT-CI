@@ -64,11 +64,11 @@ acquire_maintenance_lock() {
 	flock -n 8
 }
 
-# If multica is explicitly configured for pi (not opencode, not default),
+# Unless Multica explicitly selects OpenCode (Pi is the default),
 # there is no opencode runtime to guard.  Restore any prior disable state and
 # clean up stale counters, then exit.
 _provider="$(uci -q get multica.main.runtime_provider 2>/dev/null || true)"
-if [ -n "$_provider" ] && [ "$_provider" != "opencode" ]; then
+if [ "$_provider" != "opencode" ]; then
 	if [ -f "$FALLBACK_MARKER" ] || [ ! -x "$OC_WRAPPER" ] || { [ -f "$OC_REAL_BIN" ] && [ ! -x "$OC_REAL_BIN" ]; }; then
 		acquire_maintenance_lock || exit 0
 	fi
