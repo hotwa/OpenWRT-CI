@@ -386,6 +386,14 @@ prune_foreign_platform_builds() {
 			;;
 	esac
 
+	# ONNX Runtime's Node package carries glibc and foreign-OS binaries.
+	# OpenWrt Magic Context uses remote embeddings (WASM remains available).
+	# Remove only this optional backend, including nested copies, before ELF gates.
+	while IFS= read -r variant; do
+		rm -rf -- "$variant"
+		log_info "Pruned optional glibc ONNX Node backend."
+	done < <(find "$NODE_LIB_DIR" -type d -name onnxruntime-node -prune -print)
+
 	for koffi_dir in "$NODE_LIB_DIR"/koffi/build/koffi/*; do
 		[ -d "$koffi_dir" ] || continue
 		case "$(basename "$koffi_dir")" in

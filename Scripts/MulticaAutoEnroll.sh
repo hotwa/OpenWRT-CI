@@ -10,15 +10,8 @@ MULTICA_APP_URL="${MULTICA_APP_URL:-https://multica.lucky.jmsu.top}"
 MULTICA_WORKSPACE_ID="${MULTICA_WORKSPACE_ID:-}"
 MULTICA_DEVICE_NAME="${MULTICA_DEVICE_NAME:-}"
 MULTICA_RUNTIME_NAME="${MULTICA_RUNTIME_NAME:-Pi on OpenWrt}"
-# runtime_provider default: opencode carries the CommandCode relay on devices
-# with >=2GB RAM (re-cs-02 / re-cs-07); re-ss-01 has no opencode (896MB RAM),
-# so its Multica runtime falls back to pi (whose default provider is commandcode).
-if [ -z "${MULTICA_RUNTIME_PROVIDER:-}" ]; then
-	case "${WRT_EXPECTED_DEVICE:-}" in
-		jdcloud_re-ss-01) MULTICA_RUNTIME_PROVIDER="pi" ;;
-		*) MULTICA_RUNTIME_PROVIDER="opencode" ;;
-	esac
-fi
+# Pi is the default on every target; explicit build overrides remain supported.
+MULTICA_RUNTIME_PROVIDER="${MULTICA_RUNTIME_PROVIDER:-pi}"
 MULTICA_AGENT_NAME="${MULTICA_AGENT_NAME:-OpenWrt 管家}"
 MULTICA_WORKSPACES_ROOT="${MULTICA_WORKSPACES_ROOT:-/data/multica/workspaces}"
 

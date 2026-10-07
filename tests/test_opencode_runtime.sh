@@ -311,8 +311,8 @@ fi
 # ---------------------------------------------------------------------------
 echo "== multica-agent-bootstrap opencode-first =="
 
-grep -Fq "Opencode on OpenWrt" "$BOOTSTRAP_SCRIPT" && pass "bootstrap has opencode runtime name" || fail "bootstrap has opencode runtime name"
-grep -Fq "runtime_provider 'opencode'" "$BOOTSTRAP_SCRIPT" && pass "bootstrap default provider is opencode" || fail "bootstrap default provider is opencode"
+grep -Fq "Pi on OpenWrt" "$BOOTSTRAP_SCRIPT" && pass "bootstrap defaults to Pi runtime name" || fail "bootstrap defaults to Pi runtime name"
+grep -Fq "runtime_provider 'pi'" "$BOOTSTRAP_SCRIPT" && pass "bootstrap default provider is pi" || fail "bootstrap default provider is pi"
 grep -Fq "Pi (OpenWrt-Router)" "$BOOTSTRAP_SCRIPT" && pass "bootstrap has pi fallback name" || fail "bootstrap has pi fallback name"
 grep -Fq 'Pi fallback ready, checking for bounded promotion' "$BOOTSTRAP_SCRIPT" && pass "bootstrap logs usable Pi fallback and bounded promotion" || fail "bootstrap logs usable Pi fallback and bounded promotion"
 

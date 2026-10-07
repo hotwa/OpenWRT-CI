@@ -43,9 +43,13 @@ if (!Array.isArray(catalog.openwrtPiExtensions) || catalog.openwrtPiExtensions.l
 if (catalog.openwrtPiLazyExtensions !== undefined && !Array.isArray(catalog.openwrtPiLazyExtensions)) {
   die('catalog openwrtPiLazyExtensions must be an array when present');
 }
+if (catalog.openwrtPiOptionalExtensions !== undefined && !Array.isArray(catalog.openwrtPiOptionalExtensions)) {
+  die('catalog openwrtPiOptionalExtensions must be an array when present');
+}
 const allPiExtensions = [...new Set([
   ...catalog.openwrtPiExtensions,
   ...(catalog.openwrtPiLazyExtensions || []),
+  ...(catalog.openwrtPiOptionalExtensions || []),
 ])];
 for (const [name, selector] of Object.entries(catalog.dependencies)) {
   if (selector !== 'latest') die(`catalog dependency ${name} must use latest, got ${JSON.stringify(selector)}`);

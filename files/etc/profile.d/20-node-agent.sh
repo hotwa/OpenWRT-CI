@@ -23,12 +23,13 @@ case "${DATA_RUNTIME_STATE:-}:${DATA_RUNTIME_ROOT:-}" in
 	persistent:/data)
 		export PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache
 		export NODE_COMPILE_CACHE=/data/cache/node-compile-cache
+		export MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context
 		;;
 	fallback:/root)
 		export PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache
-		unset NODE_COMPILE_CACHE
+		unset NODE_COMPILE_CACHE MAGIC_CONTEXT_STORAGE_DIR
 		;;
 	*)
-		unset PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache NODE_COMPILE_CACHE
+		unset PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache NODE_COMPILE_CACHE MAGIC_CONTEXT_STORAGE_DIR
 		;;
 esac

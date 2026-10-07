@@ -83,19 +83,19 @@ reconcile_preferred_runtime https://example.invalid OpenCode router "$DATA_DIR/o
 [[ "$(grep -c '^agent create' "$TMP_ROOT/calls")" == 1 ]]
 
 # Exercise routing in main without network, real sleeps or procd.
-cfg() { case "$1" in enabled) printf 1;; runtime_provider) printf '%s' "$provider";; *) printf '%s' "$2";; esac; }
+cfg() { case "$1" in enabled) printf 1;; runtime_provider) printf '%s' "${provider:-$2}";; *) printf '%s' "$2";; esac; }
 acquire_lock() { return 0; }
 render_device_profile() { return 0; }
 dynamic_agent_name() { printf router; }
 try_bootstrap() { printf '%s\n' "$3" >> "$TMP_ROOT/providers"; [[ "$3" == "$available" ]]; }
 reconcile_preferred_runtime() { printf 'promotion\n' >> "$TMP_ROOT/providers"; }
-for scenario in pi opencode fallback; do
+for scenario in default pi opencode fallback; do
  : > "$TMP_ROOT/providers"
  provider=opencode; available=opencode
- case "$scenario" in pi) provider=pi; available=pi;; fallback) available=pi;; esac
+ case "$scenario" in default) provider=; available=pi;; pi) provider=pi; available=pi;; fallback) available=pi;; esac
  main
  case "$scenario" in
-  pi) [[ "$(cat "$TMP_ROOT/providers")" == pi ]];;
+  default|pi) [[ "$(cat "$TMP_ROOT/providers")" == pi ]];;
   opencode) [[ "$(cat "$TMP_ROOT/providers")" == opencode ]];;
   fallback) [[ "$(cat "$TMP_ROOT/providers")" == $'opencode\npi\npromotion' ]];;
  esac

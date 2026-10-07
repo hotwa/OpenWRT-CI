@@ -68,7 +68,7 @@ for term in 'PI_FD_VERSION="10.5.0"' 'PI_RIPGREP_VERSION="15.2.0"' \
   grep -Fq "$term" "$FETCH_SCRIPT" || fail "Pi fd verification is incomplete: $term"
 done
 
-for pkg in 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-undo-redo' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-lazy-extensions' 'pi-mcp-adapter' 'pi-tool-search' 'pi-web-access' 'pi-lsp' 'pi-cost' 'pi-cache-graph' 'pi-inspect' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
+for pkg in '@cortexkit/pi-magic-context' 'command-code' '@earendil-works/pi-coding-agent' 'pi-package-manager' 'btw-pi' 'pi-web-search' 'pi-undo-redo' 'pi-wechat-assistant' '@router-for-me/pi-cliproxyapi-provider' 'pi-commandcode-provider' 'pi-lazy-extensions' 'pi-tool-search' 'pi-web-access' 'pi-lsp' 'pi-cost' 'pi-cache-graph' 'pi-inspect' 'pi-subagents' '@capdiem/pi-todo' '@zephyrdeng/pi-review' '@luxusai/pi-hindsight' 'pi-interactive-shell' '@narumitw/pi-statusline' 'pnpm'; do
   grep -Fq "$pkg" "$MANIFEST" || fail "package manifest omits $pkg"
 done
 node - "$MANIFEST" "$SETTINGS" "$LAZY_EXTENSIONS" <<'NODE' || fail "Pi extension catalog/settings contract is invalid"
@@ -91,6 +91,9 @@ for (const extension of manifest.openwrtPiLazyExtensions) {
   if (!Object.prototype.hasOwnProperty.call(manifest.dependencies, extension)) process.exit(6);
   if (configured.has(extension)) process.exit(7);
 }
+for (const extension of manifest.openwrtPiOptionalExtensions || []) {
+  if (manifest.dependencies[extension] !== 'latest' || configured.has(extension)) process.exit(11);
+}
 const webAccess = lazyExtensions.extensions?.find(extension => extension?.name === 'web-access');
 if (!webAccess || webAccess.path !== '/data/node/lib/node_modules/pi-web-access/index.ts' || webAccess.lifecycle !== 'lazy') process.exit(8);
 if (!Array.isArray(webAccess.toolSummary) || !webAccess.toolSummary.includes('web_search')) process.exit(9);
@@ -102,7 +105,7 @@ fi
 if grep -Fq '@monotykamary/pi-tps' "$MANIFEST"; then
   fail "standalone pi-tps must not duplicate the TPS extension bundled with pi-cliproxyapi-provider"
 fi
-for forbidden in 'pi-mcp-extension' 'pi-code' '@narumitw/pi-subagents' '@henryqw/pi-subagent'; do
+for forbidden in 'pi-mcp-adapter' 'pi-mcp-extension' 'pi-code' '@narumitw/pi-subagents' '@henryqw/pi-subagent'; do
   if grep -Fq "$forbidden" "$MANIFEST"; then
     fail "excluded Pi extension remains preloaded: $forbidden"
   fi

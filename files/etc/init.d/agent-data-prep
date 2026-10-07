@@ -432,6 +432,11 @@ start() {
 		fi
 	fi
 
+	# Optional Magic Context config persists without enabling background jobs.
+	mkdir -p "$ROOT_HOME/.config" || return 1
+	link_directory "$DATA_ROOT/cortexkit/config" "$ROOT_HOME/.config/cortexkit" cortexkit || \
+		log_warn "cannot link persistent CortexKit config"
+
 	# Home symlinks for the daemons and CLIs.
 	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || log_warn "cannot link /root/.multica"
 	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || \
@@ -452,19 +457,7 @@ start() {
 	reconcile_pi_settings_packages
 	reconcile_firmware_pi_extension_links
 
-	# Multica runtime_provider migration: sysupgrade keeps the previous UCI
-	# value (ebd46aa-era builds left runtime_provider='pi' via the init
-	# default), which would otherwise override the build-time per-device
-	# injection.  On opencode-capable builds (release-url present, re-cs-02/
-	# re-cs-07) migrate a stale 'pi' to 'opencode'; low-memory builds
-	# (re-ss-01, no release-url) keep 'pi'.  Idempotent.
-	if [ -f /etc/opencode/release-url ] 2>/dev/null; then
-		if [ "$(uci -q get multica.main.runtime_provider)" = "pi" ]; then
-			uci set multica.main.runtime_provider='opencode'
-			uci commit multica
-			log "migrated multica.main.runtime_provider pi -> opencode (opencode-capable build)"
-		fi
-	fi
+	# Preserve the configured runtime across upgrades; never promote Pi to OpenCode.
 
 	# Pi's appended system prompt link (idempotent, provided by agent-runtime).
 	if [ -x /usr/sbin/pi-append-system-link ]; then

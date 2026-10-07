@@ -15,6 +15,7 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 
 | 包 | 构建策略 | 运行说明 |
 |---|---|---|
+| `@cortexkit/pi-magic-context` | latest，按需启用 | 进入 generation 并通过 peer/Jiti 检查，不写入默认 packages；存储固定 /data/cortexkit/magic-context |
 | `pi-package-manager` | latest | `/packages` 管理界面；不再同时预装旧的 `@aaronkyriesenbach/pi-package-manager` |
 | `pi-commandcode-provider` | latest | Pi 调用 CommandCode provider |
 | `pi-agent-modes` | latest | 支持 `--modes yolo` 无人值守模式，Multica agent 通过 `--custom-args` 启用；交互式 pi 保持正常模式 |
@@ -22,7 +23,7 @@ Pi、CommandCode 和扩展的最新版本。每一份候选 generation 都在构
 | `pi-lazy-extensions` | latest | 只注册 `ext` 代理；按 manifest 激活重型扩展 |
 | `pi-tool-search` | latest | 默认只公开紧凑工具清单；非核心工具须按名称解锁 |
 | `pi-undo-redo` | latest | `/undo`、`/redo` 与工作区快照；非 Git 目录只覆盖显式 `write`/`edit` 路径 |
-| `pi-mcp-adapter` | latest | 单一 MCP 代理入口；服务和 schema 按需发现、连接 |
+| Pi 内置 MCP | 随 Pi | 使用原生 MCP；不再预装 `pi-mcp-adapter` |
 | `pi-web-access` | latest，惰性 | 仅在 `lazy-extensions.json` 中登记；由 `ext` 按需加载，不写入 Pi 的 `packages` 启动列表 |
 | `pi-lsp` | latest | LSP 诊断与导航；仅在受信配置声明语言服务器后启动外部进程 |
 | `pi-cost` / `pi-inspect` | latest | 成本与会话检查面板；只在显式启动命令后监听本机 5461/5462 |
@@ -93,7 +94,8 @@ TPS 扩展会重复统计、提示和状态展示。需要独立 `pi-tps` 时，
   会在再次确认 settings 的设备号、inode、mtime、大小均未变化后同步该既有 marker；
   缺失、过期或符号链接 marker，以及合并后被管理员再次修改的 settings，一律不创建、
   不更新 marker。
-  该迁移严格为 **append-only**：以后从固件默认清单删除扩展，并不会自动从持久配置
+  普通包迁移为 **append-only**；原生 MCP 迁移为明确例外：固件启用 `builtin:mcp` 时，删除适配器的 npm / 已知上游 Git 加载项和 `-builtin:mcp`，启用内置 MCP。服务器配置、凭据及其他扩展保留。
+  普通迁移严格为 **append-only**：以后从固件默认清单删除扩展，并不会自动从持久配置
   卸载它；如确需移除，必须同时提供独立、明确且经过审阅的持久配置迁移，不能仅靠
   删除 catalog 条目。
 - `pi-tool-search` 使 `ext` 和 `mcp` 等非核心工具也经过名称解锁；这是预期的两阶段
@@ -103,3 +105,18 @@ TPS 扩展会重复统计、提示和状态展示。需要独立 `pi-tps` 时，
   和回滚；不要在 `/data/node`、`/opt/node` 或 `/data/agent-runtime/current` 原地更新。
 - Hindsight 的 URL、API token、OAuth、Cookie 和业务密钥只能通过设备 root-only 环境
   注入，不能写入此清单、角色卡或固件。
+
+## Magic Context 可选预装
+
+保留 pi-agent-modes，不增加功能重叠且仍声明旧 Pi peer 的 pi-plan-mode。
+`openwrtPiOptionalExtensions` 表示构建期安装、peer 对齐和 Jiti 导入均需成功，但不默认加载；与通过 ext 动态激活的 lazy extensions 分开。Magic Context 应由管理员在配置好远端模型后，将 `/data/node/lib/node_modules/@cortexkit/pi-magic-context` 加入持久 Pi settings 的 packages，在新会话启动时加载；该路径解析到已验签 generation，不执行 npm install 或修改不可变目录。
+
+2026-10-07，Magic Context 0.45.0 在 RE-CS-02 的 Node 24.20.0 / arm64 musl 上完成 ESM 导入和 node:sqlite 内存数据库读写检查。该探针不等于后台 Historian/Dreamer、远端 Embedding 或多会话完整验收。
+
+插件的可选 onnxruntime-node 不提供受验证 musl 基线，固件在架构检查前移除该后端及嵌套副本，保留 WASM 依赖。优先使用远端 Embedding，避免在 SS01/CPE 下载本地模型；不要因一次导入通过就自动开启本地推理。
+
+交互 shell 与 Multica daemon 都传递同一个 MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context；/root/.config/cortexkit 通过既有保留迁移机制指向 /data/cortexkit/config。插件不默认加载，所以不会仅因预装就启动记忆维护或增加 API 调用。管理员启用时需审阅 compaction、Historian、Dreamer 和 Hindsight 的分工，并使用一致的远端 Embedding 模型。保留配置中的凭据不得提交仓库。
+
+## Multica default runtime
+
+All firmware targets default to Pi, including private auto-enrollment and missing-config fallbacks. Explicit retained OpenCode selections remain supported; upgrades do not overwrite user runtime choices. Agent data preparation no longer promotes Pi to OpenCode. Pi native MCP configuration is device-side; Multica-managed MCP injection into Pi must be verified separately. Memory savings versus OpenCode have not been measured under an identical workload.

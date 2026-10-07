@@ -92,7 +92,22 @@ const persistentPath = process.argv[3];
 const firmware = readSettings(firmwarePath, 'firmware');
 const persistent = readSettings(persistentPath, 'persistent');
 const defaults = packageList(firmware.parsed, 'firmware', false);
-const existing = packageList(persistent.parsed, 'persistent', true);
+const original = packageList(persistent.parsed, 'persistent', true);
+// Explicit retirement migration; never remove unrelated local/Git extensions.
+const nativeMcp = firmware.parsed.extensions?.includes('builtin:mcp') === true;
+const retiredAdapter = spec => packageIdentity(spec) === 'registry:pi-mcp-adapter' ||
+  /^git:(?:https:\/\/)?github\.com\/nicobailon\/pi-mcp-adapter(?:\.git)?(?:@[A-Za-z0-9._/-]+)?$/.test(spec);
+const existing = nativeMcp ? original.filter(spec => !retiredAdapter(spec)) : original;
+let extensions = persistent.parsed.extensions;
+if (nativeMcp) {
+  if (extensions !== undefined && (!Array.isArray(extensions) || extensions.some(item => typeof item !== 'string'))) {
+    fail('persistent extensions must be strings; original file preserved');
+  }
+  extensions = (extensions || []).filter(spec => spec !== '-builtin:mcp');
+  if (!extensions.includes('builtin:mcp')) extensions.push('builtin:mcp');
+}
+const migrationChanged = existing.length !== original.length ||
+  (nativeMcp && JSON.stringify(extensions) !== JSON.stringify(persistent.parsed.extensions));
 const seen = new Set(existing.map(packageIdentity));
 const additions = [];
 
@@ -104,7 +119,7 @@ for (const packageName of defaults) {
   }
 }
 
-if (additions.length === 0) {
+if (additions.length === 0 && !migrationChanged) {
   process.stdout.write('unchanged\n');
   process.exit(0);
 }
@@ -112,6 +127,7 @@ if (additions.length === 0) {
 const merged = {
   ...persistent.parsed,
   packages: [...existing, ...additions],
+  ...(nativeMcp ? { extensions } : {}),
 };
 const targetDir = path.dirname(persistentPath);
 const targetName = path.basename(persistentPath);

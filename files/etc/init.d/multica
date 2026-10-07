@@ -137,19 +137,9 @@ start_service() {
 
 	device_name="$(derive_device_name "$(cfg device_name '')")"
 	runtime_name="$(cfg runtime_name 'Pi on OpenWrt')"
-	# runtime_provider default by build capability: builds that ship opencode
-	# release metadata (/etc/opencode/release-url, re-cs-02/re-cs-07 >=2GB) run
-	# Multica tasks through opencode (CommandCode relay); low-memory builds
-	# (re-ss-01, no release-url) fall back to pi (whose default provider is
-	# commandcode).  An explicitly configured UCI value always wins.
-	runtime_provider="$(cfg runtime_provider '')"
-	if [ -z "$runtime_provider" ]; then
-		if [ -f /etc/opencode/release-url ]; then
-			runtime_provider="opencode"
-		else
-			runtime_provider="pi"
-		fi
-	fi
+	# Pi is the firmware default; retain explicitly selected runtimes.
+	runtime_provider="$(cfg runtime_provider 'pi')"
+	[ -n "$runtime_provider" ] || runtime_provider=pi
 	# Automatic runtime fallback: multica-runtime-guard drops this marker
 	# after opencode fails 3 consecutive health checks.  Force pi until the
 	# guard confirms opencode has recovered (it removes the marker and
@@ -322,6 +312,7 @@ EOF
 		--poll-interval "$poll_interval" \
 		--heartbeat-interval "$heartbeat_interval"
 	procd_set_param env HOME=/root \
+		MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context \
 		PATH="$agent_path" \
 		CLIPROXYAPI_BASE_URL="$cliproxyapi_base_url" \
 		CLIPROXYAPI_API_KEY="$cliproxyapi_api_key" \

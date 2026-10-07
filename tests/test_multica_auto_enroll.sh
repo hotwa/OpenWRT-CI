@@ -24,7 +24,7 @@ CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
 grep -Fq 'config multica' "$CONFIG_FILE"
 grep -Fq 'workspaces_root' "$CONFIG_FILE"
-grep -Fq 'runtime_name '\''Opencode on OpenWrt'\''' "$CONFIG_FILE"
+grep -Fq 'runtime_name '\''Pi on OpenWrt'\''' "$CONFIG_FILE"
 grep -Fq 'agent_name '\''OpenWrt 管家'\''' "$CONFIG_FILE"
 grep -Fq 'daemon start --foreground' "$INIT_SCRIPT"
 grep -Fq -- '--max-concurrent-tasks' "$INIT_SCRIPT"
@@ -49,7 +49,7 @@ if grep -Fq 'fallback stub' "$FETCH_SCRIPT" || grep -Fq 'while true; do sleep 36
 fi
 grep -Fq 'workspace_id is not configured' "$INIT_SCRIPT"
 grep -Fq "max_concurrent_tasks '1'" "$CONFIG_FILE"
-grep -Fq 'runtime_provider '\''opencode'\''' "$CONFIG_FILE"
+grep -Fq 'runtime_provider '\''pi'\''' "$CONFIG_FILE"
 grep -Fq "procd_open_instance bootstrap" "$INIT_SCRIPT"
 grep -Fq '/usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
 grep -Fq 'pi-append-system-link' "$INIT_SCRIPT"
@@ -145,3 +145,13 @@ PI_AGENT_DIR="$PROFILE_TEST_ROOT/pi/agent" PI_ROLE_CARD="$PROFILE_TEST_ROOT/data
 }
 
 echo "multica auto-enroll & agent bootstrap guard tests passed"
+
+# Every target uses Pi unless the build explicitly selects another runtime.
+for target in jdcloud_re-cs-02 jdcloud_re-ss-01 jdcloud_re-cs-07 cpe-5g; do
+ mkdir -p "$PROFILE_TEST_ROOT/enroll/etc/config"
+ cp "$CONFIG_FILE" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"
+ MULTICA_TOKEN=fixture-only WRT_EXPECTED_DEVICE="$target" bash "$ENROLL_SCRIPT" "$PROFILE_TEST_ROOT/enroll" >/dev/null
+ grep -Fq "option runtime_provider 'pi'" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"
+done
+MULTICA_TOKEN=fixture-only MULTICA_RUNTIME_PROVIDER=opencode bash "$ENROLL_SCRIPT" "$PROFILE_TEST_ROOT/enroll" >/dev/null
+grep -Fq "option runtime_provider 'opencode'" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"

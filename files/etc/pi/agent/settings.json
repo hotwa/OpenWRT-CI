@@ -14,7 +14,6 @@
     "pi-undo-redo",
     "pi-wechat-assistant",
     "pi-lazy-extensions",
-    "pi-mcp-adapter",
     "pi-tool-search",
     "pi-subagents",
     "@capdiem/pi-todo",
@@ -31,5 +30,8 @@
     "alwaysEnabled": [],
     "showToolSearchFooterStatus": false
   },
-  "autoUpdate": false
+  "autoUpdate": false,
+  "extensions": [
+    "builtin:mcp"
+  ]
 }
