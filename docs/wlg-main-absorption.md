@@ -34,3 +34,11 @@ The follow-up CI run exposed stale historical-SHA assertions in the shared-tool
 and CommandCode role-link tests after importing the current role card. These
 are now aligned with the same main snapshot. The final 118-script local scan
 completed; its sole reported role-link failure passed after that correction.
+
+The 9a552dd CI retries passed Repository Smoke Tests and runtime preparation,
+but private injection stopped because the retained WLG classifier did not
+recognize CommandCode auth JSON. The classifier now treats every injector auth
+location as private (including malformed nonempty files), without printing
+credentials. An offline integration regression executes the real injector and
+classifier together and verifies private classification, suffix and log redaction;
+individual canonical auth paths are covered. Public release gates remain intact.

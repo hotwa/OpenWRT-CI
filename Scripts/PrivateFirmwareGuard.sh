@@ -69,6 +69,15 @@ if [ -r "$multica_config" ]; then
 	[ -z "$multica_token" ] || add_reason multica-pat-token
 fi
 
+# CommandCode's injector writes recoverable API credentials into these JSON
+# files. Treat nonempty/malformed auth files as private without logging values.
+for auth_file in "$TARGET_FILES/etc/commandcode/auth.json" \
+  "$TARGET_FILES/etc/pi/agent/auth.json" "$TARGET_FILES/root/.pi/agent/auth.json"; do
+  if [ -s "$auth_file" ]; then
+    add_reason commandcode-api-key
+  fi
+done
+
 if [ -n "$reasons" ]; then
 	printf 'WRT_PRIVATE_BUILD=true\n'
 	printf 'WRT_PRIVATE_BUILD_REASON=%s\n' "$reasons"

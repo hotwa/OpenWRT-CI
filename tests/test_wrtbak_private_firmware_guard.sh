@@ -120,3 +120,27 @@ if grep -q 'mul_test_secret_pat' "$WORK_DIR/multica.env" "$WORK_DIR/multica.log"
 fi
 
 echo "wrtbak private firmware guard test passed"
+
+# Exercise the actual WLG CommandCode injector and classifier together.
+# Offline fixture: no network, real credentials or firmware upload.
+mkdir -p "$WORK_DIR/commandcode/etc/pi/agent" "$WORK_DIR/commandcode/root/.pi/agent"
+cp "$ROOT_DIR/files/etc/pi/agent/settings.json" "$WORK_DIR/commandcode/etc/pi/agent/settings.json"
+cp "$ROOT_DIR/files/etc/pi/agent/settings.json" "$WORK_DIR/commandcode/root/.pi/agent/settings.json"
+printf '%s\n' '{"data":[{"id":"deepseek/deepseek-v4.1-flash"}]}' > "$WORK_DIR/model-cache.json"
+COMMANDCODE_API_KEY="user_fixture_not_a_real_credential" \
+  COMMANDCODE_MODEL_CACHE_INPUT="$WORK_DIR/model-cache.json" \
+  bash "$ROOT_DIR/Scripts/CommandCodeProviderConfig.sh" "$WORK_DIR/commandcode" >/dev/null
+bash "$SCRIPT" "$WORK_DIR/commandcode" > "$WORK_DIR/commandcode.env" 2> "$WORK_DIR/commandcode.log"
+grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/commandcode.env"
+grep -qx 'WRT_ARTIFACT_PRIVACY_SUFFIX=private' "$WORK_DIR/commandcode.env"
+grep -qx 'WRT_PRIVATE_BUILD_REASON=commandcode-api-key' "$WORK_DIR/commandcode.env"
+! grep -Fq 'user_fixture_not_a_real_credential' "$WORK_DIR/commandcode.log"
+# Either canonical auth location is sufficient; root Pi copy is also guarded.
+for auth_path in etc/commandcode/auth.json etc/pi/agent/auth.json root/.pi/agent/auth.json; do
+  case_dir="$WORK_DIR/auth-${auth_path//\//-}"
+  mkdir -p "$case_dir/$(dirname "$auth_path")"
+  printf '%s\n' '{"fixture":true}' > "$case_dir/$auth_path"
+  bash "$SCRIPT" "$case_dir" > "$WORK_DIR/auth.env" 2>/dev/null
+  grep -qx 'WRT_PRIVATE_BUILD=true' "$WORK_DIR/auth.env"
+done
+echo 'CommandCode injected overlay privacy integration passed'
