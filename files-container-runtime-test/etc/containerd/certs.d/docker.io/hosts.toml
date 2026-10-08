@@ -1,0 +1,13 @@
+# Docker Hub only. containerd tries explicit hosts before the server fallback.
+# Keep the official registry first; the public mirror is a pull/resolve fallback.
+# Root capabilities also restrict the fallback server: never send pushes there.
+server = "https://dockerproxy.net"
+capabilities = ["pull", "resolve"]
+
+# Trust scope: the public mirror may resolve mutable tags to digests. Prefer
+# pinned image digests for reproducibility. TLS certificate verification stays on.
+# To opt out, delete this docker.io/hosts.toml (restores Docker Hub defaults),
+# or replace it with your own reviewed registry policy. Other registries are
+# unaffected. This file is installed only with the gated container overlay.
+[host."https://registry-1.docker.io"]
+capabilities = ["pull", "resolve"]

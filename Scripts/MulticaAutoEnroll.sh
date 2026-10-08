@@ -10,6 +10,8 @@ MULTICA_APP_URL="${MULTICA_APP_URL:-https://multica.lucky.jmsu.top}"
 MULTICA_WORKSPACE_ID="${MULTICA_WORKSPACE_ID:-}"
 MULTICA_DEVICE_NAME="${MULTICA_DEVICE_NAME:-}"
 MULTICA_RUNTIME_NAME="${MULTICA_RUNTIME_NAME:-Pi on OpenWrt}"
+# Pi is the default on every target; explicit build overrides remain supported.
+MULTICA_RUNTIME_PROVIDER="${MULTICA_RUNTIME_PROVIDER:-pi}"
 MULTICA_AGENT_NAME="${MULTICA_AGENT_NAME:-OpenWrt 管家}"
 MULTICA_WORKSPACES_ROOT="${MULTICA_WORKSPACES_ROOT:-/data/multica/workspaces}"
 
@@ -40,6 +42,7 @@ set_config_option token "$MULTICA_TOKEN"
 set_config_option workspace_id "$MULTICA_WORKSPACE_ID"
 set_config_option device_name "$MULTICA_DEVICE_NAME"
 set_config_option runtime_name "$MULTICA_RUNTIME_NAME"
+set_config_option runtime_provider "$MULTICA_RUNTIME_PROVIDER"
 set_config_option agent_name "$MULTICA_AGENT_NAME"
 set_config_option workspaces_root "$MULTICA_WORKSPACES_ROOT"
 

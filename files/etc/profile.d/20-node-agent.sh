@@ -2,6 +2,11 @@
 # generated contract here too because this profile must make its choice first.
 [ -r /var/run/data-runtime.env ] && [ ! -L /var/run/data-runtime.env ] && . /var/run/data-runtime.env
 
+# CommandCode must not mutate the signed firmware/runtime tree through its
+# upstream self-updater. Application updates are delivered only as complete,
+# signed agent-runtime generations.
+export COMMANDCODE_SKIP_UPDATES=1
+
 # Only a verified /data mount shadows the read-only baked runtime in /opt.
 if [ "${DATA_RUNTIME_STATE:-}" = persistent ] && [ "${DATA_RUNTIME_ROOT:-}" = /data ]; then
 	export PATH=/data/node/bin:/opt/node/bin:$PATH
@@ -18,12 +23,13 @@ case "${DATA_RUNTIME_STATE:-}:${DATA_RUNTIME_ROOT:-}" in
 	persistent:/data)
 		export PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache
 		export NODE_COMPILE_CACHE=/data/cache/node-compile-cache
+		export MAGIC_CONTEXT_STORAGE_DIR=/data/cortexkit/magic-context
 		;;
 	fallback:/root)
 		export PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache
-		unset NODE_COMPILE_CACHE
+		unset NODE_COMPILE_CACHE MAGIC_CONTEXT_STORAGE_DIR
 		;;
 	*)
-		unset PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache NODE_COMPILE_CACHE
+		unset PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache NODE_COMPILE_CACHE MAGIC_CONTEXT_STORAGE_DIR
 		;;
 esac

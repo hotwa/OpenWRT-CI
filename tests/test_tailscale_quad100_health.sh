@@ -1,80 +1,92 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INIT_SCRIPT="$ROOT_DIR/files/etc/init.d/tailscale-quad100-health"
+PROBE="$ROOT_DIR/files/usr/sbin/tailscale-quad100-health-probe"
+MONITOR="$ROOT_DIR/files/usr/sbin/tailscale-quad100-health-monitor"
 UCI_DEFAULTS="$ROOT_DIR/files/etc/uci-defaults/99-tailscale-quad100-health"
 
-[ -f "$INIT_SCRIPT" ] || { echo "missing tailscale Quad100 health init script"; exit 1; }
-[ -f "$UCI_DEFAULTS" ] || { echo "missing tailscale Quad100 health uci-defaults"; exit 1; }
-
-grep -q '100.100.100.100' "$INIT_SCRIPT" || {
-  echo "Quad100 health script does not probe 100.100.100.100"
+for path in "$INIT_SCRIPT" "$PROBE" "$MONITOR" "$UCI_DEFAULTS"; do
+  [ -f "$path" ] || { echo "missing Quad100 health component: $path" >&2; exit 1; }
+done
+for path in "$PROBE" "$MONITOR" "$UCI_DEFAULTS"; do [ -x "$path" ] || exit 1; done
+sh -n "$INIT_SCRIPT"
+sh -n "$PROBE"
+sh -n "$MONITOR"
+grep -Fq '100.100.100.100' "$PROBE"
+grep -Fq 'unknown tailscale-not-ready' "$PROBE"
+grep -Fq 'timestamp_epoch=' "$PROBE"
+grep -Fq 'fqdn=' "$PROBE"
+grep -Fq 'address=' "$PROBE"
+grep -Fq 'procd_set_param respawn 3600 5 0' "$INIT_SCRIPT"
+if grep -Fq 'procd_set_param respawn 0 0 0' "$INIT_SCRIPT"; then
+  echo "Quad100 one-shot work must not be configured as an immediate respawn loop" >&2
   exit 1
-}
-
-grep -q '53' "$INIT_SCRIPT" || {
-	echo "Quad100 health script does not probe DNS port 53"
-	exit 1
-}
-
-grep -q "jq -r '.Self.DNSName // empty'" "$INIT_SCRIPT" || {
-	echo "Quad100 health script must derive the current MagicDNS name dynamically"
-	exit 1
-}
-
-grep -q 'fqdn="\${fqdn%.}"' "$INIT_SCRIPT" || {
-	echo "Quad100 health script must normalize a trailing DNS dot"
-	exit 1
-}
-
-grep -q "jsonfilter -e '@.Self.DNSName'" "$INIT_SCRIPT" || {
-	echo "Quad100 health script must have a parser fallback when jq is unavailable"
-	exit 1
-}
-
-grep -q 'nslookup "\$fqdn" "\$PROBE_HOST"' "$INIT_SCRIPT" || {
-	echo "Quad100 health script must query the current MagicDNS name over UDP DNS"
-	exit 1
-}
-
-grep -q "grep -q 'Name:'" "$INIT_SCRIPT" || {
-	echo "Quad100 health script must match the DNS answer Name field"
-	exit 1
-}
-
-grep -q 'return 1' "$INIT_SCRIPT" || {
-	echo "Quad100 health script must retry while the Tailscale DNS name is unavailable"
-	exit 1
-}
-
-if grep -Eq 'nc -z|nslookup openwrt\.org' "$INIT_SCRIPT"; then
-	echo "Quad100 health script must not probe TCP 53 or a public DNS name"
-	exit 1
 fi
+grep -Fq '/etc/init.d/tailscale-quad100-health enable' "$UCI_DEFAULTS"
 
-grep -q 'while \[ "\$attempt" -lt 5 \]' "$INIT_SCRIPT" || {
-  echo "Quad100 health script does not retry the probe five times"
-  exit 1
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+BIN_DIR="$WORK_DIR/bin"
+mkdir -p "$BIN_DIR"
+cat >"$BIN_DIR/tailscale" <<'EOF'
+#!/bin/sh
+printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"cs07-10.hs.jmsu.top."}}'
+EOF
+cat >"$BIN_DIR/jq" <<'EOF'
+#!/bin/sh
+case "$*" in *DNSName*) printf '%s\n' 'cs07-10.hs.jmsu.top.' ;; esac
+EOF
+cat >"$BIN_DIR/pgrep" <<'EOF'
+#!/bin/sh
+[ "${TAILSCALED_RUNNING:-1}" = 1 ]
+EOF
+cat >"$BIN_DIR/ip" <<'EOF'
+#!/bin/sh
+[ "${TAILSCALE_LINK_UP:-1}" = 1 ]
+EOF
+cat >"$BIN_DIR/nslookup" <<'EOF'
+#!/bin/sh
+printf '%s\t%s\n' "$1" "$2" >>"${NSLOOKUP_CALLS:?}"
+case "${DNS_MODE:-good}" in
+  good) printf 'Server: 100.100.100.100\nAddress 1: 100.100.100.100\nName: %s\nAddress 1: 100.64.0.37\n' "$1" ;;
+  mismatch) printf 'Name: another.hs.jmsu.top\nAddress 1: 100.64.0.37\n' ;;
+  no-address) printf 'Name: %s\n' "$1" ;;
+  servfail) printf 'Server: 100.100.100.100\nAddress 1: 100.100.100.100\n** server cannot find %s: SERVFAIL\n' "$1"; exit 1 ;;
+esac
+EOF
+printf '#!/bin/sh\nexit 0\n' >"$BIN_DIR/logger"
+chmod 0755 "$BIN_DIR"/*
+STATE="$WORK_DIR/state"
+export NSLOOKUP_CALLS="$WORK_DIR/nslookup.calls"
+
+run_probe() {
+  env PATH="$BIN_DIR:$PATH" QUAD100_STATE_FILE="$STATE" "$@" "$PROBE"
 }
 
-grep -q 'logger -t "\$PROBE_TAG"' "$INIT_SCRIPT" || {
-  echo "Quad100 health script does not log probe results"
-  exit 1
-}
+TAILSCALED_RUNNING=0 run_probe
+grep -Fqx 'state=unknown' "$STATE"
+grep -Fqx 'reason=tailscale-not-ready' "$STATE"
 
-grep -q 'STATE_FILE="/var/run/quad100-health.ok"' "$INIT_SCRIPT" || {
-	echo "Quad100 health script must persist the last probe state"
-	exit 1
-}
-grep -q 'record_probe_state' "$INIT_SCRIPT" || {
-	echo "Quad100 health script must log only state transitions"
-	exit 1
-}
+run_probe
+grep -Fqx 'state=ok' "$STATE" || { cat "$STATE" >&2; cat "$NSLOOKUP_CALLS" >&2; exit 1; }
+grep -Fqx 'fqdn=cs07-10.hs.jmsu.top' "$STATE"
+grep -Fqx 'address=100.64.0.37' "$STATE"
+grep -Eq '^timestamp_epoch=[0-9]+$' "$STATE"
 
-grep -q '/etc/init.d/tailscale-quad100-health enable' "$UCI_DEFAULTS" || {
-  echo "uci-defaults does not enable tailscale Quad100 health guard"
-  exit 1
-}
+DNS_MODE=mismatch run_probe
+grep -Fqx 'state=failed' "$STATE"
+grep -Fqx 'reason=no-matching-address' "$STATE"
 
-echo "tailscale Quad100 health test passed"
+DNS_MODE=no-address run_probe
+grep -Fqx 'state=failed' "$STATE"
+
+DNS_MODE=servfail run_probe
+grep -Fqx 'state=failed' "$STATE"
+
+QUAD100_NSLOOKUP_BIN="$WORK_DIR/missing-nslookup" run_probe
+grep -Fqx 'state=failed' "$STATE"
+grep -Fqx 'reason=resolver-unavailable' "$STATE"
+
+echo "tailscale Quad100 health checks passed"

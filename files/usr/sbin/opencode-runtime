@@ -1,0 +1,411 @@
+#!/bin/sh
+# opencode-runtime - device-side manager for the opencode single binary.
+#
+# Downloads, verifies and installs the opencode musl binary from the npm
+# tarball whose metadata is baked into /etc/opencode/release-url at build
+# time.  The binary lives on /data so it survives firmware upgrades.
+#
+# Subcommands:
+#   install   download + verify + install (idempotent)
+#   boot-install retry install across early-boot network outages
+#   status    report installed version, health, /data space
+#   upgrade   re-read release-url and install if newer
+#
+# Exit codes:
+#   0 success
+#   1 generic error
+#   2 usage error
+#   3 /data unavailable
+#   4 download failed
+#   5 checksum failed
+#   6 already latest
+
+set -u
+
+LOG_TAG="opencode-runtime"
+RELEASE_FILE="/etc/opencode/release-url"
+DATA_ROOT="/data"
+INSTALL_ROOT="${DATA_ROOT}/opt/opencode"
+CURRENT_LINK="${INSTALL_ROOT}/current"
+STAGING_DIR="${INSTALL_ROOT}/.staging"
+BIN_PATH="${CURRENT_LINK}/bin/opencode"
+VERSION_FILE="${CURRENT_LINK}/version"
+INSTALL_LOCK_DIR="/var/run/opencode-runtime-install.lock"
+
+log()  { logger -t "$LOG_TAG" "$*"; printf '[%s] %s\n' "$LOG_TAG" "$*"; }
+warn() { logger -t "$LOG_TAG" "WARN: $*"; printf '[%s] WARN: %s\n' "$LOG_TAG" "$*" >&2; }
+err()  { logger -t "$LOG_TAG" "ERROR: $*"; printf '[%s] ERROR: %s\n' "$LOG_TAG" "$*" >&2; }
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+release_value() {
+	local key="$1"
+	[ -r "$RELEASE_FILE" ] || return 1
+	sed -n "s/^${key}=//p" "$RELEASE_FILE" | sed -n '1p'
+}
+
+data_available() {
+	[ -d "$DATA_ROOT" ] && [ -w "$DATA_ROOT" ] || return 1
+	# A real mount beats an empty rootfs directory.
+	grep -qsE "[[:space:]]${DATA_ROOT}[[:space:]]" /proc/mounts 2>/dev/null || return 0
+	return 0
+}
+
+installed_version() {
+	[ -r "$VERSION_FILE" ] || return 1
+	cat "$VERSION_FILE"
+}
+
+binary_healthy() {
+	[ -x "$BIN_PATH" ] || return 1
+	"$BIN_PATH" --version >/dev/null 2>&1
+}
+
+activate_version() {
+	local version="$1" active_version
+	[ -n "$version" ] || return 1
+
+	# -n is essential here: without it, ln follows current when it points to
+	# a directory and creates a nested version link inside the old release.
+	ln -sfn "$version" "$CURRENT_LINK" || return 1
+	active_version="$(readlink "$CURRENT_LINK" 2>/dev/null)" || return 1
+	[ "$active_version" = "$version" ]
+}
+
+# ELF machine id via od (no `file` dependency on minimal OpenWrt).
+elf_machine_id() {
+	local binary="$1" magic class data lo hi
+	[ -f "$binary" ] || return 1
+	magic="$(od -An -j0 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	class="$(od -An -j4 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	data="$(od -An -j5 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	lo="$(od -An -j18 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	hi="$(od -An -j19 -N1 -tu1 "$binary" 2>/dev/null | tr -dc '0-9')"
+	[ "$magic" = "127" ] && [ "$class" = "2" ] && [ "$data" = "1" ] || return 1
+	[ -n "$lo" ] && [ -n "$hi" ] || return 1
+	echo $((lo + hi * 256))
+}
+
+download_file() {
+	local url="$1" dest="$2"
+	if command -v uclient-fetch >/dev/null 2>&1; then
+		uclient-fetch -q -O "$dest" "$url" 2>/dev/null
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O "$dest" "$url" 2>/dev/null
+	elif command -v curl >/dev/null 2>&1; then
+		curl -fsSL -o "$dest" "$url" 2>/dev/null
+	else
+		return 1
+	fi
+}
+
+verify_sha512() {
+	local file="$1" expected="$2" actual
+	if command -v sha512sum >/dev/null 2>&1; then
+		actual="$(sha512sum "$file" 2>/dev/null | awk '{print $1}')"
+	elif command -v openssl >/dev/null 2>&1; then
+		actual="$(openssl dgst -sha512 "$file" 2>/dev/null | awk '{print $NF}')"
+	else
+		err "no sha512sum or openssl available for verification"
+		return 1
+	fi
+	[ -n "$actual" ] || return 1
+	[ "$actual" = "$expected" ]
+}
+
+# ---------------------------------------------------------------------------
+# install
+# ---------------------------------------------------------------------------
+
+do_install() {
+	local version url expected_sha tarball dest_dir extracted_bin machine_id
+	local current_version attempt waited
+
+	version="$(release_value OPENCODE_VERSION)" || { err "cannot read OPENCODE_VERSION from $RELEASE_FILE"; return 1; }
+	url="$(release_value OPENCODE_TARBALL_URL)" || { err "cannot read OPENCODE_TARBALL_URL"; return 1; }
+	expected_sha="$(release_value OPENCODE_SHA512)" || { err "cannot read OPENCODE_SHA512"; return 1; }
+
+	[ -n "$version" ] && [ -n "$url" ] && [ -n "$expected_sha" ] || {
+		err "incomplete release metadata in $RELEASE_FILE"
+		return 1
+	}
+
+	# Idempotent: already at this version and healthy? (checked again after
+	# the lock so a concurrent installer's success short-circuits us too.)
+	current_version="$(installed_version 2>/dev/null || true)"
+	if [ "$current_version" = "$version" ] && binary_healthy; then
+		log "opencode ${version} already installed and healthy"
+		return 0
+	fi
+
+	data_available || { err "/data is not writable"; return 3; }
+
+	# The persistent install root must exist before creating the release.
+	mkdir -p "$INSTALL_ROOT" || { err "cannot create $INSTALL_ROOT"; return 1; }
+
+	# Serialize concurrent installs with a volatile lock. Do not put this lock
+	# under /data: sysupgrade preserves /data, so a lock left by an older
+	# firmware (whose process was terminated during upgrade) would look live
+	# forever and block every retry. /var/run is tmpfs and is cleared at boot.
+	LOCK_DIR="$INSTALL_LOCK_DIR"
+	mkdir -p "${LOCK_DIR%/*}" || { err "cannot create lock parent ${LOCK_DIR%/*}"; return 1; }
+	waited=0
+	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+		waited=$((waited + 5))
+		if [ "$waited" -ge 300 ]; then
+			err "timed out waiting for a concurrent install to finish"
+			return 1
+		fi
+		sleep 5
+		current_version="$(installed_version 2>/dev/null || true)"
+		if [ "$current_version" = "$version" ] && binary_healthy; then
+			log "opencode ${version} installed by a concurrent process"
+			return 0
+		fi
+	done
+	trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT HUP INT TERM
+
+	mkdir -p "$STAGING_DIR" "$INSTALL_ROOT"
+	tarball="${STAGING_DIR}/opencode-${version}.tgz"
+
+	# Transient download/extract failures (flaky upstream, partial writes)
+	# are retried up to 3 times before giving up.
+	attempt=0
+	while [ "$attempt" -lt 3 ]; do
+		attempt=$((attempt + 1))
+		rm -f "$tarball"
+
+		log "downloading opencode ${version} from npm (attempt ${attempt}/3)..."
+		if ! download_file "$url" "$tarball"; then
+			err "download failed: $url (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 4
+		fi
+		[ -s "$tarball" ] || {
+			err "downloaded tarball is empty (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 4
+		}
+
+		log "verifying sha512 (attempt ${attempt}/3)..."
+		if ! verify_sha512 "$tarball" "$expected_sha"; then
+			err "sha512 mismatch for opencode ${version} (attempt ${attempt}/3)"
+			rm -f "$tarball"
+			[ "$attempt" -lt 3 ] && continue
+			return 5
+		fi
+
+		# Extract into a versioned directory, then atomically flip the symlink.
+		dest_dir="${INSTALL_ROOT}/${version}"
+		rm -rf "$dest_dir"
+		mkdir -p "${dest_dir}/bin"
+
+		log "extracting binary from tarball (attempt ${attempt}/3)..."
+		if ! tar -xzf "$tarball" -C "$STAGING_DIR" 2>/dev/null; then
+			err "tar extraction failed (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		extracted_bin="${STAGING_DIR}/package/bin/opencode"
+		if [ ! -f "$extracted_bin" ]; then
+			err "tarball does not contain package/bin/opencode (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		# Verify ELF architecture (aarch64 = machine 183).
+		machine_id="$(elf_machine_id "$extracted_bin" 2>/dev/null || true)"
+		if [ "$machine_id" != "183" ]; then
+			err "extracted binary is not aarch64 ELF (machine id=${machine_id:-unknown}, attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		mv "$extracted_bin" "${dest_dir}/bin/opencode" || {
+			err "cannot move extracted binary into place (attempt ${attempt}/3)"
+			rm -rf "$dest_dir" "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		}
+		chmod +x "${dest_dir}/bin/opencode"
+		printf '%s\n' "$version" > "${dest_dir}/version"
+
+		# Replace the current symlink itself and verify which release is active.
+		if ! activate_version "$version"; then
+			err "cannot activate opencode ${version} (attempt ${attempt}/3)"
+			rm -rf "$tarball" "${STAGING_DIR}/package"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		# Cleanup staging.
+		rm -rf "$tarball" "${STAGING_DIR}/package"
+
+		# Final health check must validate the requested release, not merely
+		# accept an older active binary that happens to answer --version.
+		current_version="$(installed_version 2>/dev/null || true)"
+		if [ "$current_version" != "$version" ] || ! binary_healthy; then
+			err "installed binary activation/health check failed (expected ${version}, active ${current_version:-unknown}; attempt ${attempt}/3)"
+			[ "$attempt" -lt 3 ] && continue
+			return 1
+		fi
+
+		log "opencode ${version} installed successfully to ${INSTALL_ROOT}/${version}"
+		return 0
+	done
+	return 1
+}
+
+# Keep retrying in the background after early boot when WAN/DNS is not ready.
+# Each do_install() already retries individual transfers; this outer bounded
+# loop gives PPPoE/DHCP time to come up without blocking the boot sequence.
+BOOT_INSTALL_LOCK_DIR="/var/run/opencode-runtime-boot-install.lock"
+do_boot_install() {
+	local max_attempts retry_delay attempt rc
+	max_attempts="${OPENCODE_BOOT_MAX_ATTEMPTS:-30}"
+	retry_delay="${OPENCODE_BOOT_RETRY_DELAY:-60}"
+	case "$max_attempts" in ''|*[!0-9]*|0) max_attempts=30 ;; esac
+	case "$retry_delay" in ''|*[!0-9]*) retry_delay=60 ;; esac
+
+	if ! mkdir "$BOOT_INSTALL_LOCK_DIR" 2>/dev/null; then
+		log "boot install retry worker is already running"
+		return 0
+	fi
+	trap 'rmdir "$BOOT_INSTALL_LOCK_DIR" 2>/dev/null || true' 0
+
+	attempt=1
+	while [ "$attempt" -le "$max_attempts" ]; do
+		# do_install uses an EXIT trap to release its install lock. Run each
+		# attempt in its own subshell so a failed attempt releases that lock
+		# before the next retry tries to acquire it.
+		if ( do_install ); then
+			log "boot install reached the configured release on attempt ${attempt}/${max_attempts}"
+			return 0
+		else
+			rc=$?
+		fi
+		if [ "$attempt" -ge "$max_attempts" ]; then
+			err "boot install exhausted ${max_attempts} attempts (last exit=${rc})"
+			return "$rc"
+		fi
+		warn "boot install attempt ${attempt}/${max_attempts} failed (exit=${rc}); retrying in ${retry_delay}s"
+		sleep "$retry_delay"
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+do_status() {
+	local version healthy data_space
+	version="$(installed_version 2>/dev/null || true)"
+	if [ -n "$version" ]; then
+		if binary_healthy; then
+			healthy="yes"
+		else
+			healthy="no (binary not executable or --version failed)"
+		fi
+	else
+		version="(not installed)"
+		healthy="n/a"
+	fi
+
+	if data_available; then
+		data_space="$(df -h "$DATA_ROOT" 2>/dev/null | awk 'NR==2{print $4" free / "$2" total"}' || echo "unknown")"
+	else
+		data_space="unavailable"
+	fi
+
+	printf 'opencode runtime status\n'
+	printf '  installed version: %s\n' "$version"
+	printf '  healthy:           %s\n' "$healthy"
+	printf '  binary path:       %s\n' "$BIN_PATH"
+	printf '  /data space:       %s\n' "$data_space"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# upgrade
+# ---------------------------------------------------------------------------
+
+do_upgrade() {
+	local target_version current_version
+	target_version="$(release_value OPENCODE_VERSION)" || { err "cannot read release metadata"; return 1; }
+	current_version="$(installed_version 2>/dev/null || true)"
+
+	if [ "$current_version" = "$target_version" ] && binary_healthy; then
+		log "opencode already at latest version ${target_version}"
+		return 6
+	fi
+
+	log "upgrading opencode ${current_version:-none} -> ${target_version}..."
+	do_install
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+usage() {
+	printf 'Usage: %s {install|boot-install|status|upgrade}\n' "$0" >&2
+}
+
+main() {
+	local cmd="${1:-}"
+
+	# opencode is intentionally not provisioned on low-memory devices
+	# (re-ss-01, 896MB RAM): those firmware builds ship no release metadata,
+	# so install/upgrade are no-ops and status reports the disabled state.
+	if [ ! -f "$RELEASE_FILE" ]; then
+		case "$cmd" in
+			status)
+				printf 'opencode runtime status\n'
+				printf '  enabled:           no (this device build has no opencode release metadata)\n'
+				return 0
+				;;
+		esac
+		log "opencode not enabled on this device; nothing to do"
+		return 0
+	fi
+
+	case "$cmd" in
+		install)
+			do_install
+			;;
+		boot-install)
+			do_boot_install
+			;;
+		status)
+			do_status
+			;;
+		upgrade)
+			do_upgrade
+			;;
+		-h|--help|help)
+			usage
+			return 0
+			;;
+		'')
+			usage
+			return 2
+			;;
+		*)
+			err "unknown subcommand: $cmd"
+			usage
+			return 2
+			;;
+	esac
+}
+
+main "$@"

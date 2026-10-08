@@ -1,0 +1,95 @@
+#!/bin/sh
+
+# A secret-free, retryable Quad100 probe. Early boot and daemon-not-ready are
+# unknown, never a stale failure; periodic retries recover after Tailscale is up.
+
+PROBE_HOST="${QUAD100_RESOLVER:-100.100.100.100}"
+PROBE_TAG="tailscale-quad100-health"
+STATE_FILE="${QUAD100_STATE_FILE:-/var/run/quad100-health.ok}"
+TAILSCALE_BIN="${QUAD100_TAILSCALE_BIN:-tailscale}"
+NSLOOKUP_BIN="${QUAD100_NSLOOKUP_BIN:-nslookup}"
+
+log() { logger -t "$PROBE_TAG" -- "$*" 2>/dev/null || true; }
+now_epoch() { date +%s 2>/dev/null | awk '/^[0-9]+$/ { print; found=1 } END { if (!found) print 0 }'; }
+
+self_name() {
+	local status fqdn
+	status="$("$TAILSCALE_BIN" status --json 2>/dev/null || true)"
+	if command -v jq >/dev/null 2>&1; then
+		fqdn="$(printf '%s' "$status" | jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+	elif command -v jsonfilter >/dev/null 2>&1; then
+		fqdn="$(printf '%s' "$status" | jsonfilter -e '@.Self.DNSName' 2>/dev/null || true)"
+	else
+		fqdn="$(printf '%s' "$status" | sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+	fi
+	fqdn="${fqdn%.}"
+	case "$fqdn" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+	printf '%s' "$fqdn"
+}
+
+answer_ipv4() {
+	local output="$1" query="$2"
+	printf '%s\n' "$output" | awk -v expected="$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]')" '
+	function valid_ipv4(value, parts, count, i) {
+		count = split(value, parts, ".")
+		if (count != 4) return 0
+		for (i = 1; i <= 4; i++) if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return 0
+		return 1
+	}
+	/^[[:space:]]*Name:[[:space:]]*/ {
+		name=$0; sub(/^[[:space:]]*Name:[[:space:]]*/, "", name); sub(/[.]$/, "", name)
+		active=(tolower(name) == expected)
+		next
+	}
+	active && /^[[:space:]]*Address([[:space:]][0-9]+)?:[[:space:]]*/ {
+		ip=$0; sub(/^[[:space:]]*Address([[:space:]][0-9]+)?:[[:space:]]*/, "", ip)
+		if (valid_ipv4(ip)) { print ip; exit }
+	}'
+}
+
+write_state() {
+	local state="$1" reason="$2" fqdn="$3" address="$4" previous temporary epoch
+	previous="$(sed -n 's/^state=//p' "$STATE_FILE" 2>/dev/null | head -n 1)"
+	epoch="$(now_epoch)"
+	temporary="$STATE_FILE.tmp.$$"
+	(umask 077; set -C; printf 'state=%s\ntimestamp_epoch=%s\nfqdn=%s\naddress=%s\nreason=%s\n' \
+		"$state" "$epoch" "$fqdn" "$address" "$reason" >"$temporary") 2>/dev/null || return 1
+	if ! mv -f "$temporary" "$STATE_FILE"; then
+		rm -f "$temporary"
+		return 1
+	fi
+	[ "$previous" = "$state" ] && return 0
+	case "$state" in
+		ok) log "Quad100 MagicDNS probe succeeded (state changed; fqdn=$fqdn address=$address)" ;;
+		failed) log "Quad100 MagicDNS probe failed (state changed; reason=$reason fqdn=$fqdn)" ;;
+		unknown) log "Quad100 MagicDNS probe is unknown (state changed; reason=$reason)" ;;
+	esac
+}
+
+main() {
+	local status fqdn output address rc
+	if ! pgrep -x tailscaled >/dev/null 2>&1 || ! ip link show dev tailscale0 >/dev/null 2>&1; then
+		write_state unknown tailscale-not-ready '' ''
+		return 0
+	fi
+	status="$("$TAILSCALE_BIN" status --json 2>/dev/null || true)"
+	printf '%s' "$status" | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"' || {
+		write_state unknown backend-not-running '' ''
+		return 0
+	}
+	command -v "$NSLOOKUP_BIN" >/dev/null 2>&1 || {
+		write_state failed resolver-unavailable '' ''
+		return 0
+	}
+	fqdn="$(self_name || true)"
+	[ -n "$fqdn" ] || { write_state unknown self-name-unavailable '' ''; return 0; }
+	output="$("$NSLOOKUP_BIN" "$fqdn" "$PROBE_HOST" 2>&1)"; rc=$?
+	address="$(answer_ipv4 "$output" "$fqdn")"
+	if [ "$rc" -eq 0 ] && [ -n "$address" ] && [ "$address" != "$PROBE_HOST" ]; then
+		write_state ok resolved "$fqdn" "$address"
+	else
+		write_state failed no-matching-address "$fqdn" ''
+	fi
+}
+
+if [ "${QUAD100_LIBRARY_ONLY:-0}" != 1 ]; then main "$@"; fi

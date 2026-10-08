@@ -1,0 +1,65 @@
+#!/bin/sh /etc/rc.common
+
+# Keep the firmware-baked runtime immutable; writable generations live under
+# /data and are selected by agent-runtime.
+START=92
+STOP=10
+BASELINE_DIRS="${AGENT_RUNTIME_READONLY_DIRS:-/opt/node /opt/uv /opt/agent-runtime}"
+
+mount_readonly_bind() {
+	local directory mounts_file
+	directory="$1"
+	mounts_file="${AGENT_RUNTIME_MOUNTS_FILE:-/proc/mounts}"
+	[ -d "$directory" ] && [ ! -L "$directory" ] || return 0
+	if awk -v target="$directory" '$2 == target && $4 ~ /(^|,)ro(,|$)/ { found=1 } END { exit !found }' "$mounts_file" 2>/dev/null; then
+		return 0
+	fi
+	if awk -v target="$directory" '$2 == target { found=1 } END { exit !found }' "$mounts_file" 2>/dev/null; then
+		mount -o remount,bind,ro "$directory" || return 1
+	else
+		mount --bind "$directory" "$directory" || return 1
+		if ! mount -o remount,bind,ro "$directory"; then
+			umount "$directory" >/dev/null 2>&1 || true
+			return 1
+		fi
+	fi
+	awk -v target="$directory" '$2 == target && $4 ~ /(^|,)ro(,|$)/ { found=1 } END { exit !found }' "$mounts_file" 2>/dev/null
+}
+
+cleanup_legacy_temp_links() {
+	local path name pid target directory prefix prefixes
+	for directory in $BASELINE_DIRS; do
+		[ -d "$directory" ] || continue
+		case "${directory##*/}" in
+			node) prefixes=.node ;;
+			agent-runtime) prefixes='current previous' ;;
+			*) continue ;;
+		esac
+		for prefix in $prefixes; do
+			path="$directory/$prefix.new.*"
+			for path in $path; do
+				[ -L "$path" ] || continue
+				name="${path##*.new.}"
+				case "$name" in ''|*[!0-9]*) continue ;; esac
+				pid="$name"
+				kill -0 "$pid" 2>/dev/null && continue
+				target="$(readlink "$path" 2>/dev/null || true)"
+				[ "$target" = "$directory" ] && rm -f "$path"
+			done
+		done
+	done
+}
+
+start() {
+	local directory failed=0
+	cleanup_legacy_temp_links
+	for directory in $BASELINE_DIRS; do
+		if ! mount_readonly_bind "$directory"; then
+			logger -t agent-runtime "could not enforce read-only firmware baseline: $directory"
+			failed=1
+		fi
+	done
+	[ "$failed" -eq 0 ]	|| return 1
+}
+
+restart() { start; }

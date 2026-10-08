@@ -1,5 +1,13 @@
 #!/bin/sh
-# Multica bootstrap: wait for the exact local runtime, then create one agent.
+# Multica bootstrap: wait for the exact local runtime, then reconcile one agent.
+# Every service start renders the firmware role template plus local facts.
+# A changed instructions hash, name or runtime binding updates the existing
+# server Agent; only an unmatched Agent is created. .agent_initialized does
+# not skip reconciliation on the next boot. Successful reconciliation exits:
+# Pi fallback gets a bounded preferred-runtime promotion window before exit;
+# this is not a GitHub/file watcher and does not refresh existing CLI sessions.
+# GitHub template edits take effect after deploying/rebuilding the template
+# and rerunning bootstrap; retained overlay templates may mask new firmware.
 
 set -eu
 
@@ -103,7 +111,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     records = json.load(stream)
 for item in records if isinstance(records, list) else []:
-    fields = ("id", "name", "runtime_id", "status")
+    fields = ("id", "name", "runtime_id", "status", "archived_at")
     print("\t".join(str(item.get(field) or "").replace("\t", " ").replace("\n", " ") for field in fields))
 PY
 }
@@ -197,7 +205,7 @@ EOF
 
 agent_is_usable() {
 	case "$1" in
-		active|idle|busy) return 0 ;;
+		active|idle|busy|working) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -206,17 +214,17 @@ select_agent_id() {
 	local json_file="$1"
 	local expected_name="$2"
 	local expected_runtime_id="$3"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 	local matched_id="" matches=0
 
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
 		if [ "$candidate_name" = "$expected_name" ] && \
 			[ "$candidate_runtime_id" = "$expected_runtime_id" ] && \
-			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			[ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
 			matches=$((matches + 1))
 			matched_id="$candidate_id"
 		fi
@@ -230,16 +238,16 @@ EOF
 select_agent_id_by_name() {
 	local json_file="$1"
 	local expected_name="$2"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 	local matched_id="" matches=0
 
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
 		if [ "$candidate_name" = "$expected_name" ] && \
-			agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
+			[ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status" && [ -n "$candidate_id" ]; then
 			matches=$((matches + 1))
 			matched_id="$candidate_id"
 		fi
@@ -252,18 +260,106 @@ EOF
 	printf '%s' "$matched_id"
 }
 
+select_agent_id_by_lan_cidr() {
+	local json_file="$1"
+	local expected_name="$2"
+
+	"$PYTHON_BIN" - "$json_file" "$expected_name" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+def managed_parts(name):
+    parts = str(name or "").rsplit(" · ", 3)
+    if len(parts) != 4:
+        return None
+    base, hostname, cidr, identity_hash = parts
+    if not base or not hostname or not re.fullmatch(r"[0-9a-fA-F]{6,64}", identity_hash):
+        return None
+    try:
+        ipaddress.ip_interface(cidr)
+    except ValueError:
+        return None
+    return base, cidr
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    expected = managed_parts(sys.argv[2])
+    matches = []
+    if expected and isinstance(records, list):
+        for item in records:
+            if (not isinstance(item, dict) or item.get("archived_at") or
+                    item.get("status") not in {"active", "idle", "busy", "working"}):
+                continue
+            candidate = managed_parts(item.get("name"))
+            if candidate == expected and item.get("id"):
+                matches.append(str(item["id"]))
+    if len(matches) == 1:
+        print(matches[0])
+        raise SystemExit(0)
+except (OSError, ValueError, TypeError):
+    pass
+raise SystemExit(1)
+PY
+}
+
+log_cli_failure() {
+	local stage="$1" stderr_file="$2" category
+	category="$("$PYTHON_BIN" - "$stderr_file" <<'PY'
+import sys
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read(8192).lower()
+except OSError:
+    text = ""
+if any(word in text for word in ("unauthorized", "authentication", "invalid token")):
+    print("authentication rejected")
+elif any(word in text for word in ("forbidden", "permission denied")):
+    print("authorization rejected")
+elif any(word in text for word in ("timeout", "timed out", "connection", "network", "tls", "dns")):
+    print("backend unavailable")
+elif any(word in text for word in ("already exists", "duplicate", "conflict")):
+    print("backend conflict")
+elif any(word in text for word in ("json", "invalid response", "parse")):
+    print("invalid backend response")
+else:
+    print("stderr suppressed")
+PY
+)"
+	log "$stage failed: $category"
+}
+
 select_agent_id_by_id() {
 	local json_file="$1"
 	local expected_id="$2"
-	local records tab candidate_id candidate_name candidate_runtime_id candidate_status
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
 
 	[ -n "$expected_id" ] || return 1
 	if ! records="$(json_agent_records "$json_file")"; then
 		return 1
 	fi
 	tab="$(printf '\t')"
-	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status; do
-		if [ "$candidate_id" = "$expected_id" ] && agent_is_usable "$candidate_status"; then
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
+		if [ "$candidate_id" = "$expected_id" ] && [ -z "$candidate_archived_at" ] && agent_is_usable "$candidate_status"; then
+			printf '%s' "$candidate_id"
+			return 0
+		fi
+	done <<EOF
+$records
+EOF
+	return 1
+}
+
+select_archived_agent_id_by_id() {
+	local json_file="$1" expected_id="$2"
+	local records tab candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at
+
+	[ -n "$expected_id" ] || return 1
+	records="$(json_agent_records "$json_file")" || return 1
+	tab="$(printf '\t')"
+	while IFS="$tab" read -r candidate_id candidate_name candidate_runtime_id candidate_status candidate_archived_at; do
+		if [ "$candidate_id" = "$expected_id" ] && [ -n "$candidate_archived_at" ]; then
 			printf '%s' "$candidate_id"
 			return 0
 		fi
@@ -289,6 +385,7 @@ state_value() {
 
 write_agent_state() {
 	local state_file="$1" agent_id="$2" runtime_id="$3" instructions_hash="$4" agent_name="$5"
+	local custom_args="${6:-}"
 	local temporary="${state_file}.new.$$"
 
 	umask 077
@@ -297,6 +394,7 @@ write_agent_state() {
 		printf 'runtime_id=%s\n' "$runtime_id"
 		printf 'instructions_sha256=%s\n' "$instructions_hash"
 		printf 'agent_name=%s\n' "$agent_name"
+		printf 'custom_args=%s\n' "$custom_args"
 	} > "$temporary"
 	mv -f "$temporary" "$state_file"
 }
@@ -323,6 +421,48 @@ write_success_flag() {
 	mv -f "$temporary" "$flag"
 }
 
+runtime_custom_args() {
+	# OpenCode documents --auto for unattended run; Multica's legacy
+	# --dangerously-skip-permissions alone is not our compatibility guarantee.
+	# Do not use OPENCODE_PERMISSION=allow: preserve explicit deny rules and
+	# avoid changing manual sessions. Pi's extension flags are provider-only.
+	case "$1" in
+		pi) printf '%s' '["--modes","yolo"]' ;;
+		opencode) printf '%s' '["--auto"]' ;;
+		*) return 1 ;;
+	esac
+}
+
+agent_custom_args_match() {
+	"$PYTHON_BIN" - "$1" "$2" "$3" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    desired = json.loads(sys.argv[3])
+    matches = [r for r in records if isinstance(r, dict) and r.get("id") == sys.argv[2]] if isinstance(records, list) else []
+    ok = len(matches) == 1 and matches[0].get("custom_args") == desired
+except (OSError, ValueError, TypeError):
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+}
+
+agent_ready_for_promotion() {
+	# Never move a busy Agent or guess a replacement when the saved ID is absent.
+	"$PYTHON_BIN" - "$1" "$2" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        records = json.load(stream)
+    matches = [r for r in records if isinstance(r, dict) and r.get("id") == sys.argv[2]] if isinstance(records, list) else []
+    ready = len(matches) == 1 and matches[0].get("status") == "idle"
+except (OSError, ValueError, TypeError):
+    ready = False
+sys.exit(0 if ready else 1)
+PY
+}
+
 try_bootstrap() {
 	local server_url="$1"
 	local expected_runtime_name="$2"
@@ -332,8 +472,11 @@ try_bootstrap() {
 	# kill the first-boot worker under `set -u`.  The caller below always supplies
 	# the reviewed instructions path, and an absent/unreadable file simply retries.
 	local instructions_file="${5:-}"
+	local required_agent_id="${6:-}"
 	local runtime_json agent_json runtime_id runtime_device instructions instructions_hash
 	local state_file state_agent_id state_runtime_id state_hash state_name agent_id
+	local custom_args state_args stderr_file archived_agent_id restored_agent
+	custom_args="$(runtime_custom_args "$expected_provider")" || return 1
 
 	server_reachable "$server_url" || return 1
 	[ -x "$MULTICA_BIN" ] || return 1
@@ -341,22 +484,35 @@ try_bootstrap() {
 
 	runtime_json="/tmp/multica-runtimes.$$"
 	agent_json="/tmp/multica-agents.$$"
-	rm -f "$runtime_json" "$agent_json"
-	if ! "$MULTICA_BIN" runtime list --output json > "$runtime_json" 2>/dev/null; then
-		rm -f "$runtime_json" "$agent_json"
+	stderr_file="/tmp/multica-bootstrap-stderr.$$"
+	umask 077
+	rm -f "$runtime_json" "$agent_json" "$stderr_file"
+	if ! "$MULTICA_BIN" runtime list --output json > "$runtime_json" 2>"$stderr_file"; then
+		log_cli_failure "runtime list" "$stderr_file"
+		rm -f "$runtime_json" "$agent_json" "$stderr_file"
 		return 1
 	fi
+	rm -f "$stderr_file"
 	runtime_device="$(runtime_device_name || true)"
 	runtime_id="$(select_runtime_id "$runtime_json" "$expected_runtime_name" "$expected_provider" "$runtime_device" || true)"
 	rm -f "$runtime_json"
 	[ -n "$runtime_id" ] || return 1
 
-	if ! "$MULTICA_BIN" agent list --output json > "$agent_json" 2>/dev/null; then
+	if ! "$MULTICA_BIN" agent list --include-archived --output json > "$agent_json" 2>"$stderr_file"; then
+		log_cli_failure "agent list" "$stderr_file"
+		rm -f "$agent_json" "$stderr_file"
+		return 1
+	fi
+	rm -f "$stderr_file"
+	if [ -n "$required_agent_id" ] && ! agent_ready_for_promotion "$agent_json" "$required_agent_id"; then
 		rm -f "$agent_json"
 		return 1
 	fi
 
-	[ -r "$instructions_file" ] || return 1
+	[ -r "$instructions_file" ] || {
+		rm -f "$agent_json" "$stderr_file"
+		return 1
+	}
 	instructions_hash="$(instructions_sha256 "$instructions_file" || true)"
 	[ -n "$instructions_hash" ] || {
 		rm -f "$agent_json"
@@ -367,7 +523,25 @@ try_bootstrap() {
 	state_runtime_id="$(state_value "$state_file" runtime_id || true)"
 	state_hash="$(state_value "$state_file" instructions_sha256 || true)"
 	state_name="$(state_value "$state_file" agent_name || true)"
-	agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	state_args="$(state_value "$state_file" custom_args || true)"
+	restored_agent=0
+	archived_agent_id="$(select_archived_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	if [ -n "$archived_agent_id" ]; then
+		if ! "$MULTICA_BIN" agent restore "$archived_agent_id" >/dev/null 2>"$stderr_file"; then
+			log_cli_failure "agent restore" "$stderr_file"
+			rm -f "$agent_json" "$stderr_file"
+			return 1
+		fi
+		rm -f "$stderr_file"
+		agent_id="$archived_agent_id"
+		restored_agent=1
+	else
+		agent_id="$(select_agent_id_by_id "$agent_json" "$state_agent_id" || true)"
+	fi
+	if [ -n "$required_agent_id" ]; then
+		# Promotion is update-only, including when local state changes meanwhile.
+		agent_id="$required_agent_id"
+	fi
 	if [ -z "$agent_id" ]; then
 		agent_id="$(select_agent_id "$agent_json" "$agent_name" "$runtime_id" || true)"
 	fi
@@ -376,22 +550,33 @@ try_bootstrap() {
 		# Rebind the unique same-name Agent instead of issuing a duplicate create.
 		agent_id="$(select_agent_id_by_name "$agent_json" "$agent_name" || true)"
 	fi
+	if [ -z "$agent_id" ]; then
+		# A factory reset can change hostname-derived identity while /data retains
+		# the old state. Adopt only one structurally managed Agent for this exact
+		# LAN CIDR; ambiguity is intentionally left for an operator to resolve.
+		agent_id="$(select_agent_id_by_lan_cidr "$agent_json" "$agent_name" || true)"
+	fi
 	if [ -n "$agent_id" ]; then
-		if [ "$state_runtime_id" != "$runtime_id" ] || \
+		if [ "$restored_agent" -eq 1 ] || \
+			[ "$state_runtime_id" != "$runtime_id" ] || \
 			[ "$state_hash" != "$instructions_hash" ] || \
-			[ "$state_name" != "$agent_name" ]; then
+			[ "$state_name" != "$agent_name" ] || \
+			[ "$state_args" != "$custom_args" ] || \
+			! agent_custom_args_match "$agent_json" "$agent_id" "$custom_args"; then
 			if ! "$MULTICA_BIN" agent update "$agent_id" \
 				--name "$agent_name" \
 				--runtime-id "$runtime_id" \
 				--description "本机 OpenWrt 网络与系统管理智能体" \
 				--instructions "$(cat "$instructions_file")" \
-				--max-concurrent-tasks 1 >/dev/null 2>&1; then
-				rm -f "$agent_json"
+				--custom-args "$custom_args" \
+				--max-concurrent-tasks 1 >/dev/null 2>"$stderr_file"; then
+				log_cli_failure "agent update" "$stderr_file"
+				rm -f "$agent_json" "$stderr_file"
 				return 1
 			fi
 		fi
-		rm -f "$agent_json"
-		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+		rm -f "$agent_json" "$stderr_file"
+		write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
 		return 0
 	fi
 
@@ -402,15 +587,34 @@ try_bootstrap() {
 		--runtime-id "$runtime_id" \
 		--description "OpenWrt 系统与网络管理智能体" \
 		--instructions "$instructions" \
-		--max-concurrent-tasks 1 --output json > "$agent_json" 2>/dev/null; then
-		rm -f "$agent_json"
+		--custom-args "$custom_args" \
+		--max-concurrent-tasks 1 --output json > "$agent_json" 2>"$stderr_file"; then
+		log_cli_failure "agent create" "$stderr_file"
+		rm -f "$agent_json" "$stderr_file"
 		return 1
 	fi
 
 	agent_id="$(select_created_agent_id "$agent_json" || true)"
-	rm -f "$agent_json"
+	rm -f "$agent_json" "$stderr_file"
 	[ -n "$agent_id" ] || return 1
-	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name"
+	write_agent_state "$state_file" "$agent_id" "$runtime_id" "$instructions_hash" "$agent_name" "$custom_args"
+	return 0
+}
+
+reconcile_preferred_runtime() {
+	local server_url="$1" runtime_name="$2" agent_name="$3" instructions_file="$4"
+	local agent_id attempt=0
+	agent_id="$(state_value "$DATA_DIR/.agent_state" agent_id || true)"
+	[ -n "$agent_id" ] || { log "Pi fallback has no saved Agent ID; skipping promotion"; return 0; }
+	while [ "$attempt" -lt 20 ]; do
+		sleep 30
+		attempt=$((attempt + 1))
+		if try_bootstrap "$server_url" "$runtime_name" opencode "$agent_name" "$instructions_file" "$agent_id"; then
+			log "existing default agent promoted from Pi to preferred OpenCode runtime"
+			return 0
+		fi
+	done
+	log "preferred runtime promotion window exhausted; retaining usable Pi Agent until next service start"
 	return 0
 }
 
@@ -429,7 +633,8 @@ main() {
 	success_flag="$DATA_DIR/.agent_initialized"
 
 	server_url="$(cfg server_url 'https://multica.lucky.jmsu.top')"
-	expected_runtime_name="$(cfg runtime_name 'Pi (OpenWrt-Router)')"
+	# Pi is the default. Explicit OpenCode selections retain guarded fallback.
+	expected_runtime_name="$(cfg runtime_name 'Pi on OpenWrt')"
 	expected_provider="$(cfg runtime_provider 'pi')"
 	configured_agent_name="$(cfg agent_name 'OpenWrt 管家')"
 
@@ -444,11 +649,32 @@ main() {
 		else
 			log "device profile is unavailable; bootstrap will retry"
 		fi
-		if [ -n "$instructions_file" ] && \
-			try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
-			write_success_flag "$success_flag"
-			log "default agent is registered on the expected online runtime"
-			return 0
+		if [ -n "$instructions_file" ]; then
+			# opencode-first with automatic pi fallback.  When the configured
+			# provider is opencode (the default), try opencode first; if its
+			# runtime is not online yet (first-boot download in progress), fall
+			# back to the pi runtime so the agent is never blocked.  An explicit
+			# runtime_provider=pi skips the opencode attempt entirely.
+			bootstrap_ok=0
+			if [ "$expected_provider" = "opencode" ]; then
+				if try_bootstrap "$server_url" "$expected_runtime_name" "opencode" "$agent_name" "$instructions_file"; then
+					bootstrap_ok=1
+				elif try_bootstrap "$server_url" "Pi (OpenWrt-Router)" "pi" "$agent_name" "$instructions_file"; then
+					write_success_flag "$success_flag"
+					log "preferred OpenCode bootstrap unavailable; Pi fallback ready, checking for bounded promotion"
+					reconcile_preferred_runtime "$server_url" "$expected_runtime_name" "$agent_name" "$instructions_file"
+					return 0
+				fi
+			else
+				if try_bootstrap "$server_url" "$expected_runtime_name" "$expected_provider" "$agent_name" "$instructions_file"; then
+					bootstrap_ok=1
+				fi
+			fi
+			if [ "$bootstrap_ok" -eq 1 ]; then
+				write_success_flag "$success_flag"
+				log "default agent is registered on the expected online runtime"
+				return 0
+			fi
 		fi
 		log "bootstrap prerequisites are not ready; retrying in ${delay}s"
 		sleep "$delay"

@@ -1,0 +1,42 @@
+#!/bin/sh
+# Replay missed early USB storage add events after the normal fstab boot pass.
+# fstools remains the only owner of filesystem policy, UUID and mount targets.
+set -eu
+SYS="${USB_BOOT_SYS:-/sys/class/block}"
+MOUNTS="${USB_BOOT_MOUNTS:-/proc/mounts}"
+BLOCK="${USB_BOOT_BLOCK:-/sbin/block}"
+LOCK="${USB_BOOT_LOCK:-/var/run/usb-boot-automount.lock}"
+PASSES="${USB_BOOT_PASSES:-30}"
+INTERVAL="${USB_BOOT_INTERVAL:-2}"
+case "$PASSES" in ''|*[!0-9]*) exit 1;; esac
+case "$INTERVAL" in ''|*[!0-9]*) exit 1;; esac
+[ "$PASSES" -ge 1 ] && [ "$PASSES" -le 90 ] || exit 1
+[ "$INTERVAL" -le 5 ] || exit 1
+[ -x "$BLOCK" ] || exit 0
+mkdir "$LOCK" 2>/dev/null || exit 0
+trap 'rmdir "$LOCK"' EXIT
+trap 'exit 0' INT TERM
+n=0
+while [ "$n" -lt "$PASSES" ]; do
+ for entry in "$SYS"/sd*; do
+  [ -e "$entry" ] || continue
+  name=${entry##*/}
+  case "$name" in *[!a-z0-9]*) continue;; esac
+  path=$(readlink -f "$entry") || continue
+  # Exclude SATA, eMMC, loop/rootfs, and USB networking (including UDX710).
+  printf '%s\n' "$path" | grep -Eq '/usb[0-9]+/' || continue
+  if [ ! -e "$entry/partition" ]; then
+   # A superfloppy is eligible, but never replay the whole partitioned disk.
+   children=0
+   for child in "$entry"/"$name"[0-9]*; do
+    [ ! -e "$child/partition" ] || children=1
+   done
+   [ "$children" = 0 ] || continue
+  fi
+  awk -v d="/dev/$name" '$1==d {found=1} END {exit !found}' "$MOUNTS" && continue
+  # Do not call global `block mount`: that also probes internal partitions.
+  ACTION=add DEVNAME="$name" "$BLOCK" hotplug >/dev/null 2>&1 || true
+ done
+ n=$((n+1))
+ [ "$n" -ge "$PASSES" ] || sleep "$INTERVAL"
+done

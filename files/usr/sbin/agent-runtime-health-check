@@ -1,0 +1,93 @@
+#!/bin/sh
+# Verify the selected signed runtime and roll back only a positively identified
+# health failure. This never downloads or installs a runtime generation.
+
+set -u
+
+RUNTIME_BIN="${RUNTIME_BIN:-/usr/sbin/agent-runtime}"
+STATUS_FILE="${STATUS_FILE:-/var/run/agent-runtime-health.status}"
+LOCK_FILE="${LOCK_FILE:-/var/lock/agent-runtime-health-check.lock}"
+MAINTENANCE_LOCK_FILE="${MAINTENANCE_LOCK_FILE:-/var/lock/multica-maintenance.lock}"
+
+log() { logger -t agent-runtime-health-check -- "$*" 2>/dev/null || true; }
+
+json_code() {
+	printf '%s\n' "$1" | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9_-]*\)".*/\1/p' | sed -n '1p'
+}
+
+publish_status() {
+	state="$1"
+	code="$2"
+	status_dir=${STATUS_FILE%/*}
+	[ "$status_dir" != "$STATUS_FILE" ] || status_dir=.
+	mkdir -p "$status_dir" 2>/dev/null || return 1
+	tmp="$(mktemp "$STATUS_FILE.tmp.XXXXXX" 2>/dev/null)" || return 1
+	if ! {
+		printf 'state=%s\n' "$state"
+		printf 'timestamp_epoch=%s\n' "$(date +%s 2>/dev/null || echo 0)"
+		printf 'code=%s\n' "$code"
+	} >"$tmp"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	chmod 600 "$tmp" 2>/dev/null || true
+	mv -f "$tmp" "$STATUS_FILE" || { rm -f "$tmp"; return 1; }
+}
+
+main() {
+	[ -x "$RUNTIME_BIN" ] || { publish_status unavailable missing_manager; return 0; }
+	mkdir -p "${LOCK_FILE%/*}" 2>/dev/null || true
+	mkdir -p "${MAINTENANCE_LOCK_FILE%/*}" 2>/dev/null || true
+	exec 9>"$LOCK_FILE" || { publish_status deferred lock_unavailable; return 0; }
+	if ! flock -n 9; then
+		publish_status deferred busy
+		return 0
+	fi
+	exec 8>"$MAINTENANCE_LOCK_FILE" || { publish_status deferred maintenance_lock_unavailable; return 0; }
+	if ! flock -n 8; then
+		publish_status deferred maintenance_busy
+		return 0
+	fi
+	verify_output="$(COMMANDCODE_SKIP_UPDATES=1 "$RUNTIME_BIN" verify --json 2>&1 || true)"
+	code="$(json_code "$verify_output")"
+	case "$code" in
+		ok)
+			publish_status verified ok || log 'could not publish verification status'
+			log 'active runtime verification passed'
+			return 0
+			;;
+		health_failed)
+			rollback_output="$("$RUNTIME_BIN" rollback --json 2>&1 || true)"
+			rollback_code="$(json_code "$rollback_output")"
+			if [ "$rollback_code" = ok ]; then
+				publish_status rolled_back health_failed || log 'could not publish rollback status'
+				log 'active runtime failed verification; previous or firmware baseline runtime was restored'
+				return 0
+			fi
+			case "$rollback_code" in
+				busy|no_data)
+					publish_status deferred "$rollback_code" || true
+					log "safe rollback deferred without changing the active generation (code=$rollback_code)"
+					return 0
+					;;
+			esac
+			publish_status rollback_failed "${rollback_code:-unknown}" || true
+			log "active runtime failed verification and safe rollback failed (code=${rollback_code:-unknown})"
+			return 1
+			;;
+		no_data|busy|signature_failed|incompatible|insufficient_space|download_failed)
+			publish_status deferred "$code" || log 'could not publish deferred verification status'
+			log "runtime verification deferred without changing the active generation (code=$code)"
+			return 0
+			;;
+		*)
+			publish_status unknown "${code:-unknown}" || true
+			log "runtime verification returned an unknown result; no rollback attempted (code=${code:-unknown})"
+			return 0
+			;;
+	esac
+}
+
+if [ "${AGENT_RUNTIME_HEALTH_CHECK_LIBRARY_ONLY:-0}" != 1 ]; then
+	main "$@"
+fi

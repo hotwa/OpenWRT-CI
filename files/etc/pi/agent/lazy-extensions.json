@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "extensions": [
+    {
+      "name": "web-access",
+      "path": "/data/node/lib/node_modules/pi-web-access/index.ts",
+      "lifecycle": "lazy",
+      "description": "Web search, URL and PDF extraction, GitHub repository retrieval, and dynamic-page capable web access.",
+      "toolSummary": [
+        "web_search",
+        "source_check",
+        "fetch_content",
+        "get_search_content"
+      ],
+      "tags": [
+        "web",
+        "search",
+        "fetch",
+        "browser"
+      ]
+    }
+  ],
+  "settings": {
+    "idleTimeout": 10
+  }
+}

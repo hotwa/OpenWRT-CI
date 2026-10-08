@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -x /etc/init.d/usb-boot-automount ] || exit 0
+/etc/init.d/usb-boot-automount enable
+/etc/init.d/usb-boot-automount start

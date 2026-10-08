@@ -12,9 +12,11 @@ UV_INIT="$ROOT_DIR/files/etc/init.d/uv-runtime"
 UV_PROVISION="$ROOT_DIR/files/usr/sbin/uv-runtime-provision"
 UV_PROFILE="$ROOT_DIR/files/etc/profile.d/21-uv-python.sh"
 UV_ENABLE_DEFAULT="$ROOT_DIR/files/etc/uci-defaults/96-enable-uv-runtime"
+READONLY_INIT="$ROOT_DIR/files/etc/init.d/agent-runtime-baseline-readonly"
+HEALTH_CHECK="$ROOT_DIR/files/usr/sbin/agent-runtime-health-check"
 
 fail() { echo "agent runtime manager: $*" >&2; exit 1; }
-for path in "$MANAGER" "$INIT" "$MULTICA" "$DATA_MOUNT" "$NODE_PROFILE" "$UPDATE_PROFILE" "$UV_INIT" "$UV_PROVISION" "$UV_PROFILE" "$UV_ENABLE_DEFAULT"; do
+for path in "$MANAGER" "$INIT" "$MULTICA" "$DATA_MOUNT" "$NODE_PROFILE" "$UPDATE_PROFILE" "$UV_INIT" "$UV_PROVISION" "$UV_PROFILE" "$UV_ENABLE_DEFAULT" "$READONLY_INIT" "$HEALTH_CHECK"; do
   [ -f "$path" ] || fail "missing $path"
 done
 sh -n "$MANAGER"
@@ -26,16 +28,25 @@ sh -n "$UV_PROVISION"
 
 grep -Fq 'START=91' "$INIT" || fail "runtime reconcile boot order changed"
 grep -Fq 'agent-runtime reconcile --json' "$INIT" || fail "runtime reconcile missing"
-for term in 'generations' 'quarantine' 'flock -n 9' 'usign -V' 'archive_is_safe' 'links_are_safe' 'verify_critical_hashes' 'runtime_health' 'runtime_uv_dir' 'critical_uv'; do
+grep -Fq 'COMMANDCODE_SKIP_UPDATES=1' "$NODE_PROFILE" || fail "interactive CommandCode updates are not disabled"
+grep -Fq 'COMMANDCODE_SKIP_UPDATES=1 cmdc --version' "$UPDATE_PROFILE" || fail "SSH banner can trigger CommandCode self-update"
+grep -Fq 'mount --bind "$directory" "$directory"' "$READONLY_INIT" || fail "firmware runtime baseline is not bind-mounted read-only"
+grep -Fq 'mount -o remount,bind,ro "$directory"' "$READONLY_INIT" || fail "firmware runtime baseline is not remounted read-only"
+grep -Fq '53 2 * * * /usr/sbin/agent-runtime-health-check' "$ROOT_DIR/files/etc/crontabs/root" || fail "daily signed runtime health check is missing"
+for term in 'generations' 'quarantine' 'flock -n 9' 'usign -V' 'archive_is_safe' 'links_are_safe' 'verify_critical_hashes' 'verify_runtime_components' 'runtime_health' 'runtime_uv_dir' 'critical_uv'; do
   grep -Fq "$term" "$MANAGER" || fail "manager omits $term"
 done
-for term in 'publish_pi_models' "local runtime=\"\$1\" node_dir source link=\"/tmp/agent-runtime-pi-plan-mode.ts\"" 'local temporary="${link}.new.$$"' "vllm-qwen38"; do
+for term in 'publish_pi_models' "vllm-qwen38"; do
   grep -Fq "$term" "$MANAGER" || fail "manager omits $term"
 done
 for command in pi cmdc multica; do
   grep -Fq "for command in pi cmdc multica" "$MANAGER" || fail "runtime health does not cover Pi, CommandCode and Multica"
 done
-if grep -Eqi 'hermes|opencode' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
+# opencode is a first-class runtime provider since 111ff1b (per-device
+# provisioning: re-cs-02/re-cs-07 default multica runtime_provider=opencode,
+# gated on /etc/opencode/release-url), so only the truly retired CLI
+# (hermes) must stay out of runtime scripts.
+if grep -Eqi 'hermes' "$MANAGER" "$INIT" "$MULTICA" "$NODE_PROFILE" "$UPDATE_PROFILE"; then
 	fail "runtime scripts still reference a retired CLI"
 fi
 

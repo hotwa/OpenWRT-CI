@@ -8,15 +8,29 @@ This firmware overlay can join the private Headscale tailnet after WAN is ready.
 - Use ordinary SSH to the router over its Tailscale IP for normal management after the router joins Headscale, for example `ssh root@100.64.x.x`.
 - `tailscale up --ssh` enables Tailscale's built-in SSH path. It does not modify Dropbear, but it can claim port `22` for traffic arriving at the router's Tailscale IP; LAN/rescue SSH still uses Dropbear.
 - Keep `accept_dns` disabled so Tailscale MagicDNS does not take over dnsmasq, mosdns, Nikki, or DAE DNS split routing.
-- The generic disabled overlay keeps `accept_routes=0`; the private multi-site build enables it. Its private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
+- `tailscale.settings.accept_routes` is the sole router route-acceptance policy; this overlay defaults it to `1` for the private multi-site Mesh. Auto-enrollment only reads and applies that setting, including after state restore and on already-enrolled routers. The CI runner is separate and explicitly uses `--accept-routes=false`. The private-Mesh gateway adds explicit `lan -> tailscale` and `tailscale -> lan` forwarding while retaining the `tailscale` zone's `forward=REJECT`; Headscale ACLs remain the Tailnet-to-LAN access boundary. Before promotion, check table 52 against WireGuard, WAN policy routing, DAE and Nikki on real hardware.
 - Keep the optional `tailscale-settings` LuCI reconciler disabled. Its current package service runs `tailscaled --cleanup` during service startup; with an already-running daemon this can remove `tailscale0`'s address and table 52 routes. `headscale-auto-enroll` owns the persistent `tailscale set` preferences instead.
+- After `tailscale set` or `tailscale up`, auto-enrollment verifies that the control-plane IPv4 is also present on `tailscale0`. If that kernel state is missing, it makes one bounded Tailscale restart and waits for recovery; this avoids a boot that reports `Running` while Tailnet traffic is unavailable.
 
 ## Files
 
 - `/etc/config/headscale_auto_enroll` controls enrollment.
+- An explicit build hostname generates `/etc/uci-defaults/93-headscale-explicit-hostname`, which applies that name once before `94-headscale-auto-enroll` starts enrollment, including with a retained configuration.
+- `/data/tailscale/tailscaled.state` is the persistent Tailnet identity. The
+  `tailscale-state-persist` service migrates an existing legacy state from
+  `/etc/tailscale/` only when `/data` is a real block-backed mount; it never
+  overwrites an existing `/data` state file. Changing `state_file` stops and
+  starts the daemon; readiness is published only after a successful start.
+  An empty existing state or a failed migration/start holds enrollment.
+- USB block hotplug calls the persistence worker directly under its lock. An
+  already-running daemon with the correct state path is not started or restarted,
+  preserving its live addresses and routes. State-path migration, stopped daemon
+  recovery and mount-loss protection retain their checked fail-closed behavior.
+  The shared WRT-CORE overlay provides this to route-reconcile builds; arbitrary
+  external builds and direct repeated unpatched init start calls are not covered.
 - `/usr/sbin/headscale-auto-enroll` performs enrollment.
 - `/etc/init.d/headscale-auto-enroll` runs it through procd.
-- `/etc/hotplug.d/iface/95-headscale-auto-enroll` retries enrollment when an interface comes up.
+- `/etc/hotplug.d/iface/95-headscale-auto-enroll` starts enrollment when an interface comes up; it never restarts a live one-shot worker.
 - `/etc/tailscale/headscale.authkey` is the optional one-line auth key file.
 - `/etc/tailscale/auto-enroll.done` marks a successful enrollment.
 - `/etc/uci-defaults/95-tailscale-settings-disable` prevents the optional LuCI reconciler from being enabled at first boot; the auto-enroll script applies the same defensive disable for sysupgrade remnants.
@@ -32,10 +46,11 @@ config enroll 'main'
 	option login_server 'https://headscale.jmsu.top'
 	option auth_key_file '/etc/tailscale/headscale.authkey'
 	option provision_url ''
-	option hostname_prefix 'openwrt'
+	option hostname_mode 'legacy'
+	option hostname_model ''
+	option hostname_prefix ''
 	option ssh '1'
 	option accept_dns '0'
-	option accept_routes '0'
 	option advertise_routes ''
 ```
 
@@ -80,9 +95,9 @@ Optional non-secret environment variables:
 
 ```text
 HEADSCALE_LOGIN_SERVER=https://headscale.jmsu.top
-HEADSCALE_OPENWRT_HOSTNAME_PREFIX=openwrt
+HEADSCALE_OPENWRT_HOSTNAME_PREFIX=
+HEADSCALE_OPENWRT_HOSTNAME=
 HEADSCALE_OPENWRT_ENABLE_SSH=1
-HEADSCALE_OPENWRT_ACCEPT_ROUTES=0
 HEADSCALE_OPENWRT_ADVERTISE_ROUTES=
 ```
 
@@ -90,13 +105,75 @@ For Dropbear-backed ordinary SSH over the Tailscale IP, store one or more public
 
 The Tailscale firewall overlay intentionally uses `firewall.tailscale.device='tailscale0'` instead of creating `network.tailscale`. Tailscaled owns the TUN address and routes; letting netifd manage `tailscale0` can remove the assigned `100.64.0.0/10` address and make `ssh root@100.64.x.x` time out.
 
+## Stable identity across Factory images
+
+For managed devices, `hostname_mode='lan-site'` derives
+`<model-short>-<active-LAN-third-octet>`, such as `cs02-11` for
+`RE-CS-02` on `192.168.11.1`. The model is injected at build time, but the
+numeric suffix comes from the validated live LAN interface, never from
+`WRT_IP`, WAN DHCP, or PPPoE. `hostname_mode='explicit'` records an administrator-selected label, such as
+CPE-5G B's `cpe-5g-s13`, and is not automatically CD-eligible. A new one-shot migration recognizes only the repository's legacy
+`openwrt-re-...-<octet>` and `re-...-s<octet>` forms; operator-chosen names are
+not changed. The name is a label, while `/data/tailscale/tailscaled.state`
+holds the cryptographic device identity that prevents duplicate Headscale
+nodes and stale subnet-route records after a supported Factory flash.
+
+Install one retained-config sysupgrade carrying this migration before relying
+on Factory images. If the independent `/data` partition is missing, raw, or
+reformatted, the service refuses to create a replacement state in the root
+overlay and holds auto-enrollment; restore `/data` or use the physical rescue
+path instead.
+
+Before a Factory flash, verify `findmnt /data` reports the intended block
+device and `ls -l /data/tailscale/tailscaled.state` exists. After the retained
+upgrade has booted once, the same state file reconnects the existing Headscale
+node and only changes its hostname label; it does not register a `-1` node.
+
 When `/etc/config/headscale_auto_enroll` has `option ssh '1'`, the auto-enroll script applies `tailscale set --ssh=true` even if the node is already enrolled. This keeps recovered or LuCI-enrolled routers from staying in `RunSSH=false`.
+
+## CPE-5G B identity and first deployment
+
+CPE B passes the non-secret reusable input `WRT_HEADSCALE_HOSTNAME=cpe-5g-s13`,
+which CORE exposes as `HEADSCALE_OPENWRT_HOSTNAME`. The injector stores this
+explicit label even when the auth key is empty, while keeping registration
+`enabled=0` and removing any auth key left in a reused build root. The intended
+MagicDNS name is `cpe-5g-s13.hs.jmsu.top` after registration and preferences are
+applied. A keyless disabled auto-enroll service does not rename an existing
+control-plane node just because UCI contains the new label.
+
+For a retained-config upgrade, the generated
+`93-headscale-explicit-hostname` applies this explicit build choice before
+`94-headscale-auto-enroll` starts the service. It changes only
+`hostname_mode`, `hostname_override`, `hostname_model` and `hostname_prefix`;
+it preserves the retained `enabled` setting and never reads a key or state
+file. The four fields use this build's sanitized explicit label and optional
+prefix; CPE's empty prefix clears any retained legacy prefix. Thus the current CPE's retained `openwrt-cpe-5g-13` label becomes
+`cpe-5g-s13` without changing its enrollment policy. Successful uci-defaults
+execution removes the migration; failed UCI writes or commits leave it for a
+later retry. Later operator renames made in the UCI hostname settings remain
+local choices until another explicit-name firmware upgrade is installed.
+An empty build hostname generates no such migration and retains the existing
+LAN-derived naming behavior.
+
+The CPE preset also explicitly enables the guarded RE eMMC provisioner. The
+2026-10-03 device observation still showed `NeedsLogin`, no independent `/data`
+mount and GPT anomalies. Build-time configuration alone cannot make that
+router registered or its storage persistent: inspect and back up its exact
+layout, establish a valid `/data`, and perform one authorized enrollment first.
+No state file or private key is injected into the firmware. See
+[CPE IPv6 and backup networking](cpe-ipv6-backup.md) for deployment and
+validation boundaries. Do not reuse the fleet record for `ss01-12` or assume
+all factory flashing tools preserve `/data`.
 
 ## wrtbak recovery gate
 
 When `wrtbak.main.firstboot_auto_enabled=1`, Headscale registration waits for the wrtbak recovery gate. `pending` and `reboot_pending` keep registration closed. `already_done` and `restored` cause tailscaled to reload the recovered state before any auth key is read. `no_backup`, `failed_final`, and `disabled` allow a new registration. The wait is bounded; after the configured timeout, registration proceeds to preserve the Tailnet rescue path.
 
-The init service and WAN hotplug hook can fire close together. A PID-aware runtime lock serializes these attempts, reclaims stale locks after service restart, and prevents two concurrent `tailscale up` calls.
+The init service and WAN hotplug hook can fire close together. A PID-aware
+runtime lock serializes these attempts, reclaims stale locks after service
+restart, and prevents two concurrent `tailscale up` calls. The hotplug hook
+uses `start`, not `restart`: a restart can SIGKILL an in-progress one-shot
+enrollment and leave an otherwise healthy router half configured.
 
 Prefer a one-use, short-expiry, per-device key with only the narrow tags needed
 by the router:

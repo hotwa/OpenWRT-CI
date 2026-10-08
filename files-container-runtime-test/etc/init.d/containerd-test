@@ -28,6 +28,41 @@ cgroup_ready() {
 	done
 }
 
+runtime_binaries_ready() {
+	local binary
+	for binary in /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/ctr /usr/bin/nerdctl /usr/sbin/runc; do
+		[ -x "$binary" ] || {
+			logger -t containerd-test "refusing to start: missing runtime binary $binary"
+			return 1
+		}
+	done
+}
+
+prepare_runtime_dirs() {
+	mkdir -p /data/containerd/root /data/containerd/nerdctl /run/containerd
+}
+
+bridge_ready() {
+	local run_without_bridge
+	if ! [ -x /usr/sbin/container-bridge-nft ]; then
+		logger -t containerd-test "bridge+nft helper is missing or not executable"
+	elif /usr/sbin/container-bridge-nft enable; then
+		logger -t containerd-test "default container bridge enabled"
+		return 0
+	else
+		logger -t containerd-test "bridge+nft policy could not be enabled"
+	fi
+
+	# Only the exact, explicit UCI value 1 permits this degraded start.
+	run_without_bridge="$(uci -q get containerd-test.main.run_without_bridge 2>/dev/null)" || run_without_bridge=0
+	if [ "$run_without_bridge" = 1 ]; then
+		logger -t containerd-test "WARNING: run_without_bridge=1: starting without bridge+nft readiness; stale CNI may be used; Nikki network policy is not guaranteed; no network isolation is promised"
+		return 0
+	fi
+	logger -t containerd-test "refusing to start: bridge+nft policy is not ready (run_without_bridge is not explicitly 1)"
+	return 1
+}
+
 start_service() {
 	if ! data_mount_ready; then
 		logger -t containerd-test "refusing to start: /data is not a real ext4/f2fs block mount"
@@ -37,20 +72,9 @@ start_service() {
 		logger -t containerd-test "refusing to start: cgroup v2 controllers are not ready"
 		return 0
 	fi
-	for binary in /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/ctr /usr/bin/nerdctl /usr/sbin/runc; do
-		[ -x "$binary" ] || {
-			logger -t containerd-test "refusing to start: missing runtime binary $binary"
-			return 0
-		}
-	done
-
-	mkdir -p /data/containerd/root /data/containerd/nerdctl /run/containerd || return 1
-	if [ -x /usr/sbin/container-bridge-nft ]; then
-		/usr/sbin/container-bridge-nft enable || {
-			logger -t containerd-test "refusing to start: bridge+nft policy could not be enabled"
-			return 0
-		}
-	fi
+	runtime_binaries_ready || return 0
+	prepare_runtime_dirs || return 1
+	bridge_ready || return 0
 
 	procd_open_instance
 	procd_set_param command /usr/bin/containerd --config "$CONFIG_FILE"

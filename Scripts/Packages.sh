@@ -116,7 +116,9 @@ UPDATE_PACKAGE "theme-fluent" "LazuliKao/luci-theme-fluent" "main"
 #UPDATE_PACKAGE "homeproxy" "VIKINGYFY/homeproxy" "main"
 UPDATE_PACKAGE "momo" "nikkinikki-org/OpenWrt-momo" "main"
 UPDATE_PACKAGE "nikki" "nikkinikki-org/OpenWrt-nikki" "main"
-UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "dev" "pkg"
+# Official OpenClash master snapshot; independent from the firmware source pin.
+OPENCLASH_PACKAGE_COMMIT=c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593
+UPDATE_PACKAGE "openclash" "vernesong/OpenClash" "master" "pkg" "" "$OPENCLASH_PACKAGE_COMMIT"
 #UPDATE_PACKAGE "passwall" "Openwrt-Passwall/openwrt-passwall" "main" "pkg"
 #UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 

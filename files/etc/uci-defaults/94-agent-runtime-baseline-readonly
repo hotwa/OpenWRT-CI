@@ -1,0 +1,6 @@
+#!/bin/sh
+
+/etc/init.d/agent-runtime-baseline-readonly enable >/dev/null 2>&1 || exit 1
+/etc/init.d/agent-runtime-baseline-readonly start || exit 1
+
+exit 0

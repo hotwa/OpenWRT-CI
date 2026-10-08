@@ -1,0 +1,485 @@
+#!/bin/sh /etc/rc.common
+# agent-data-prep: idempotent every-boot provisioning of /data-backed agent
+# state.  99-auto-mount-data is a uci-defaults script: it runs only on the
+# first boot after flash, and it can fail or be skipped entirely when the
+# data partition carries no recognizable label (a bare ext4 partition, as on
+# re-ss-01) or when sysupgrade keeps the executed markers.  In those cases
+# /data/pi, /data/multica, /data/commandcode and the /root symlinks would
+# never be created and the Multica daemon would fail its startup checks.
+# This service re-runs the same provisioning on every boot so any device
+# converges without operator intervention.  Every step is idempotent.
+
+START=91
+STOP=10
+
+DATA_ROOT="${AGENT_DATA_PREP_ROOT:-/data}"
+ROOT_HOME="${AGENT_DATA_PREP_HOME:-/root}"
+FIRMWARE_ETC="${AGENT_DATA_PREP_FIRMWARE_ETC:-/etc}"
+PROC_MOUNTS="${AGENT_DATA_PREP_PROC_MOUNTS:-/proc/mounts}"
+PI_SETTINGS_MERGER="${AGENT_DATA_PREP_PI_SETTINGS_MERGER:-/usr/sbin/pi-settings-merge.js}"
+PI_FIRMWARE_NODE_ROOT="${AGENT_DATA_PREP_PI_FIRMWARE_NODE_ROOT:-/opt/node}"
+PI_SETTINGS_MERGE_REWRITTEN=0
+PI_SETTINGS_MERGED_STATE=""
+
+log_info() {
+	logger -t agent-data-prep "$*" 2>/dev/null || true
+	echo "agent-data-prep: $*"
+}
+
+log_warn() {
+	logger -t agent-data-prep "WARN: $*" 2>/dev/null || true
+	echo "agent-data-prep: WARN: $*" >&2
+}
+
+data_mounted() {
+	# Read the mounts source at call time so tests can re-export
+	# AGENT_DATA_PREP_PROC_MOUNTS after sourcing the script.
+	local proc_mounts="${AGENT_DATA_PREP_PROC_MOUNTS:-${PROC_MOUNTS:-/proc/mounts}}"
+	# A real data partition only counts when /proc/mounts shows a block
+	# device mounted on DATA_ROOT with an on-disk filesystem.  The old
+	# fallback (dir exists and is writable) misfires on overlay-only dirs
+	# left behind after a failed mount and would write state to overlay.
+	grep -qsE "^/dev/(mmcblk[0-9]+p[0-9]+|sd[a-z]+[0-9]+)[[:space:]]+${DATA_ROOT}[[:space:]]+(ext4|f2fs)[[:space:]]" "$proc_mounts" 2>/dev/null
+}
+
+wait_data_mount() {
+	local waited=0
+	while [ "$waited" -lt 90 ]; do
+		if data_mounted; then
+			return 0
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+	return 1
+}
+
+ensure_real_directory() {
+	[ ! -L "$1" ] || {
+		log_warn "refusing symlinked data directory: $1"
+		return 1
+	}
+	mkdir -p "$1" || return 1
+	[ -d "$1" ] || return 1
+	chmod 0700 "$1" 2>/dev/null || true
+}
+
+verify_tree() {
+	local source="$1"
+	local destination="$2"
+	(
+		cd "$source" || exit 1
+		find . -mindepth 1 -print
+	) | while IFS= read -r relative; do
+		local src="$source/$relative"
+		local dst="$destination/$relative"
+		if [ -L "$src" ]; then
+			[ -L "$dst" ] && [ "$(readlink "$src")" = "$(readlink "$dst")" ] || exit 1
+		elif [ -d "$src" ]; then
+			[ -d "$dst" ] && [ ! -L "$dst" ] || exit 1
+		elif [ -f "$src" ]; then
+			[ -f "$dst" ] && cmp -s "$src" "$dst" || exit 1
+		else
+			log_warn "unsupported object during migration: $src"
+			exit 1
+		fi
+	done
+}
+
+copy_tree_verified() {
+	local source="$1"
+	local target="$2"
+	local name="$3"
+	local stage="$DATA_ROOT/.migration-stage.$$.$name"
+
+	ensure_real_directory "$stage" || return 1
+	cp -a "$source/." "$stage/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$stage" || {
+		rm -rf "$stage"
+		return 1
+	}
+	cp -a "$stage/." "$target/" || {
+		rm -rf "$stage"
+		return 1
+	}
+	verify_tree "$source" "$target" || {
+		rm -rf "$stage"
+		return 1
+	}
+	rm -rf "$stage"
+}
+
+# link_directory <target> <link_path> <name>
+# Idempotently turns a real directory into a symlink to target, migrating the
+# existing content to target first (verified copy).  A pre-existing symlink to
+# the same target is left untouched.
+link_directory() {
+	local target="$1"
+	local link_path="$2"
+	local name="$3"
+	local temporary="${link_path}.new.$$"
+	local backup="${link_path}.migration-backup.$$"
+
+	ensure_real_directory "$target" || return 1
+	if [ -L "$link_path" ]; then
+		[ "$(readlink "$link_path")" = "$target" ] || {
+			log_warn "refusing to replace unexpected symlink: $link_path"
+			return 1
+		}
+		return 0
+	fi
+	if [ -e "$link_path" ]; then
+		[ -d "$link_path" ] || {
+			log_warn "refusing to replace non-directory: $link_path"
+			return 1
+		}
+		copy_tree_verified "$link_path" "$target" "$name" || {
+			log_warn "verified copy failed; source preserved: $link_path"
+			return 1
+		}
+		ln -s "$target" "$temporary" || return 1
+		mv "$link_path" "$backup" || {
+			rm -f "$temporary"
+			return 1
+		}
+		if ! mv "$temporary" "$link_path" || [ ! -L "$link_path" ] || \
+		   [ "$(readlink "$link_path")" != "$target" ]; then
+			rm -f "$temporary" "$link_path" 2>/dev/null || true
+			mv "$backup" "$link_path" 2>/dev/null || true
+			return 1
+		fi
+		rm -rf "$backup" || return 1
+		return 0
+	fi
+
+	ln -s "$target" "$temporary" || return 1
+	mv "$temporary" "$link_path" || {
+		rm -f "$temporary"
+		return 1
+	}
+}
+
+# CommandCode auth refresh: keep /data/commandcode/auth.json in sync with the
+# firmware-injected key.  A stale key left by an earlier manual /login (or an
+# older build) shadows the firmware key via the provider auth-path priority
+# and yields 401 once it expires; prefer the firmware key and back up.
+refresh_commandcode_auth() {
+	local firmware_auth="$FIRMWARE_ETC/commandcode/auth.json"
+	local data_auth="$DATA_ROOT/commandcode/auth.json"
+	[ -r "$firmware_auth" ] || return 0
+	if [ ! -e "$data_auth" ] || ! cmp -s "$firmware_auth" "$data_auth"; then
+		if [ -e "$data_auth" ]; then
+			( umask 077; cp -p "$data_auth" \
+				"$data_auth.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo stale)" ) 2>/dev/null || true
+		fi
+		( umask 077; cp -p "$firmware_auth" "$data_auth.new" ) 2>/dev/null || return 1
+		mv "$data_auth.new" "$data_auth" 2>/dev/null || return 1
+	fi
+}
+
+# Merge newly shipped default Pi packages into a persistent settings file
+# without replacing administrator-selected providers, models, package entries,
+# or unknown future fields. JSON handling stays in Node so malformed input is
+# rejected before any write, and the helper publishes changes with rename(2).
+merge_pi_settings_packages() {
+	local firmware_settings="$FIRMWARE_ETC/pi/agent/settings.json"
+	local persistent_settings="$DATA_ROOT/pi/agent/settings.json"
+	local node_bin="${AGENT_DATA_PREP_NODE_BIN:-}"
+	local candidate merge_result state remainder dev inode mtime size field
+
+	PI_SETTINGS_MERGE_REWRITTEN=0
+	PI_SETTINGS_MERGED_STATE=""
+
+	[ -r "$firmware_settings" ] || return 0
+	[ -r "$persistent_settings" ] || return 1
+	[ -r "$PI_SETTINGS_MERGER" ] || return 1
+
+	if [ -n "$node_bin" ]; then
+		[ -x "$node_bin" ] || return 1
+	else
+		for candidate in \
+			"$DATA_ROOT/agent-runtime/current/node/bin/node" \
+			/opt/node/bin/node; do
+			if [ -x "$candidate" ]; then
+				node_bin="$candidate"
+				break
+			fi
+		done
+		[ -n "$node_bin" ] || return 1
+	fi
+
+	merge_result="$("$node_bin" "$PI_SETTINGS_MERGER" \
+		"$firmware_settings" "$persistent_settings")" || return 1
+	case "$merge_result" in
+		unchanged) return 0 ;;
+		changed\ *) state="${merge_result#changed }" ;;
+		*) return 1 ;;
+	esac
+
+	# Accept only the helper's exact `dev:inode:mtime:size` publication state.
+	# This state identifies the file the helper itself renamed into place; the
+	# shell must not infer a rewrite from a later observation of the pathname.
+	dev="${state%%:*}"; remainder="${state#*:}"
+	inode="${remainder%%:*}"; remainder="${remainder#*:}"
+	mtime="${remainder%%:*}"; size="${remainder#*:}"
+	[ "$state" = "$dev:$inode:$mtime:$size" ] || return 1
+	for field in "$dev" "$inode" "$mtime" "$size"; do
+		case "$field" in ''|*[!0-9]*) return 1 ;; esac
+	done
+	PI_SETTINGS_MERGED_STATE="$state"
+	PI_SETTINGS_MERGE_REWRITTEN=1
+	return 0
+}
+
+refresh_pi_settings_managed_marker() {
+	local settings_file="$1"
+	local marker="$2"
+	local expected_marker_state="$3"
+	local expected_settings_state="$4"
+	local current_marker_state current_settings_state
+
+	[ -n "$expected_marker_state" ] && [ -n "$expected_settings_state" ] || return 0
+	[ -f "$settings_file" ] && [ ! -L "$settings_file" ] || return 0
+	current_settings_state="$(stat -c '%d:%i:%Y:%s' "$settings_file" 2>/dev/null || true)"
+	[ "$current_settings_state" = "$expected_settings_state" ] || return 0
+	[ -f "$marker" ] && [ ! -L "$marker" ] || return 0
+	current_marker_state="$(stat -c '%d:%i:%Y' "$marker" 2>/dev/null || true)"
+	[ "$current_marker_state" = "$expected_marker_state" ] || return 0
+	touch -r "$settings_file" "$marker" 2>/dev/null
+}
+
+# Keep commandcode-model-sync's firmware-management marker aligned only when
+# the settings file was demonstrably firmware-managed before this append-only
+# package merge. Missing, symlinked, stale, or concurrently changed markers
+# are never created, followed, or refreshed.
+reconcile_pi_settings_packages() {
+	local settings_file="$DATA_ROOT/pi/agent/settings.json"
+	local marker="$DATA_ROOT/pi/agent/.firmware-settings-managed"
+	local settings_mtime marker_mtime managed_marker_state
+
+	managed_marker_state=""
+	if [ -f "$settings_file" ] && [ ! -L "$settings_file" ] && \
+	   [ -f "$marker" ] && [ ! -L "$marker" ]; then
+		settings_mtime="$(stat -c '%Y' "$settings_file" 2>/dev/null || true)"
+		marker_mtime="$(stat -c '%Y' "$marker" 2>/dev/null || true)"
+		if [ -n "$settings_mtime" ] && [ "$settings_mtime" = "$marker_mtime" ]; then
+			managed_marker_state="$(stat -c '%d:%i:%Y' "$marker" 2>/dev/null || true)"
+		fi
+	fi
+
+	if ! merge_pi_settings_packages >/dev/null 2>&1; then
+		log_warn "cannot merge default Pi packages; persistent settings preserved"
+		return 0
+	fi
+
+	[ "$PI_SETTINGS_MERGE_REWRITTEN" -eq 1 ] || return 0
+	[ -n "$managed_marker_state" ] || return 0
+	refresh_pi_settings_managed_marker \
+		"$settings_file" "$marker" "$managed_marker_state" "$PI_SETTINGS_MERGED_STATE" || \
+		log_warn "Pi packages merged but firmware-settings marker could not be refreshed"
+	return 0
+}
+
+reconcile_multica_maintenance_cron() {
+	# sysupgrade retains executed uci-defaults markers and the old crontab, so
+	# a one-shot migration cannot repair pre-03:07 images. This service remains
+	# enabled on devices with retained /data and leaves unrelated cron entries
+	# untouched.
+	if [ -x /usr/sbin/multica-maintenance-cron-reconcile ]; then
+		/usr/sbin/multica-maintenance-cron-reconcile >/dev/null 2>&1 || \
+			log_warn "cannot reconcile Multica maintenance cron"
+	fi
+}
+
+pi_package_name() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 1
+	sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | sed -n '1p'
+}
+
+firmware_pi_extension_dir() {
+	local package_name="$1" candidate
+	for candidate in \
+		"$DATA_ROOT/agent-runtime/current/node/lib/node_modules/$package_name" \
+		"$PI_FIRMWARE_NODE_ROOT/lib/node_modules/$package_name"; do
+		[ -d "$candidate" ] && [ -f "$candidate/package.json" ] || continue
+		[ "$(pi_package_name "$candidate/package.json")" = "$package_name" ] || continue
+		printf '%s' "$candidate"
+		return 0
+	done
+	return 1
+}
+
+reconcile_firmware_pi_extension_link() {
+	# Pi resolves npm: extensions from /data first. A real directory retained by
+	# sysupgrade can therefore pin a default extension long after its matching
+	# signed runtime moved forward. Preserve a timestamped copy, then atomically
+	# point this firmware-managed package at the selected immutable runtime.
+	local package_name="$1" node_modules link_path target temporary backup stamp
+	node_modules="$DATA_ROOT/pi/agent/npm/node_modules"
+	link_path="$node_modules/$package_name"
+	target="$(firmware_pi_extension_dir "$package_name" 2>/dev/null || true)"
+	[ -n "$target" ] || {
+		log_warn "firmware Pi extension is unavailable: $package_name"
+		return 0
+	}
+	ensure_real_directory "$DATA_ROOT/pi/agent/npm" || return 1
+	ensure_real_directory "$node_modules" || return 1
+	if [ -L "$link_path" ] && [ "$(readlink "$link_path" 2>/dev/null || true)" = "$target" ]; then
+		return 0
+	fi
+	if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+		[ "$(pi_package_name "$link_path/package.json" 2>/dev/null || true)" = "$package_name" ] || {
+			log_warn "refusing to replace non-firmware Pi extension path: $link_path"
+			return 0
+		}
+		stamp="$(date +%Y%m%d%H%M%S 2>/dev/null || echo migration)"
+		backup="$link_path.firmware-managed-backup.$stamp"
+		while [ -e "$backup" ] || [ -L "$backup" ]; do
+			backup="$backup.$$.next"
+		done
+		mv "$link_path" "$backup" || return 1
+	else
+		backup=''
+	fi
+	temporary="${link_path}.new.$$"
+	ln -s "$target" "$temporary" || {
+		[ -z "$backup" ] || mv "$backup" "$link_path" 2>/dev/null || true
+		return 1
+	}
+	if ! mv "$temporary" "$link_path"; then
+		rm -f "$temporary" 2>/dev/null || true
+		[ -z "$backup" ] || mv "$backup" "$link_path" 2>/dev/null || true
+		return 1
+	fi
+	log_info "linked firmware-managed Pi extension $package_name to $target"
+}
+
+reconcile_firmware_pi_extension_links() {
+	# These npm: sources are firmware-owned. Keep them inside the signed runtime
+	# even when sysupgrade retains an old manually installed copy on /data.
+	reconcile_firmware_pi_extension_link pi-commandcode-provider || \
+		log_warn "cannot reconcile pi-commandcode-provider"
+}
+
+start() {
+	if ! wait_data_mount; then
+		log_warn "skipped: $DATA_ROOT not mounted within 90s"
+		return 0
+	fi
+
+	local directory
+	for directory in \
+		"$DATA_ROOT/multica" \
+		"$DATA_ROOT/multica/workspaces" \
+		"$DATA_ROOT/agent_workspaces" \
+		"$DATA_ROOT/pi" \
+		"$DATA_ROOT/pi/agent" \
+		"$DATA_ROOT/pi/agent/secrets" \
+		"$DATA_ROOT/commandcode" \
+		"$DATA_ROOT/uv" \
+		"$DATA_ROOT/uv/cache" \
+		"$DATA_ROOT/uv/python" \
+		"$DATA_ROOT/pnpm" \
+		"$DATA_ROOT/npm" \
+		"$DATA_ROOT/cache" \
+		"$DATA_ROOT/compose"; do
+		ensure_real_directory "$directory" || log_warn "cannot ensure $directory"
+	done
+
+	# Firmware-default Pi configs land on /data only when absent.
+	local config_file
+	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json modes.config.json; do
+		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
+		[ -e "$DATA_ROOT/pi/agent/$config_file" ] && continue
+		if cp -p "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" 2>/dev/null; then
+			mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" 2>/dev/null || true
+		fi
+	done
+
+	refresh_commandcode_auth || log_warn "cannot refresh CommandCode auth on /data"
+	reconcile_multica_maintenance_cron
+
+	# Multica role card (rendered role markdown used by both Multica and Pi).
+	if [ -r "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
+		cp -p "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md" 2>/dev/null || true
+	fi
+
+	# opencode config migration (same policy as the opencode-runtime init):
+	# seed /data config from firmware default and upgrade configs lacking the
+	# CommandCode or local SGLang fallback provider, with timestamped backups.
+	# Skipped entirely on low-memory
+	# builds (re-ss-01) that ship no /etc/opencode/opencode.json.
+	if [ -f "$FIRMWARE_ETC/opencode/opencode.json" ]; then
+		mkdir -p "$DATA_ROOT/opencode/config" "$DATA_ROOT/opencode/cache" \
+			"$DATA_ROOT/opencode/data" "$DATA_ROOT/opencode/state" 2>/dev/null || true
+		if [ ! -f "$DATA_ROOT/opencode/config/opencode.json" ]; then
+			cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null && \
+				chmod 0644 "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+		fi
+		if [ -f "$DATA_ROOT/opencode/config/opencode.json" ] && \
+			{ ! grep -q '"commandcode"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || \
+			  ! grep -q '"local-sglang"' "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null; }; then
+			cp -p "$DATA_ROOT/opencode/config/opencode.json" \
+				"$DATA_ROOT/opencode/config/opencode.json.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo provider-migration)" 2>/dev/null || true
+			cp "$FIRMWARE_ETC/opencode/opencode.json" "$DATA_ROOT/opencode/config/opencode.json" 2>/dev/null || true
+		fi
+		mkdir -p "$ROOT_HOME/.config" 2>/dev/null || true
+		if [ ! -e "$ROOT_HOME/.config/opencode" ] || [ -L "$ROOT_HOME/.config/opencode" ]; then
+			ln -sfn "$DATA_ROOT/opencode/config" "$ROOT_HOME/.config/opencode" 2>/dev/null || true
+		fi
+	fi
+
+	# Optional Magic Context config persists without enabling background jobs.
+	mkdir -p "$ROOT_HOME/.config" || return 1
+	link_directory "$DATA_ROOT/cortexkit/config" "$ROOT_HOME/.config/cortexkit" cortexkit || \
+		log_warn "cannot link persistent CortexKit config"
+
+	# Home symlinks for the daemons and CLIs.
+	link_directory "$DATA_ROOT/multica" "$ROOT_HOME/.multica" multica || log_warn "cannot link /root/.multica"
+	link_directory "$DATA_ROOT/multica/workspaces" "$ROOT_HOME/multica-workspaces" multica-workspaces || \
+		log_warn "cannot link /root/multica-workspaces"
+	link_directory "$DATA_ROOT/pi" "$ROOT_HOME/.pi" pi || log_warn "cannot link /root/.pi"
+	link_directory "$DATA_ROOT/commandcode" "$ROOT_HOME/.commandcode" commandcode || \
+		log_warn "cannot link /root/.commandcode"
+	# npm cache: cron and procd do not source /etc/profile.d, so the
+	# data-runtime NPM_CONFIG_CACHE export never reaches them and npm falls
+	# back to $HOME/.npm on the root overlay.  Pin it with a symlink; a cache
+	# left there by an older build is copied to /data before the link lands.
+	link_directory "$DATA_ROOT/cache/npm" "$ROOT_HOME/.npm" npm || \
+		log_warn "cannot link /root/.npm"
+
+	# `/root/.pi` may just have been migrated over the firmware-seeded copy.
+	# Reconcile packages only after that migration so retained sysupgrade data
+	# receives new defaults while all user settings remain authoritative.
+	reconcile_pi_settings_packages
+	reconcile_firmware_pi_extension_links
+
+	# Preserve the configured runtime across upgrades; never promote Pi to OpenCode.
+
+	# Pi's appended system prompt link (idempotent, provided by agent-runtime).
+	if [ -x /usr/sbin/pi-append-system-link ]; then
+		PI_AGENT_DIR="$DATA_ROOT/pi/agent" PI_ROLE_CARD="$ROOT_HOME/.multica/openwrt-agent.md" \
+			/usr/sbin/pi-append-system-link 2>/dev/null || log_warn "pi-append-system-link failed"
+	fi
+	# Refresh the dynamic CLIProxyAPI catalog once after /data and Pi links are
+	# ready. The cron schedule keeps probing afterwards; an unreachable optional
+	# office endpoint is intentionally silent and never blocks agent startup.
+	if [ -x /usr/sbin/pi-cliproxyapi-catalog-probe ]; then
+		/usr/sbin/pi-cliproxyapi-catalog-probe >/dev/null 2>&1 || true
+	fi
+
+	log_info "agent data state provisioned on $DATA_ROOT"
+}
+
+restart() {
+	start
+}
+
+# TESTING mode: define all functions but skip rc.common dispatch so tests can
+# source the script and call start() directly.
+if [ "${AGENT_DATA_PREP_TESTING:-0}" = "1" ]; then
+	return 0 2>/dev/null || exit 0
+fi

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# uci-defaults is one-shot. The same reconciler is invoked every boot by
+# agent-data-prep so sysupgrade-preserved cron files receive this correction.
+exec /usr/sbin/multica-maintenance-cron-reconcile

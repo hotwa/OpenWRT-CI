@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+
+# Run after Multica has had a chance to start. A positively identified active
+# runtime failure can then be rolled back and verified through the real daemon.
+START=96
+STOP=10
+
+start() {
+	/usr/sbin/agent-runtime-health-check || {
+		logger -t agent-runtime-health-check 'boot runtime recovery needs attention'
+		return 0
+	}
+}
+
+restart() { start; }

@@ -5,17 +5,27 @@
   "description": "Latest-at-build package catalog for the OpenWrt edge agent runtime",
   "dependencies": {
     "@capdiem/pi-todo": "latest",
+    "@cortexkit/pi-magic-context": "latest",
     "@earendil-works/pi-coding-agent": "latest",
     "@luxusai/pi-hindsight": "latest",
     "@narumitw/pi-statusline": "latest",
     "@zephyrdeng/pi-review": "latest",
     "btw-pi": "latest",
     "command-code": "latest",
+    "@router-for-me/pi-cliproxyapi-provider": "latest",
     "pi-commandcode-provider": "latest",
+    "pi-agent-modes": "latest",
     "pi-interactive-shell": "latest",
-    "pi-mcp-adapter": "latest",
+    "pi-inspect": "latest",
+    "pi-lsp": "latest",
+    "pi-lazy-extensions": "latest",
+    "pi-cache-graph": "latest",
+    "pi-cost": "latest",
     "pi-package-manager": "latest",
     "pi-subagents": "latest",
+    "pi-undo-redo": "latest",
+    "pi-tool-search": "latest",
+    "pi-web-access": "latest",
     "pi-web-search": "latest",
     "pi-wechat-assistant": "latest",
     "pnpm": "latest"
@@ -23,15 +33,29 @@
   "openwrtPiExtensions": [
     "pi-package-manager",
     "btw-pi",
+    "@router-for-me/pi-cliproxyapi-provider",
     "pi-commandcode-provider",
+    "pi-agent-modes",
     "pi-web-search",
+    "pi-undo-redo",
     "pi-wechat-assistant",
-    "pi-mcp-adapter",
+    "pi-lazy-extensions",
+    "pi-tool-search",
     "pi-subagents",
     "@capdiem/pi-todo",
     "@zephyrdeng/pi-review",
     "@luxusai/pi-hindsight",
     "pi-interactive-shell",
+    "pi-inspect",
+    "pi-lsp",
+    "pi-cache-graph",
+    "pi-cost",
     "@narumitw/pi-statusline"
+  ],
+  "openwrtPiOptionalExtensions": [
+    "@cortexkit/pi-magic-context"
+  ],
+  "openwrtPiLazyExtensions": [
+    "pi-web-access"
   ]
 }

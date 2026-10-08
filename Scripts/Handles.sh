@@ -4,100 +4,22 @@
 
 . "$(dirname "$(realpath "$0")")/retry.sh"
 
+bash "$(dirname "$(realpath "$0")")/restore_recs02_regulatory_clamp.sh" || exit 1
+
 PKG_PATH="$GITHUB_WORKSPACE/$WRT_DIR/package/"
 
 preload_nikki_geodata() {
 	mkdir -p "$GITHUB_WORKSPACE/files/etc/nikki/run"
 
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.dat"
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geosite.dat"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.dat"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geosite.dat"
 	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/geoip.metadb"
-	retry_cmd 5 15 curl -fL "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/ASN.mmdb"
+	retry_cmd 5 15 curl -fL "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb" -o "$GITHUB_WORKSPACE/files/etc/nikki/run/ASN.mmdb"
 
 	cd "$PKG_PATH" && echo "nikki geodata has been preloaded into files/etc/nikki/run!"
 }
 
-preload_nikki_geodata
-
-patch_wrtbak_proxy_url() {
-	WRTBAK_S3="./luci-app-wrtbak/root/usr/lib/wrtbak/remote_s3.sh"
-	[ -f "$WRTBAK_S3" ] || return 0
-
-	if grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3" && grep -q 'WRTBAK_S3_FORCE_DIRECT' "$WRTBAK_S3"; then
-		cd "$PKG_PATH" && echo "wrtbak S3 proxy_url support is already present!"
-		return 0
-	fi
-
-	python3 - "$WRTBAK_S3" <<'PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-old_plain = '''wrtbak_s3_rclone() {
-	wrtbak_config=$1
-	shift
-	rclone --config "$wrtbak_config" "$@"
-}'''
-old_proxy = '''wrtbak_s3_rclone() {
-	wrtbak_config=$1
-	shift
-	wrtbak_proxy_url=$(wrtbak_main_option proxy_url "")
-	if [ -n "$wrtbak_proxy_url" ]; then
-		HTTP_PROXY="$wrtbak_proxy_url" HTTPS_PROXY="$wrtbak_proxy_url" ALL_PROXY="$wrtbak_proxy_url" \\
-		http_proxy="$wrtbak_proxy_url" https_proxy="$wrtbak_proxy_url" all_proxy="$wrtbak_proxy_url" \\
-			rclone --config "$wrtbak_config" "$@"
-	else
-		rclone --config "$wrtbak_config" "$@"
-	fi
-}'''
-new = '''wrtbak_s3_rclone() {
-	wrtbak_config=$1
-	shift
-	case "${WRTBAK_S3_FORCE_DIRECT:-0}" in
-		1|true|yes|on|direct)
-			wrtbak_proxy_url=
-			;;
-		*)
-			wrtbak_proxy_url=$(wrtbak_main_option proxy_url "")
-			;;
-	esac
-	if [ -n "$wrtbak_proxy_url" ]; then
-		HTTP_PROXY="$wrtbak_proxy_url" \\
-		HTTPS_PROXY="$wrtbak_proxy_url" \\
-		ALL_PROXY="$wrtbak_proxy_url" \\
-		http_proxy="$wrtbak_proxy_url" \\
-		https_proxy="$wrtbak_proxy_url" \\
-		all_proxy="$wrtbak_proxy_url" \\
-		NO_PROXY="${NO_PROXY:-localhost,127.0.0.1,::1}" \\
-		no_proxy="${no_proxy:-localhost,127.0.0.1,::1}" \\
-			rclone --config "$wrtbak_config" "$@"
-	else
-		rclone --config "$wrtbak_config" "$@"
-	fi
-}'''
-if old_plain in text:
-	text = text.replace(old_plain, new, 1)
-elif old_proxy in text:
-	text = text.replace(old_proxy, new, 1)
-else:
-	raise SystemExit("wrtbak S3 rclone function shape changed")
-path.write_text(text)
-PY
-
-	grep -q 'wrtbak_main_option proxy_url' "$WRTBAK_S3" || {
-		echo "ERROR: failed to patch wrtbak S3 proxy_url support" >&2
-		exit 1
-	}
-	grep -q 'WRTBAK_S3_FORCE_DIRECT' "$WRTBAK_S3" || {
-		echo "ERROR: failed to patch wrtbak firstboot direct-R2 support" >&2
-		exit 1
-	}
-
-	cd "$PKG_PATH" && echo "wrtbak S3 proxy_url support has been patched!"
-}
-
-patch_wrtbak_proxy_url
+[ "${WRT_PROXY_PROFILE:-nikki}" = openclash ] || preload_nikki_geodata
 
 # 修复 procd 源码镜像 404：优先使用 GitHub 镜像仓库。
 PROCD_MAKEFILE="../package/system/procd/Makefile"
@@ -118,8 +40,14 @@ fi
 GETTEXT_MAKEFILE="./libs/gettext-full/Makefile"
 GETTEXT_OLD_HASH="6164ec7aa61653ac9cdfb41d5c2344563b21f707da1562712e48715f1d2052a6"
 GETTEXT_NEW_HASH="fcc0187f597aef6bc5bc95c629db1126315beb196b20570eaec6a4941850f7c5"
+# Reviewed full-source candidate already ships gettext 1.0. Keep its recipe intact.
+GETTEXT_1_0_HASH="71132a3fb71e68245b8f2ac4e9e97137d3e5c02f415636eb508ae607bc01add7"
 if [ -f "$GETTEXT_MAKEFILE" ]; then
-	if grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE"; then
+	if grep -q '^PKG_VERSION:=1\.0$' "$GETTEXT_MAKEFILE" && \
+		grep -q "^PKG_HASH:=$GETTEXT_1_0_HASH\$" "$GETTEXT_MAKEFILE"; then
+		cd "$PKG_PATH" && echo "gettext-full is already at reviewed 1.0!"
+	elif grep -q '^PKG_VERSION:=0\.24\.2$' "$GETTEXT_MAKEFILE" && \
+		grep -q "^PKG_HASH:=$GETTEXT_NEW_HASH\$" "$GETTEXT_MAKEFILE"; then
 		cd "$PKG_PATH" && echo "gettext-full is already at 0.24.2!"
 	elif grep -q '^PKG_VERSION:=0\.24\.1$' "$GETTEXT_MAKEFILE" && \
 		grep -q "^PKG_HASH:=$GETTEXT_OLD_HASH\$" "$GETTEXT_MAKEFILE"; then
@@ -134,7 +62,7 @@ if [ -f "$GETTEXT_MAKEFILE" ]; then
 		}
 		cd "$PKG_PATH" && echo "gettext-full has been bumped to 0.24.2!"
 	else
-		echo "ERROR: gettext-full Makefile matches neither 0.24.1 (expected) nor 0.24.2 — source pin may have drifted" >&2
+		echo "ERROR: gettext-full version/hash is not reviewed (0.24.1, 0.24.2, 1.0) — source pin may have drifted" >&2
 		exit 1
 	fi
 fi

@@ -270,6 +270,20 @@ runtime_path_from_link() {
 	esac
 }
 
+cleanup_stale_atomic_temps() {
+	local path name pid
+	for path in "$ROOT/current.new."* "$ROOT/previous.new."* "$DATA_ROOT/.node.new."* "$LATEST_STATE.new."*; do
+		[ -e "$path" ] || [ -L "$path" ] || continue
+		name="${path##*.new.}"
+		case "$name" in ''|*[!0-9]*) continue ;; esac
+		pid="$name"
+		kill -0 "$pid" 2>/dev/null && continue
+		case "$path" in
+			"$ROOT/current.new."*|"$ROOT/previous.new."*|"$DATA_ROOT/.node.new."*|"$LATEST_STATE.new."*) rm -f "$path" ;;
+		esac
+	done
+}
+
 current_runtime() {
 	local runtime
 	runtime="$(runtime_path_from_link "$ROOT/current" 2>/dev/null || true)"
@@ -287,7 +301,8 @@ link_atomically() {
 	[ ! -e "$link" ] || [ -L "$link" ] || return 1
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$target" "$temporary" || return 1
-	mv -f "$temporary" "$link"
+	# Replace the link itself, never follow a directory target into /opt.
+	mv -fT "$temporary" "$link" || { rm -f "$temporary"; return 1; }
 }
 
 publish_node_link() {
@@ -297,21 +312,8 @@ publish_node_link() {
 	rm -f "$temporary" 2>/dev/null || return 1
 	ln -s "$node_dir" "$temporary" || return 1
 	# Never overwrite an un-migrated real /data/node directory.
-	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || return 1
-	mv -f "$temporary" "$DATA_ROOT/node"
-}
-
-publish_pi_extension_link() {
-	local runtime="$1" node_dir source link="/tmp/agent-runtime-pi-plan-mode.ts"
-	local temporary="${link}.new.$$"
-	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] || return 1
-	source="$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts"
-	[ -s "$source" ] && [ ! -L "$source" ] || return 1
-	[ ! -e "$link" ] || [ -L "$link" ] || return 1
-	rm -f "$temporary" 2>/dev/null || return 1
-	ln -s "$source" "$temporary" || return 1
-	mv -f "$temporary" "$link"
+	[ ! -e "$DATA_ROOT/node" ] || [ -L "$DATA_ROOT/node" ] || { rm -f "$temporary"; return 1; }
+	mv -fT "$temporary" "$DATA_ROOT/node" || { rm -f "$temporary"; return 1; }
 }
 
 publish_pi_models() {
@@ -376,7 +378,7 @@ set_current() {
 	# restored to the old links below.
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
 	uv_dir="$(runtime_uv_dir "$runtime" 2>/dev/null || true)"
-	[ -n "$node_dir" ] && [ -n "$uv_dir" ] && [ -s "$node_dir/lib/node_modules/pi-plan-mode/plan-mode.ts" ] || return 1
+	[ -n "$node_dir" ] && [ -n "$uv_dir" ] || return 1
 	old_runtime="$(current_runtime)"
 	case "$old_runtime" in
 		"$BASELINE") old_target="$BASELINE" ;;
@@ -384,13 +386,8 @@ set_current() {
 		*) return 1 ;;
 	esac
 	publish_node_link "$runtime" || return 1
-	if ! publish_pi_extension_link "$runtime"; then
-		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
-		return 1
-	fi
 	if ! link_atomically "$ROOT/current" "$target"; then
 		publish_node_link "$old_runtime" >/dev/null 2>&1 || true
-		publish_pi_extension_link "$old_runtime" >/dev/null 2>&1 || true
 		return 1
 	fi
 	# Previous is advisory only; it is derived from the already validated old
@@ -407,6 +404,37 @@ quarantine_runtime() {
 	log "quarantined incompatible generation $name"
 }
 
+verify_runtime_components() {
+	# The signed manifest records the exact versions of every direct Node
+	# component.  A manual `npm install -g` under /opt/node used to evade the
+	# executable probes below: Pi could report a newer package while its peers
+	# remained from the signed baseline.  Read only package metadata here; the
+	# archive signature and critical ELF digests cover the executable payload.
+	local runtime="$1" node_dir manifest node_modules
+	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
+	manifest="$runtime/manifest.json"
+	node_modules="$node_dir/lib/node_modules"
+	[ -n "$node_dir" ] && [ -x "$node_dir/bin/node" ] && \
+		[ -f "$manifest" ] && [ ! -L "$manifest" ] && \
+		[ -d "$node_modules" ] && [ ! -L "$node_modules" ] || return 1
+	"$node_dir/bin/node" - "$manifest" "$node_modules" <<'NODE' >/dev/null 2>&1
+const fs = require('node:fs');
+const path = require('node:path');
+const [manifestPath, nodeModules] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const components = manifest.components;
+const packageName = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
+if (!components || Array.isArray(components) || typeof components !== 'object') process.exit(1);
+for (const [name, expected] of Object.entries(components)) {
+  if (name === 'multica' || name === 'uv' || name === 'cpython') continue;
+  if (!packageName.test(name) || typeof expected !== 'string' || !expected) process.exit(1);
+  const packageJson = path.join(nodeModules, ...name.split('/'), 'package.json');
+  const installed = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+  if (installed.name !== name || installed.version !== expected) process.exit(1);
+}
+NODE
+}
+
 runtime_health() {
 	local runtime="$1" command node_dir uv_dir multica
 	node_dir="$(runtime_node_dir "$runtime" 2>/dev/null || true)"
@@ -419,9 +447,15 @@ runtime_health() {
 	for command in pi cmdc multica; do
 		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
 			command -v "$command" >/dev/null 2>&1 || return 1
-		PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
-			"$command" --version >/dev/null 2>&1 || return 1
+		if [ "$command" = cmdc ]; then
+			PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+				COMMANDCODE_SKIP_UPDATES=1 "$command" --version >/dev/null 2>&1 || return 1
+		else
+			PATH="$node_dir/bin:$runtime/bin:/usr/local/bin:/usr/bin:/bin" \
+				"$command" --version >/dev/null 2>&1 || return 1
+		fi
 	done
+	verify_runtime_components "$runtime" || return 1
 	return 0
 }
 
@@ -477,7 +511,6 @@ release_number() {
 reconcile_runtime() {
 	local current baseline_release current_release current_num baseline_num
 	if ! data_ready; then
-		publish_pi_extension_link "$BASELINE" || return 1
 		log '/data unavailable; using firmware baseline without publishing mutable links'
 		return 0
 	fi
@@ -502,7 +535,6 @@ reconcile_runtime() {
 		log "selected firmware baseline release $baseline_num"
 	else
 		publish_node_link "$current" || return 1
-		publish_pi_extension_link "$current" || return 1
 		log "retained newer compatible data release $current_num"
 	fi
 	# Repair the persistent Pi model catalog for the active runtime after the
@@ -763,6 +795,7 @@ case "${1:-}" in status|check|upgrade|rollback|list|verify|reconcile|gc) ;; *) u
 # path separate from upgrade after common CLI parsing.
 if [ "${1:-}" = check ]; then
 	acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+	cleanup_stale_atomic_temps
 	shift
 	data_ready || emit false no_data '/data is not a writable mount' "$EX_NO_DATA"
 	ensure_layout || emit false no_data 'cannot initialize runtime storage' "$EX_NO_DATA"
@@ -778,7 +811,10 @@ if [ "${1:-}" = check ]; then
 	fetch_file "$base/$remote_sig" "$idx/manifest.json.sig" || emit false download_failed 'cannot download runtime manifest signature' "$EX_DOWNLOAD"
 	verify_signature "$idx/manifest.json" "$idx/manifest.json.sig" || emit false signature_failed 'runtime manifest signature verification failed' "$EX_SIGNATURE"
 	manifest_compatible "$idx" || emit false incompatible 'latest runtime is not compatible with this device' "$EX_INCOMPATIBLE"
-	manifest_release "$idx" >"$LATEST_STATE.new.$$" && mv -f "$LATEST_STATE.new.$$" "$LATEST_STATE"
+	if ! manifest_release "$idx" >"$LATEST_STATE.new.$$" || ! mv -f "$LATEST_STATE.new.$$" "$LATEST_STATE"; then
+		rm -f "$LATEST_STATE.new.$$"
+		log "could not publish the latest-release observation file"
+	fi
 	current="$(current_runtime)"
 	if [ "$(release_number "$idx")" -gt "$(release_number "$current")" ]; then
 		emit true ok 'new compatible runtime release is available' "$EX_OK" "{\"current_release\":\"$(json_escape "$(manifest_release "$current" 2>/dev/null || echo unknown)")\",\"latest_release\":\"$(json_escape "$(manifest_release "$idx")")\"}"
@@ -790,6 +826,7 @@ fi
 case "${1:-}" in
 	check|upgrade|rollback|reconcile|gc)
 		acquire_lock || emit false busy 'another runtime operation is in progress' "$EX_BUSY"
+		cleanup_stale_atomic_temps
 		;;
 esac
 
@@ -798,7 +835,7 @@ case "${1:-}" in
 	list) emit true ok 'runtime generations' "$EX_OK" "$(do_list)" ;;
 	verify)
 		runtime="$(current_runtime)"
-		manifest_compatible "$runtime" && runtime_health "$runtime" || emit false health_failed 'active runtime verification failed' "$EX_HEALTH"
+		manifest_compatible "$runtime" && verify_critical_hashes "$runtime" && runtime_health "$runtime" || emit false health_failed 'active runtime verification failed' "$EX_HEALTH"
 		emit true ok 'active runtime verified' "$EX_OK" "$(do_status)"
 		;;
 	reconcile)

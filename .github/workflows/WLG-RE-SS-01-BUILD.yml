@@ -1,0 +1,53 @@
+name: WLG RE-SS-01 Build (OpenClash)
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEBUG_SSH:
+        description: 'Hold runner with Tailscale SSH for live debugging'
+        required: false
+        type: boolean
+        default: false
+      LAN_IP:
+        description: 'Router LAN IP (e.g. 192.168.51.1)'
+        required: false
+        default: '192.168.51.1'
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/WRT-CORE.yml
+    secrets:
+      OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
+      HEADSCALE_CI_AUTHKEY: ${{ secrets.HEADSCALE_CI_AUTHKEY }}
+      HEADSCALE_URL: ${{ secrets.HEADSCALE_URL }}
+      COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
+    with:
+      DEBUG_SSH: ${{ inputs.DEBUG_SSH || false }}
+      WRT_PROXY_PROFILE: openclash
+      WRT_CONFIG: IPQ60XX-RE-SS-01
+      WRT_THEME: argon
+      WRT_NAME: WLG-RE-SS-01
+      WRT_SSID: WLG-RE-SS-01
+      WRT_IP: ${{ inputs.LAN_IP || '192.168.51.1' }}
+      WRT_FEATURE_OVERLAY: true
+      WRT_TAILSCALE_ROUTE_RECONCILE: true
+      WRT_PW: 无
+      WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+      WRT_BRANCH: main
+      WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
+      WRT_SOURCE: VIKINGYFY/immortalwrt
+      WRT_BUILD_ONLY: true
+      WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
+      WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
+      # Same guarded first-boot eMMC -> /data layout as the RE-SS-01 gate.
+      WRT_EMMC_DATA_PROVISIONING: true
+      WRT_CONTAINER_RUNTIME_TEST: true
+      WRTBAK_FIRSTBOOT_AUTO_ENABLED: '0'
+      WRTBAK_DEVICE_ALIAS: wlg-re-ss-01
+      CI_NAME: WLG-RE-SS-01-BUILD
+      RUNNER_LABELS: '["ubuntu-latest"]'
+      JOB_TIMEOUT_MINUTES: 360

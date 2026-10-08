@@ -14,10 +14,13 @@ NODE_LIB_DIR="$NODE_ROOT_DIR/lib/node_modules"
 SYS_BIN_DIR="$TARGET_FILES/usr/bin"
 PI_CONFIG_DIR="$TARGET_FILES/root/.pi/agent"
 PI_MODEL_CATALOG="$ROOT_DIR/files/etc/pi/agent/models.json"
+PI_SETTINGS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/settings.json"
+PI_MODES_CONFIG_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/modes.config.json"
+PI_LAZY_EXTENSIONS_TEMPLATE="$ROOT_DIR/files/etc/pi/agent/lazy-extensions.json"
 PI_EXTENSION_PEER_SCRIPT="$ROOT_DIR/Scripts/ensure_pi_extension_peers.js"
 PI_EXTENSION_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extensions.js"
+PI_EXTENSION_CONFLICT_VERIFY_SCRIPT="$ROOT_DIR/Scripts/verify_pi_extension_conflicts.js"
 AGENT_RUNTIME_MANIFEST_DIR="$ROOT_DIR/Scripts/node-agent-runtime"
-PI_PLAN_MODE_VENDOR_DIR="$AGENT_RUNTIME_MANIFEST_DIR/vendor/pi-plan-mode"
 
 # Default Node.js target version (Node 24 LTS line)
 NODE_DEFAULT_VERSION="24.20.0"
@@ -279,7 +282,8 @@ preinstall_cli_agents_and_extensions() (
 	}
 	[ -f "$AGENT_RUNTIME_MANIFEST_DIR/package.json" ] && \
 		[ -f "$PI_EXTENSION_PEER_SCRIPT" ] && \
-		[ -f "$PI_EXTENSION_VERIFY_SCRIPT" ] || {
+		[ -f "$PI_EXTENSION_VERIFY_SCRIPT" ] && \
+		[ -f "$PI_EXTENSION_CONFLICT_VERIFY_SCRIPT" ] || {
 		echo "ERROR: latest-at-build Pi extension resolver is incomplete" >&2
 		return 1
 	}
@@ -298,8 +302,9 @@ preinstall_cli_agents_and_extensions() (
 	cp "$AGENT_RUNTIME_MANIFEST_DIR/package.json" "$staging_dir/"
 	node "$PI_EXTENSION_PEER_SCRIPT" --directory "$staging_dir" \
 		--os linux --cpu "$npm_arch" --libc musl
-	node "$PI_EXTENSION_VERIFY_SCRIPT" --directory "$staging_dir" \
-		--vendor-extension "$PI_PLAN_MODE_VENDOR_DIR/plan-mode.ts"
+	node "$PI_EXTENSION_VERIFY_SCRIPT" --directory "$staging_dir"
+	node "$PI_EXTENSION_CONFLICT_VERIFY_SCRIPT" --directory "$staging_dir" \
+		--settings "$PI_SETTINGS_TEMPLATE"
 
 	[ -d "$staging_dir/node_modules" ] || {
 		echo "ERROR: npm install completed without producing node_modules" >&2
@@ -380,6 +385,14 @@ prune_foreign_platform_builds() {
 			return 1
 			;;
 	esac
+
+	# ONNX Runtime's Node package carries glibc and foreign-OS binaries.
+	# OpenWrt Magic Context uses remote embeddings (WASM remains available).
+	# Remove only this optional backend, including nested copies, before ELF gates.
+	while IFS= read -r variant; do
+		rm -rf -- "$variant"
+		log_info "Pruned optional glibc ONNX Node backend."
+	done < <(find "$NODE_LIB_DIR" -type d -name onnxruntime-node -prune -print)
 
 	for koffi_dir in "$NODE_LIB_DIR"/koffi/build/koffi/*; do
 		[ -d "$koffi_dir" ] || continue
@@ -472,21 +485,6 @@ setup_symlinks() {
 	done
 }
 
-install_vendored_pi_extensions() {
-	local target="$NODE_LIB_DIR/pi-plan-mode"
-
-	[ -s "$PI_PLAN_MODE_VENDOR_DIR/plan-mode.ts" ] && \
-		[ -s "$PI_PLAN_MODE_VENDOR_DIR/provenance.json" ] && \
-		[ -s "$PI_PLAN_MODE_VENDOR_DIR/LICENSE" ] || {
-		echo "ERROR: reviewed pi-plan-mode vendor source is incomplete" >&2
-		return 1
-	}
-	rm -rf -- "$target"
-	cp -a "$PI_PLAN_MODE_VENDOR_DIR" "$target"
-	[ -s "$target/plan-mode.ts" ] || return 1
-	log_info "Installed reviewed vendored pi-plan-mode extension."
-}
-
 configure_pi_extensions() {
 	log_info "Writing default Pi extensions configuration..."
 
@@ -497,36 +495,33 @@ configure_pi_extensions() {
 		echo "ERROR: default Pi model catalog is missing" >&2
 		return 1
 	}
+	[ -s "$PI_SETTINGS_TEMPLATE" ] || {
+		echo "ERROR: default Pi settings template is missing" >&2
+		return 1
+	}
+	[ -s "$PI_MODES_CONFIG_TEMPLATE" ] || {
+		echo "ERROR: default Pi modes config template is missing" >&2
+		return 1
+	}
+	node - "$PI_MODES_CONFIG_TEMPLATE" <<'NODE' || {
+const config = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+if (config.defaultMode !== 'yolo') process.exit(1);
+NODE
+		echo "ERROR: Pi modes config must set defaultMode to yolo" >&2
+		return 1
+	}
+	[ -s "$PI_LAZY_EXTENSIONS_TEMPLATE" ] || {
+		echo "ERROR: default Pi lazy-extension manifest is missing" >&2
+		return 1
+	}
 	install -Dm0644 "$PI_MODEL_CATALOG" "$TARGET_FILES/etc/pi/agent/models.json"
 	cp -f "$PI_MODEL_CATALOG" "$PI_CONFIG_DIR/models.json"
-	cat >"$PI_CONFIG_DIR/settings.json" <<'EOF'
-{
-  "defaultProvider": "office-sglang",
-  "defaultModel": "Qwen3.8-27B",
-  "defaultThinkingLevel": "medium",
-  "enableInstallTelemetry": false,
-  "defaultProjectTrust": "ask",
-  "packages": [
-    "pi-package-manager",
-    "btw-pi",
-    "pi-commandcode-provider",
-    "pi-web-search",
-    "pi-wechat-assistant",
-    "pi-mcp-adapter",
-    "pi-subagents",
-    "@capdiem/pi-todo",
-    "@zephyrdeng/pi-review",
-    "@luxusai/pi-hindsight",
-    "pi-interactive-shell",
-    "@narumitw/pi-statusline"
-  ],
-  "extensions": [
-    "/tmp/agent-runtime-pi-plan-mode.ts"
-  ],
-  "autoUpdate": false
-}
-EOF
-	cp -f "$PI_CONFIG_DIR/settings.json" "$TARGET_FILES/etc/pi/agent/settings.json"
+	install -Dm0644 "$PI_SETTINGS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/settings.json"
+	cp -f "$PI_SETTINGS_TEMPLATE" "$PI_CONFIG_DIR/settings.json"
+	install -Dm0644 "$PI_MODES_CONFIG_TEMPLATE" "$TARGET_FILES/etc/pi/agent/modes.config.json"
+	cp -f "$PI_MODES_CONFIG_TEMPLATE" "$PI_CONFIG_DIR/modes.config.json"
+	install -Dm0644 "$PI_LAZY_EXTENSIONS_TEMPLATE" "$TARGET_FILES/etc/pi/agent/lazy-extensions.json"
+	cp -f "$PI_LAZY_EXTENSIONS_TEMPLATE" "$PI_CONFIG_DIR/lazy-extensions.json"
 }
 
 main() {
@@ -548,7 +543,6 @@ main() {
 	printf '%s\n' "$installed_node_version" >"$TARGET_FILES/etc/agent-runtime/node-version"
 
 	preinstall_cli_agents_and_extensions "$node_arch"
-	install_vendored_pi_extensions
 	setup_symlinks
 	install_pi_search_tools "$node_arch"
 	configure_pi_extensions

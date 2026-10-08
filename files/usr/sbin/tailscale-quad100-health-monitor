@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -u
+PROBE="${QUAD100_PROBE_BIN:-/usr/sbin/tailscale-quad100-health-probe}"
+INTERVAL="${QUAD100_PROBE_INTERVAL:-60}"
+case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=60 ;; esac
+[ "$INTERVAL" -ge 10 ] 2>/dev/null || INTERVAL=60
+
+while :; do
+	"$PROBE" || true
+	sleep "$INTERVAL"
+done

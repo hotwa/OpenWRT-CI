@@ -18,7 +18,7 @@ function parseArgs(argv) {
   const options = {};
   for (let index = 2; index < argv.length; index += 1) {
     const key = argv[index];
-    if (!['--directory', '--vendor-extension'].includes(key)) die(`unknown argument: ${key}`);
+    if (!['--directory'].includes(key)) die(`unknown argument: ${key}`);
     const value = argv[++index];
     if (!value) die(`missing value for ${key}`);
     options[key.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase())] = value;
@@ -34,7 +34,42 @@ function packageEntries(root, name) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const explicit = manifest.pi?.extensions;
   if (Array.isArray(explicit) && explicit.length) {
-    return explicit.map(entry => path.resolve(packageRoot, entry));
+    return explicit.flatMap(entry => {
+      const resolved = path.resolve(packageRoot, entry);
+      if (!fs.existsSync(resolved)) die(`${name} extension entry is missing: ${resolved}`);
+      if (!fs.statSync(resolved).isDirectory()) return [resolved];
+
+      // Pi package manifests may point at an extension directory. Mirror Pi's
+      // package discovery rules: load visible top-level TS/JS files and
+      // one-level child directories that expose index.{ts,js,...}.
+      const modulePattern = /\.(?:[cm]?[jt]s)$/;
+      const discovered = [];
+      // A directory with an explicit index is one extension package entry;
+      // sibling files are its implementation modules, not extra extensions.
+      for (const indexName of ['index.ts', 'index.js', 'index.mts', 'index.mjs', 'index.cts', 'index.cjs']) {
+        const indexPath = path.join(resolved, indexName);
+        if (fs.existsSync(indexPath)) return [indexPath];
+      }
+      for (const child of fs.readdirSync(resolved, { withFileTypes: true })
+        .filter(item => !item.name.startsWith('.'))
+        .sort((left, right) => left.name.localeCompare(right.name))) {
+        const childPath = path.join(resolved, child.name);
+        if (child.isFile() && modulePattern.test(child.name)) {
+          discovered.push(childPath);
+          continue;
+        }
+        if (!child.isDirectory()) continue;
+        for (const indexName of ['index.ts', 'index.js', 'index.mts', 'index.mjs', 'index.cts', 'index.cjs']) {
+          const indexPath = path.join(childPath, indexName);
+          if (fs.existsSync(indexPath)) {
+            discovered.push(indexPath);
+            break;
+          }
+        }
+      }
+      if (!discovered.length) die(`${name} extension directory has no loadable entries: ${resolved}`);
+      return discovered;
+    });
   }
   for (const entry of ['index.ts', 'index.js', manifest.module, manifest.main, 'dist/index.js']) {
     if (typeof entry !== 'string') continue;
@@ -56,6 +91,17 @@ if (!fs.existsSync(catalogPath)) die(`missing catalog: ${catalogPath}`);
 if (!fs.existsSync(nodeModules)) die(`missing node_modules: ${nodeModules}`);
 const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
 if (!Array.isArray(catalog.openwrtPiExtensions)) die('catalog has no openwrtPiExtensions list');
+if (catalog.openwrtPiLazyExtensions !== undefined && !Array.isArray(catalog.openwrtPiLazyExtensions)) {
+  die('catalog openwrtPiLazyExtensions must be an array when present');
+}
+if (catalog.openwrtPiOptionalExtensions !== undefined && !Array.isArray(catalog.openwrtPiOptionalExtensions)) {
+  die('catalog openwrtPiOptionalExtensions must be an array when present');
+}
+const allPiExtensions = [...new Set([
+  ...catalog.openwrtPiExtensions,
+  ...(catalog.openwrtPiLazyExtensions || []),
+  ...(catalog.openwrtPiOptionalExtensions || []),
+])];
 
 const piRoot = path.join(nodeModules, '@earendil-works', 'pi-coding-agent');
 const piManifestPath = path.join(piRoot, 'package.json');
@@ -139,9 +185,8 @@ async function verify(name, entry) {
 }
 
 (async () => {
-  for (const name of catalog.openwrtPiExtensions) {
+  for (const name of allPiExtensions) {
     for (const entry of packageEntries(nodeModules, name)) await verify(name, entry);
   }
-  if (options.vendorExtension) await verify('pi-plan-mode', path.resolve(options.vendorExtension));
   console.log('PI EXTENSIONS OK');
 })().catch(error => die(error instanceof Error ? error.stack || error.message : String(error)));

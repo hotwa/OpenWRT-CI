@@ -7,6 +7,10 @@ name: WRT-CORE
 on:
   workflow_call:
     inputs:
+      WRT_PROXY_PROFILE:
+        required: false
+        type: string
+        default: nikki
       WRT_CONFIG:
         required: true
         type: string
@@ -200,6 +204,7 @@ on:
         required: false
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  WRT_PROXY_PROFILE: ${{inputs.WRT_PROXY_PROFILE}}
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
   WRT_THEME: ${{inputs.WRT_THEME}}
   WRT_NAME: ${{inputs.WRT_NAME}}
@@ -459,6 +464,9 @@ jobs:
             "$device_config"
             "$GITHUB_WORKSPACE/Scripts/Packages.sh"
             "$GITHUB_WORKSPACE/Scripts/Handles.sh"
+            "$GITHUB_WORKSPACE/Scripts/ConfigureWlgOpenClash.sh"
+            "$GITHUB_WORKSPACE/Scripts/restore_recs02_regulatory_clamp.sh"
+            "$GITHUB_WORKSPACE/Scripts/patches/990-ath11k-clamp-reg-rule-bandwidth.patch"
             "$GITHUB_WORKSPACE/Scripts/Settings.sh"
           )
 
@@ -535,13 +543,26 @@ jobs:
           check-latest: false
           registry-url: https://registry.npmjs.org
 
+      - name: WLG absorbed feature regression guards
+        if: inputs.WRT_PROXY_PROFILE == 'openclash'
+        run: |
+          set -euo pipefail
+          bash tests/test_wlg_openclash.sh
+          bash tests/test_pi_native_mcp_migration.sh
+          bash tests/test_magic_context_optional.sh
+          bash tests/test_fetch_node_runtime.sh
+          bash tests/test_tailscale_state_persistence.sh
+          bash tests/test_usb_boot_automount.sh
+          bash tests/test_upgrade_memory_gate.sh
+          bash tests/test_gettext_version_guard.sh
+
       - name: Custom Packages and Agent Runtimes
         id: custom_packages
         run: |
           cd ./wrt/package/
 
           $GITHUB_WORKSPACE/Scripts/Packages.sh
-          $GITHUB_WORKSPACE/Scripts/Handles.sh
+          $GITHUB_WORKSPACE/Scripts/Handles.sh || exit 1
           cd $GITHUB_WORKSPACE
           mkdir -p ./wrt/files
           $GITHUB_WORKSPACE/Scripts/fetch_uv_runtime.sh "$GITHUB_WORKSPACE/wrt/files"
@@ -582,6 +603,8 @@ jobs:
           fi
           if [ "${WRT_FEATURE_OVERLAY:-true}" = "true" ]; then
             cp -rf ./files/. ./wrt/files/
+            # Preserve executable modes for the absorbed boot/runtime helpers.
+            find ./wrt/files/etc/init.d ./wrt/files/etc/uci-defaults ./wrt/files/usr/sbin -type f -exec chmod 0755 {} +
             if [ "${WRT_CONTAINER_RUNTIME_TEST:-false}" = "true" ]; then
               test -d ./files-container-runtime-test || {
                 echo "ERROR: container runtime test overlay is missing" >&2
@@ -605,6 +628,19 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureEmmcDataProvisioning.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_EMMC_DATA_PROVISIONING:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanDropbearAccess.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_WAN_SSH:-false}" "${WRT_WAN_SSH_PORT:-22}" "${WRT_WAN_SSH_SOURCE:-}"
           fi
+
+          cp -f ./files/usr/sbin/usb-boot-automount ./wrt/files/usr/sbin/usb-boot-automount
+          chmod 0755 ./wrt/files/usr/sbin/usb-boot-automount
+          cp -f ./files/etc/init.d/usb-boot-automount ./wrt/files/etc/init.d/usb-boot-automount
+          chmod 0755 ./wrt/files/etc/init.d/usb-boot-automount
+          cp -f ./files/etc/uci-defaults/98-enable-usb-boot-automount ./wrt/files/etc/uci-defaults/98-enable-usb-boot-automount
+          chmod 0755 ./wrt/files/etc/uci-defaults/98-enable-usb-boot-automount
+          cp -f ./files/usr/sbin/tailscale-state-persist ./wrt/files/usr/sbin/tailscale-state-persist
+          chmod 0755 ./wrt/files/usr/sbin/tailscale-state-persist
+          cp -f ./files/etc/init.d/tailscale-state-persist ./wrt/files/etc/init.d/tailscale-state-persist
+          chmod 0755 ./wrt/files/etc/init.d/tailscale-state-persist
+          cp -f ./files/etc/uci-defaults/97-tailscale-state-persist ./wrt/files/etc/uci-defaults/97-tailscale-state-persist
+          chmod 0755 ./wrt/files/etc/uci-defaults/97-tailscale-state-persist
 
           # This small overlay is independent from the larger private feature
           # set. It keeps every Tailscale-enabled firmware covered, including
@@ -803,7 +839,9 @@ jobs:
 
           $GITHUB_WORKSPACE/Scripts/Settings.sh
 
+          bash "$GITHUB_WORKSPACE/Scripts/ConfigureWlgOpenClash.sh" configure "$PWD" "$WRT_PROXY_PROFILE"
           make defconfig -j$(nproc)
+          bash "$GITHUB_WORKSPACE/Scripts/ConfigureWlgOpenClash.sh" verify "$PWD" "$WRT_PROXY_PROFILE"
           # zram-swap only sets a UCI preference.  Verify that the target
           # kernel actually exposes lz4 before building an image; otherwise
           # the device silently starts with its lzo-rle fallback.

@@ -24,7 +24,7 @@ CORE_WF="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
 
 grep -Fq 'config multica' "$CONFIG_FILE"
 grep -Fq 'workspaces_root' "$CONFIG_FILE"
-grep -Fq 'runtime_name '\''Pi (OpenWrt-Router)'\''' "$CONFIG_FILE"
+grep -Fq 'runtime_name '\''Pi on OpenWrt'\''' "$CONFIG_FILE"
 grep -Fq 'agent_name '\''OpenWrt 管家'\''' "$CONFIG_FILE"
 grep -Fq 'daemon start --foreground' "$INIT_SCRIPT"
 grep -Fq -- '--max-concurrent-tasks' "$INIT_SCRIPT"
@@ -51,12 +51,19 @@ grep -Fq 'workspace_id is not configured' "$INIT_SCRIPT"
 grep -Fq "max_concurrent_tasks '1'" "$CONFIG_FILE"
 grep -Fq 'runtime_provider '\''pi'\''' "$CONFIG_FILE"
 grep -Fq "procd_open_instance bootstrap" "$INIT_SCRIPT"
-grep -Fq 'multica-device-profile write' "$INIT_SCRIPT"
+grep -Fq '/usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
 grep -Fq 'pi-append-system-link' "$INIT_SCRIPT"
-grep -Fq 'PATH="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/bin:/usr/bin:/bin"' "$INIT_SCRIPT" || {
+grep -Fq 'agent_path="/data/agent-runtime/current/node/bin:/data/agent-runtime/current/bin:$uv_root:/data/node/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' "$INIT_SCRIPT" || {
 	echo "the multica daemon must export a PATH that prefers agent-runtime generations and node upgrades over the read-only baked /opt/node/bin"
 	exit 1
 }
+grep -Fq 'PATH="$agent_path"' "$INIT_SCRIPT"
+grep -Fq 'MULTICA_WORKSPACES_ROOT="$workspaces_root" /usr/sbin/multica-device-profile write' "$INIT_SCRIPT"
+grep -Fq 'cd "/data/multica" || exit 1; exec "$@"' "$INIT_SCRIPT" || {
+	echo "Multica daemon must start outside the managed task workspace"
+	exit 1
+}
+grep -Fq '/data/opencode/config/opencode' "$INIT_SCRIPT"
 grep -Fq "MULTICA_BOOTSTRAP_LOCK_DIR" "$BOOTSTRAP_SCRIPT"
 grep -Fq "candidate_status\" = \"online" "$BOOTSTRAP_SCRIPT"
 grep -Fq "matches\" -eq 1" "$BOOTSTRAP_SCRIPT"
@@ -64,7 +71,7 @@ grep -Fq 'procd_set_param respawn 3600 15 0' "$INIT_SCRIPT"
 grep -Fq 'multica-device-profile' "$BOOTSTRAP_SCRIPT"
 grep -Fq '.agent_state' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'agent update' "$BOOTSTRAP_SCRIPT"
-grep -Fq 'active|idle|busy' "$BOOTSTRAP_SCRIPT"
+grep -Fq 'active|idle|busy|working' "$BOOTSTRAP_SCRIPT"
 grep -Fq 'Tailnet IPv4 地址池为 `100.64.0.0/10`' "$PROFILE_SCRIPT"
 grep -Fq 'tailscale_route_table' "$PROFILE_SCRIPT"
 grep -Fq 'Tailscale 动态路由表' "$PROFILE_SCRIPT"
@@ -138,3 +145,13 @@ PI_AGENT_DIR="$PROFILE_TEST_ROOT/pi/agent" PI_ROLE_CARD="$PROFILE_TEST_ROOT/data
 }
 
 echo "multica auto-enroll & agent bootstrap guard tests passed"
+
+# Every target uses Pi unless the build explicitly selects another runtime.
+for target in jdcloud_re-cs-02 jdcloud_re-ss-01 jdcloud_re-cs-07 cpe-5g; do
+ mkdir -p "$PROFILE_TEST_ROOT/enroll/etc/config"
+ cp "$CONFIG_FILE" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"
+ MULTICA_TOKEN=fixture-only WRT_EXPECTED_DEVICE="$target" bash "$ENROLL_SCRIPT" "$PROFILE_TEST_ROOT/enroll" >/dev/null
+ grep -Fq "option runtime_provider 'pi'" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"
+done
+MULTICA_TOKEN=fixture-only MULTICA_RUNTIME_PROVIDER=opencode bash "$ENROLL_SCRIPT" "$PROFILE_TEST_ROOT/enroll" >/dev/null
+grep -Fq "option runtime_provider 'opencode'" "$PROFILE_TEST_ROOT/enroll/etc/config/multica"

@@ -18,11 +18,31 @@ BOARD_FILE="${AUTO_MOUNT_DATA_BOARD_FILE:-/tmp/sysinfo/board_name}"
 LEGACY_APPROVAL_FILE="${AUTO_MOUNT_LEGACY_APPROVAL_FILE:-/overlay/.emmc-data-provision.legacy-data-approved}"
 PI_APPEND_SYSTEM_LINK_BIN="${AUTO_MOUNT_PI_APPEND_SYSTEM_LINK_BIN:-/usr/sbin/pi-append-system-link}"
 COMMANDCODE_ROLE_LINK_BIN="${AUTO_MOUNT_COMMANDCODE_ROLE_LINK_BIN:-/usr/sbin/commandcode-role-link}"
+OPENCODE_ROLE_LINK_BIN="${AUTO_MOUNT_OPENCODE_ROLE_LINK_BIN:-/usr/sbin/opencode-role-link}"
 AGENT_TOOLS_LINK_BIN="${AUTO_MOUNT_AGENT_TOOLS_LINK_BIN:-/usr/sbin/agent-tools-link}"
+FIRMWARE_ETC="${AUTO_MOUNT_FIRMWARE_ETC:-/etc}"
 
 log_error() {
 	printf '%s\n' "auto-mount-data: $*" >&2
 	command -v logger >/dev/null 2>&1 && logger -t auto-mount-data -- "$*" || true
+}
+
+atomic_copy_file() {
+	local source="$1" target="$2" temporary
+	temporary="$(umask 077; mktemp "${target}.new.XXXXXX")" || return 1
+	if ! cp -p "$source" "$temporary" || ! mv -f "$temporary" "$target"; then
+		rm -f "$temporary"
+		return 1
+	fi
+}
+
+atomic_write_text() {
+	local target="$1" contents="$2" temporary
+	temporary="$(umask 077; mktemp "${target}.new.XXXXXX")" || return 1
+	if ! printf '%s\n' "$contents" >"$temporary" || ! mv -f "$temporary" "$target"; then
+		rm -f "$temporary"
+		return 1
+	fi
 }
 
 cleanup_lock() {
@@ -55,7 +75,16 @@ block_inventory() {
 }
 
 uci_get() {
-	[ "$TESTING" = "1" ] && return 1
+	if [ "$TESTING" = "1" ]; then
+		case "$1" in
+			fstab.data.enabled) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_ENABLED:-}" ;;
+			fstab.data.uuid) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_UUID:-}" ;;
+			fstab.data.partuuid) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_PARTUUID:-}" ;;
+			fstab.data.label) printf '%s' "${AUTO_MOUNT_TEST_FSTAB_LABEL:-}" ;;
+			*) return 1 ;;
+		esac
+		return 0
+	fi
 	command -v uci >/dev/null 2>&1 || return 1
 	uci -q get "$1" 2>/dev/null
 }
@@ -115,6 +144,33 @@ find_devices() {
 		esac
 		value="$(attribute_from_line "$line" "$key")"
 		[ "$value" = "$expected" ] && printf '%s\n' "${line%%:*}"
+	done | awk '!seen[$0]++'
+}
+
+# Find label-opted-in data partitions: an existing ext4/f2fs filesystem with
+# any of PARTLABEL=data, PARTLABEL=openwrt-data, or LABEL=openwrt-data.
+# These are factory- or provisioner-created data partitions (e.g. re-cs-02
+# p27 PARTLABEL=data, re-ss-01 p27 PARTLABEL/LABEL=openwrt-data) that may
+# be mounted directly by UUID without an approval file and without
+# reformatting. System partitions are inherently excluded because their GPT
+# names (rootfs/HLOS/swap/etc.) never match these opt-in labels.
+find_label_opted_data_devices() {
+	local line device partlabel label fstype
+	block_inventory | while IFS= read -r line; do
+		case "$line" in
+			/dev/*:*) ;;
+			*) continue ;;
+		esac
+		fstype="$(attribute_from_line "$line" TYPE)"
+		case "$fstype" in ext4|f2fs) ;; *) continue ;; esac
+		partlabel="$(attribute_from_line "$line" PARTLABEL)"
+		label="$(attribute_from_line "$line" LABEL)"
+		case "$partlabel" in
+			data|openwrt-data) ;;
+			*) [ "$label" = openwrt-data ] || continue ;;
+		esac
+		device="${line%%:*}"
+		printf '%s\n' "$device"
 	done | awk '!seen[$0]++'
 }
 
@@ -222,7 +278,12 @@ select_candidate() {
 			log_error "only LABEL=openwrt-data is accepted"
 			return 1
 		}
-		matches="$(find_devices LABEL openwrt-data)"
+		# Enumerate all label-opted-in data partitions: ext4/f2fs with
+		# PARTLABEL=data, PARTLABEL=openwrt-data, or LABEL=openwrt-data.
+		# Exactly one candidate is required; multiple matches are ambiguous
+		# and refused (count check below). Approval-file legacy fallback
+		# (select_legacy_data) runs only when no label candidate exists.
+		matches="$(find_label_opted_data_devices)" 
 	fi
 
 	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
@@ -278,9 +339,13 @@ detach_known_automount() {
 	fi
 	if [ "$TESTING" = "1" ]; then
 		[ "${AUTO_MOUNT_TEST_UMOUNT_FAIL:-0}" != "1" ] || return 1
-		awk -v source="$CANDIDATE_DEVICE" -v target="$expected" \
-			'!($1 == source && $2 == target)' "$MOUNTS_FILE" >"$MOUNTS_FILE.new.$$" || return 1
-		mv "$MOUNTS_FILE.new.$$" "$MOUNTS_FILE" || return 1
+		local temporary
+		temporary="$(umask 077; mktemp "${MOUNTS_FILE}.new.XXXXXX")" || return 1
+		if ! awk -v source="$CANDIDATE_DEVICE" -v target="$expected" \
+			'!($1 == source && $2 == target)' "$MOUNTS_FILE" >"$temporary" || ! mv -f "$temporary" "$MOUNTS_FILE"; then
+			rm -f "$temporary"
+			return 1
+		fi
 		return 0
 	fi
 	umount "$expected"
@@ -480,6 +545,243 @@ link_compatibility_path() {
 	mv "$temporary" "$link_path" || { rm -f "$temporary"; return 1; }
 }
 
+# Detect whether the operator has manually edited /data/pi/agent/settings.json
+# since the firmware last wrote it.  A managed marker carries the mtime of the
+# last firmware write; a mismatch means the operator changed the file and we
+# must not overwrite their customization.
+settings_is_firmware_managed() {
+	local marker="$DATA_ROOT/pi/agent/.firmware-settings-managed"
+	[ -f "$marker" ] || return 1
+	[ "$(stat -c %Y "$DATA_ROOT/pi/agent/settings.json" 2>/dev/null || true)" = \
+	  "$(stat -c %Y "$marker" 2>/dev/null || true)" ]
+}
+
+mark_settings_firmware_managed() {
+	touch -r "$DATA_ROOT/pi/agent/settings.json" \
+		"$DATA_ROOT/pi/agent/.firmware-settings-managed" 2>/dev/null || \
+		touch "$DATA_ROOT/pi/agent/.firmware-settings-managed"
+}
+
+# Select the preferred default model from a CommandCode model catalog cache.
+# The cache is the raw /provider/v1/models response: {"data":[{"id":"..."},...]}.
+# Uses only grep/sed/tr (no jq) because jq is not guaranteed on OpenWrt.
+# Matching passes, in priority order (all case-insensitive):
+#   1. DeepSeek V4.1 Flash
+#   2. other deepseek flash
+#   3. qwen flash
+#   4. glm flash
+#   5. any flash model  (any provider, e.g. stepfun/Step-3.7-Flash)
+#   6. any "pro" model  (e.g. deepseek/deepseek-v4-pro, xiaomi/mimo-v2.5-pro)
+# No built-in fallback: the live catalog always contains a flash model.
+# Returns 0 with the model id on stdout; returns 1 if the cache is missing,
+# unparseable, or no pattern matches (caller decides how to handle).
+# Keep this logic in sync with CommandCodeProviderConfig.sh select_preferred_model()
+# and commandcode-model-sync select_model_from_cache().
+select_model_from_cache() {
+	local cache_file="$1"
+	local model_ids model lower
+	[ -f "$cache_file" ] || return 1
+	model_ids="$(grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' "$cache_file" 2>/dev/null | \
+		sed 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+	[ -n "$model_ids" ] || return 1
+
+	# Pass 1: explicitly prefer the approved DeepSeek V4.1 Flash model.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			deepseek/deepseek-v4.1-flash) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 2: other deepseek flash.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			deepseek/*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 3: qwen flash.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			qwen/*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 4: glm flash (matches z-ai/glm-*-flash and glm/*-flash).
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*glm*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 5: any model with "flash" in the id (any provider).
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*flash*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# Pass 6: any model with "pro" in the id.
+	for model in $model_ids; do
+		lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+		case "$lower" in
+			*pro*) printf '%s\n' "$model"; return 0 ;;
+		esac
+	done
+	# No match: caller decides.
+	return 1
+}
+
+# Ensure /data/pi/agent/settings.json defaultModel matches the cached catalog.
+# Only runs when the settings file is firmware-managed (not operator-edited).
+# This makes the first-boot default model track the build-time cache selection
+# and any runtime cache refresh performed by commandcode-model-sync.
+ensure_default_model_from_cache() {
+	local cache_file="$DATA_ROOT/pi/agent/commandcode-models.json"
+	local settings_file="$DATA_ROOT/pi/agent/settings.json"
+	local selected current
+
+	[ -f "$settings_file" ] || return 0
+	settings_is_firmware_managed || return 0
+	[ -f "$cache_file" ] || return 0
+
+	selected="$(select_model_from_cache "$cache_file")" || return 0
+	[ -n "$selected" ] || return 0
+
+	current="$(sed -n 's/.*"defaultModel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$settings_file" | head -1)"
+	[ "$selected" = "$current" ] && return 0
+
+	sed -i "s|\"defaultModel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"defaultModel\": \"$selected\"|" "$settings_file" || return 0
+	mark_settings_firmware_managed
+	log_error "defaultModel set to $selected from model catalog cache"
+}
+
+# One-time migration for devices that already have /data/pi/agent/settings.json
+# from an older firmware.  If the build injected a CommandCode API key and the
+# existing settings are still the firmware default (not operator-customized),
+# flip defaultProvider to commandcode so the device picks up the zero-config
+# provider without manual intervention.  The original file is backed up.
+migrate_commandcode_provider() {
+	local firmware_auth="$FIRMWARE_ETC/pi/agent/auth.json"
+	local firmware_cache="$FIRMWARE_ETC/pi/agent/commandcode-models.json"
+	local data_settings="$DATA_ROOT/pi/agent/settings.json"
+	local data_auth="$DATA_ROOT/pi/agent/auth.json"
+	local current_provider selected_model backup
+
+	# Only migrate when the build actually injected a CommandCode key.
+	[ -s "$firmware_auth" ] || return 0
+	# Existing settings file must be present (this is the upgrade case).
+	[ -f "$data_settings" ] || return 0
+	# If the operator already configured CommandCode auth on /data, respect it.
+	[ ! -s "$data_auth" ] || return 0
+
+	current_provider="$(sed -n 's/.*"defaultProvider"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$data_settings" | head -1)"
+	[ "$current_provider" != "commandcode" ] || return 0
+
+	# Refuse to overwrite operator-customized settings.
+	# - If a managed marker exists, a matching mtime proves the firmware wrote
+	#   the file; a mismatch means the operator edited it afterward, so skip.
+	# - If no marker exists (legacy device), use a conservative heuristic: only
+	#   migrate when the provider is a known firmware default.
+	if [ -f "$DATA_ROOT/pi/agent/.firmware-settings-managed" ]; then
+		settings_is_firmware_managed || return 0
+	else
+		case "$current_provider" in
+			office-sglang|cloudcollector|openai|anthropic) ;;
+			*) return 0 ;;
+		esac
+	fi
+
+	# Select the default model from the build-time cached catalog.  If the cache
+	# is missing or unparseable, fall back to the stable Qwen/Qwen3.8-Flash.
+	selected_model="$(select_model_from_cache "$firmware_cache" 2>/dev/null || true)"
+	[ -n "$selected_model" ] || selected_model="Qwen/Qwen3.8-Flash"
+
+	backup="$data_settings.bak.$(date +%Y%m%d%H%M%S 2>/dev/null || echo migration)"
+	cp -p "$data_settings" "$backup" || return 1
+	sed -i 's/"defaultProvider"[[:space:]]*:[[:space:]]*"[^"]*"/"defaultProvider": "commandcode"/' "$data_settings" || {
+		mv "$backup" "$data_settings"
+		return 1
+	}
+	sed -i "s|\"defaultModel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"defaultModel\": \"$selected_model\"|" "$data_settings" || {
+		mv "$backup" "$data_settings"
+		return 1
+	}
+	# Carry the build-injected auth.json onto /data so Pi finds it at runtime.
+	if [ ! -e "$data_auth" ]; then
+		atomic_copy_file "$firmware_auth" "$data_auth" || return 1
+		chmod 600 "$data_auth" 2>/dev/null || true
+	fi
+	mark_settings_firmware_managed
+	log_error "migrated existing Pi settings to CommandCode provider (model: $selected_model, backup: $backup)"
+}
+
+# Pi 0.85+ resolves "npm:pi-commandcode-provider" against
+# /data/pi/agent/npm/node_modules.  The extension ships inside the agent-runtime
+# node_modules tree, whose exact path can shift between runtime generations.
+# Resolve it dynamically and create a stable symlink so Pi loads the provider
+# without an explicit --extension flag.
+ensure_commandcode_npm_link() {
+	local npm_modules="$DATA_ROOT/pi/agent/npm/node_modules"
+	local link_path="$npm_modules/pi-commandcode-provider"
+	local search_root="${COMMANDCODE_PROVIDER_SEARCH_ROOT:-$DATA_ROOT/agent-runtime}"
+	local provider_dir
+
+	[ -d "$search_root" ] || return 0
+	provider_dir="$(find "$search_root" -name "pi-commandcode-provider" -type d 2>/dev/null | head -1)"
+	[ -n "$provider_dir" ] || return 0
+
+	mkdir -p "$npm_modules" || return 1
+	# ln -sfn is idempotent: it replaces an existing link without following it.
+	ln -sfn "$provider_dir" "$link_path" || return 1
+	log_error "linked pi-commandcode-provider to $provider_dir"
+}
+
+# Best-effort pre-warming of the CommandCode model catalog cache.  The
+# extension normally fetches https://api.commandcode.ai/provider/v1/models on
+# first use; if the network is not ready at boot the models may be temporarily
+# unavailable.  Try once here; failure is non-fatal and the extension retries.
+provision_commandcode_model_cache() {
+	local cache_file="$DATA_ROOT/pi/agent/commandcode-models.json"
+	local auth_file="$DATA_ROOT/commandcode/auth.json"
+	local api_key fetch_cmd
+
+	[ ! -e "$cache_file" ] || return 0
+	[ -s "$auth_file" ] || return 0
+
+	api_key="$(sed -n 's/.*"apiKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$auth_file" | head -1)"
+	[ -n "$api_key" ] || return 0
+
+	for fetch_cmd in uclient-fetch curl wget; do
+		command -v "$fetch_cmd" >/dev/null 2>&1 || continue
+		case "$fetch_cmd" in
+			uclient-fetch)
+				uclient-fetch -q -T 15 -O "$cache_file" \
+					--header="Authorization: Bearer $api_key" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+			curl)
+				curl -sf --max-time 15 \
+					-H "Authorization: Bearer $api_key" \
+					-o "$cache_file" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+			wget)
+				wget -qO "$cache_file" --timeout=15 \
+					--header="Authorization: Bearer $api_key" \
+					"https://api.commandcode.ai/provider/v1/models" 2>/dev/null || true
+				;;
+		esac
+		if [ -s "$cache_file" ]; then
+			log_error "pre-warmed CommandCode model catalog cache"
+			return 0
+		fi
+	done
+	# Non-fatal: the extension will fetch the catalog when it first loads.
+	rm -f "$cache_file"
+	log_error "CommandCode model cache pre-warm skipped (network unavailable); extension will fetch on first use"
+	return 0
+}
+
 prepare_agent_storage() {
 	local directory
 	for directory in \
@@ -502,25 +804,59 @@ prepare_agent_storage() {
 	done
 	chmod 0750 "$DATA_ROOT/smb" 2>/dev/null || true
 
-	if [ -f /etc/multica/openwrt-agent.md ]; then
-		cp -p /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
-		cmp -s /etc/multica/openwrt-agent.md "$DATA_ROOT/multica/openwrt-agent.md.new" || return 1
-		mv "$DATA_ROOT/multica/openwrt-agent.md.new" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
+	# Upgrade devices that already have /data/pi/agent/settings.json from an
+	# older firmware: if the build injected a CommandCode key and the existing
+	# settings are still firmware-default, flip defaultProvider to commandcode.
+	# This must run BEFORE the copy loop below so that a freshly copied auth.json
+	# does not make the migration think the operator already configured CommandCode.
+	migrate_commandcode_provider || return 1
+
+	if [ -f "$FIRMWARE_ETC/multica/openwrt-agent.md" ]; then
+		atomic_copy_file "$FIRMWARE_ETC/multica/openwrt-agent.md" "$DATA_ROOT/multica/openwrt-agent.md" || return 1
 	fi
-	for config_file in models.json settings.json auth.json; do
-		[ -r "/etc/pi/agent/$config_file" ] || continue
+	for config_file in models.json settings.json auth.json commandcode-models.json lazy-extensions.json; do
+		[ -r "$FIRMWARE_ETC/pi/agent/$config_file" ] || continue
 		[ ! -e "$DATA_ROOT/pi/agent/$config_file" ] || continue
-		cp -p "/etc/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file.new" || return 1
-		mv "$DATA_ROOT/pi/agent/$config_file.new" "$DATA_ROOT/pi/agent/$config_file" || return 1
+		atomic_copy_file "$FIRMWARE_ETC/pi/agent/$config_file" "$DATA_ROOT/pi/agent/$config_file" || return 1
+		if [ "$config_file" = "settings.json" ]; then
+			mark_settings_firmware_managed
+		fi
 	done
 
-	# CommandCode CLI auth: copy the build-injected key onto /data so the
+	# After a fresh first-boot copy of settings.json, ensure defaultModel tracks
+	# the cached model catalog (the firmware settings may carry a model selected
+	# from the build-time fallback cache).  This is a no-op on upgrades where the
+	# operator already customized settings.
+	ensure_default_model_from_cache || true
+
+	# CommandCode CLI auth: sync the build-injected key onto /data so the
 	# cmd / cmdc CLI finds it at ~/.commandcode/auth.json.  pi-commandcode-provider
 	# reads the same file in addition to ~/.pi/agent/auth.json.
-	if [ -r /etc/commandcode/auth.json ] && [ ! -e "$DATA_ROOT/commandcode/auth.json" ]; then
-		( umask 077; cp -p /etc/commandcode/auth.json "$DATA_ROOT/commandcode/auth.json.new" ) || return 1
-		mv "$DATA_ROOT/commandcode/auth.json.new" "$DATA_ROOT/commandcode/auth.json" || return 1
+	# A stale key left behind by an earlier manual /login (or an older build)
+	# shadows the firmware key through the provider's auth-path priority and
+	# yields 401 Unauthorized once that key expires.  When the existing file
+	# differs from the firmware key, prefer the firmware key and keep a
+	# timestamped backup of the previous one so the operator can recover a
+	# newer manually logged-in credential if it is still valid.
+	if [ -r "$FIRMWARE_ETC/commandcode/auth.json" ]; then
+		if [ ! -e "$DATA_ROOT/commandcode/auth.json" ] || \
+		   ! cmp -s "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json"; then
+			if [ -e "$DATA_ROOT/commandcode/auth.json" ]; then
+				( umask 077; cp -p "$DATA_ROOT/commandcode/auth.json" \
+					"$DATA_ROOT/commandcode/auth.json.bak.$(date +%Y%m%d%H%M%S)" ) 2>/dev/null || true
+			fi
+			atomic_copy_file "$FIRMWARE_ETC/commandcode/auth.json" "$DATA_ROOT/commandcode/auth.json" || return 1
+			chmod 600 "$DATA_ROOT/commandcode/auth.json" 2>/dev/null || true
+		fi
 	fi
+
+	# Pi loads "npm:pi-commandcode-provider" from /data/pi/agent/npm/node_modules.
+	# Link it to the extension inside the agent-runtime tree (resolved dynamically).
+	ensure_commandcode_npm_link || return 1
+
+	# Best-effort pre-warm of the model catalog cache so CommandCode models are
+	# available even if the network was not ready at first boot.
+	provision_commandcode_model_cache
 
 	# pi-subagents resolves schedule roots against the real project path.
 	# /root/.pi is a symlink to /data/pi, so a "~/"-based store root trips its
@@ -529,9 +865,7 @@ prepare_agent_storage() {
 	subagent_cfg_dir="$DATA_ROOT/pi/agent/extensions/subagent"
 	if [ ! -e "$subagent_cfg_dir/config.json" ]; then
 		ensure_real_directory "$subagent_cfg_dir" || return 1
-		printf '%s\n' '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' \
-			> "$subagent_cfg_dir/config.json.new" || return 1
-		mv "$subagent_cfg_dir/config.json.new" "$subagent_cfg_dir/config.json" || return 1
+		atomic_write_text "$subagent_cfg_dir/config.json" '{"scheduledRuns":{"storeRoot":"/data/pi/subagents/schedules"}}' || return 1
 	fi
 
 	# cloudcollector API key placeholder. An empty file keeps the path stable
@@ -551,6 +885,13 @@ prepare_agent_storage() {
 	if [ -x "$COMMANDCODE_ROLE_LINK_BIN" ]; then
 		COMMANDCODE_HOME="$DATA_ROOT/commandcode" COMMANDCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
 			"$COMMANDCODE_ROLE_LINK_BIN" || return 1
+	fi
+	# opencode reads a user-level AGENTS.md (global rules) next to its config.
+	# Bind it to the same rendered role card; a missing config dir (device
+	# without opencode, e.g. re-ss-01) is a silent no-op inside the script.
+	if [ -x "$OPENCODE_ROLE_LINK_BIN" ]; then
+		OPENCODE_CONFIG_DIR="$DATA_ROOT/opencode/config/opencode" OPENCODE_ROLE_CARD="$DATA_ROOT/multica/openwrt-agent.md" \
+			"$OPENCODE_ROLE_LINK_BIN" || return 1
 	fi
 	if [ -x "$AGENT_TOOLS_LINK_BIN" ]; then
 		AGENT_TOOLS_ROOT="$DATA_ROOT/shared/agent-tools" \
@@ -577,6 +918,13 @@ prepare_agent_storage() {
 	if [ -x /usr/sbin/uv-runtime-provision ]; then
 		UV_RUNTIME_QUIET=1 /usr/sbin/uv-runtime-provision || \
 			log_error "offline Python provisioning deferred"
+	fi
+	# Enable the CommandCode model catalog sync service.  It runs in the
+	# background after boot (START=99) and refreshes the cached model list plus
+	# defaultModel once the network is available.  Best-effort only.
+	if [ -x /etc/init.d/commandcode-model-sync ]; then
+		/etc/init.d/commandcode-model-sync enable >/dev/null 2>&1 || \
+			log_error "could not enable commandcode-model-sync"
 	fi
 }
 

@@ -136,3 +136,7 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 3. `luci-app-nikki` 与 `luci-app-wrtbak` 插件及护栏测试；
 4. 京东云 `re-cs-02`, `re-cs-01`, `re-ss-01`, `re-cs-07` 设备适配与 Athena LED 双包规则；
 5. `CPE-5G` 双构建及 mwan3 链路规则。
+
+## WLG OpenClash branch
+
+RE-CS-07 (NOWIFI) and RE-SS-01 (Wi-Fi) have dedicated WLG manual build workflows. Both pin VIKINGYFY/immortalwrt `0fb9b10cb9df51fb076470e1dd93d1c30dd89d83` / Linux 6.18.52 with NSS. OpenClash uses official vernesong/OpenClash master `c3a33c1d3407956fdf8f0e0b7c1a4c52e6ad9593`. Main absorption source is `6564f44`; see docs/wlg-main-absorption.md. WLG image boot/flash validation remains pending.

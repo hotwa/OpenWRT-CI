@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# A late /data mount must be reconciled before Headscale is allowed to create
+# another node. The worker has its own lock and verifies the mount source.
+case "${ACTION:-}" in
+	add|mount|remove|umount) ;;
+	*) exit 0 ;;
+esac
+[ -x /usr/sbin/tailscale-state-persist ] || exit 0
+# Reconcile storage directly. A block event is not a service restart request.
+/usr/sbin/tailscale-state-persist >/dev/null 2>&1 || true
