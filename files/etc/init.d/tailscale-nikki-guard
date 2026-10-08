@@ -10,6 +10,7 @@ TAILSCALE_IPV4_RANGE="100.64.0.0/10"
 TAILSCALE_IPV6_RANGE="fd7a:115c:a1e0::/48"
 NIKKI_HIJACK_TEMPLATE="/etc/nikki/ucode/hijack.ut"
 QUAD100_TAILSCALE_ENDPOINT="udp://100.100.100.100:53#tailscale0"
+PI_DNS_TAILSCALE_ENDPOINT="udp://100.64.0.6:53#tailscale0"
 
 ensure_option() {
 	local option="$1" value="$2" current
@@ -47,8 +48,10 @@ ensure_declarative_tailnet_policy() {
 	ensure_option "nikki.mixin.fake_ip_filter" "1"
 	ensure_option "nikki.mixin.rule" "1"
 	ensure_option "nikki.mixin.dns_nameserver_policy" "1"
+	ensure_option "nikki.mixin.dns_respect_rules" "1"
 	ensure_list_entry "nikki.mixin.fake_ip_filters" "+.hs.jmsu.top"
 	ensure_list_entry "nikki.mixin.fake_ip_filters" "+.ts.net"
+	ensure_list_entry "nikki.mixin.fake_ip_filters" "+.pi.jmsu.top"
 
 	ensure_direct_rule tailscale_direct_hs DOMAIN-SUFFIX hs.jmsu.top 0
 	ensure_direct_rule tailscale_direct_ts DOMAIN-SUFFIX ts.net 0
@@ -62,6 +65,10 @@ ensure_declarative_tailnet_policy() {
 	ensure_option "nikki.tailscale_magicdns.enabled" "1"
 	ensure_option "nikki.tailscale_magicdns.matcher" "+.hs.jmsu.top"
 	ensure_list_entry "nikki.tailscale_magicdns.nameserver" "$QUAD100_TAILSCALE_ENDPOINT"
+	ensure_option "nikki.pi_service_dns" "nameserver_policy"
+	ensure_option "nikki.pi_service_dns.enabled" "1"
+	ensure_option "nikki.pi_service_dns.matcher" "+.pi.jmsu.top"
+	ensure_option "nikki.pi_service_dns.nameserver" "$PI_DNS_TAILSCALE_ENDPOINT"
 }
 
 ensure_ui_path() {
@@ -217,6 +224,20 @@ current_profile_path() {
 	return 1
 }
 
+fix_nikki_api_listen() {
+	local al ip port
+	al="$(uci -q get nikki.mixin.api_listen || true)"
+	case "$al" in
+		*/*:*)
+			ip="${al%%/*}"
+			port="${al##*:}"
+			uci -q set "nikki.mixin.api_listen=${ip}:${port}"
+			logger -t tailscale-nikki-guard "fixed nikki api_listen: $al -> ${ip}:${port}"
+			changed=1
+			;;
+	esac
+}
+
 apply_guard() {
 	local active_profile
 	[ -f "/etc/config/nikki" ] || return 0
@@ -224,6 +245,7 @@ apply_guard() {
 	uci -q get "nikki.@router_access_control[0].enabled" >/dev/null 2>&1 || return 0
 
 	changed=0
+	fix_nikki_api_listen
 	ensure_list_entry "nikki.proxy.reserved_ip" "$TAILSCALE_IPV4_RANGE"
 	ensure_list_entry "nikki.proxy.reserved_ip6" "$TAILSCALE_IPV6_RANGE"
 	ensure_list_entry "nikki.@router_access_control[0].cgroup" "services/dnsmasq"

@@ -12,7 +12,9 @@ for workflow in $(discover_device_workflows); do
 
   # WLG builds use a dedicated LAN subnet to avoid conflicts with the
   # default 192.168.10.0/24 production network.
-  if echo "$workflow" | grep -qi 'wlg'; then
+  if basename "$workflow" | grep -q '^WLG-RE-SS-01'; then
+    DEFAULT_IP='192.168.51.1'
+  elif basename "$workflow" | grep -qi 'wlg'; then
     DEFAULT_IP='192.168.50.1'
   else
     DEFAULT_IP='192.168.10.1'

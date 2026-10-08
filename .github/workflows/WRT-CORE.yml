@@ -727,6 +727,24 @@ jobs:
           cp -f ./files/usr/sbin/agent-tools-link ./wrt/files/usr/sbin/agent-tools-link
           cp -f ./files/usr/sbin/rclone-data-backup ./wrt/files/usr/sbin/rclone-data-backup
           cp -f ./files/usr/sbin/agent-runtime-auto-upgrade ./wrt/files/usr/sbin/agent-runtime-auto-upgrade
+          cp -f ./files/usr/sbin/agent-runtime-health-check ./wrt/files/usr/sbin/agent-runtime-health-check
+          chmod 0755 ./wrt/files/usr/sbin/agent-runtime-health-check
+          cp -f ./files/usr/sbin/multica-maintenance-cron-reconcile ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile
+          chmod 0755 ./wrt/files/usr/sbin/multica-maintenance-cron-reconcile
+          cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
+          chmod 0755 ./wrt/files/usr/sbin/multica-log-hygiene
+          cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
+          chmod 0755 ./wrt/files/usr/sbin/multica-runtime-guard
+          cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
+          chmod 0755 ./wrt/files/etc/uci-defaults/93-logd-ring-size
+          cp -f ./files/etc/uci-defaults/95-multica-maintenance-cron ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
+          chmod 0755 ./wrt/files/etc/uci-defaults/95-multica-maintenance-cron
+          cp -f ./files/etc/init.d/agent-data-prep ./wrt/files/etc/init.d/agent-data-prep
+          cp -f ./files/usr/sbin/pi-settings-merge.js ./wrt/files/usr/sbin/pi-settings-merge.js
+          cp -f ./files/etc/npmrc ./wrt/files/etc/npmrc
+          cp -f ./files/.npmrc ./wrt/files/.npmrc
+          cp -f ./files/root/.npmrc ./wrt/files/root/.npmrc
+          chmod 0755 ./wrt/files/etc/init.d/agent-data-prep ./wrt/files/usr/sbin/pi-settings-merge.js
           chmod 0755 \
             ./wrt/files/etc/init.d/data-runtime \
             ./wrt/files/etc/init.d/emmc-data-provision \

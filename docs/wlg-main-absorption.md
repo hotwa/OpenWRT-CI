@@ -14,3 +14,18 @@ Excluded: CPE SIM/IPv6/Lucky/quota overlays, Gecoos automatic provisioning, main
 - OpenClash package is built from the official pinned master source. No subscription or provider login is included. The plugin manages its Mihomo core through its own installation/update UI; a prebundled Mihomo executable is not introduced by this change.
 - Pi default remains CommandCode; its API secret is explicitly forwarded by WLG. Magic Context is installed but not loaded by default.
 - Validation: scoped proxy/model fixture, native MCP/Magic Context/Node guards, persistence and upgrade-memory regressions. Full firmware compilation and real-device tests are separate gates.
+
+## Smoke-test integration repair (2026-10-08)
+
+Both cf4e960 builds stopped in Repository Smoke Tests before firmware compilation.
+Completed the absorbed agent-data-prep baseline (first-boot enable, executable Pi
+settings merger and npm guards), maintenance helper staging, and logd defaults.
+Aligned CommandCode/Tailnet/Nikki tests and dependent files to the same reviewed
+main snapshot. OpenCode remains an optional compatibility entry; Pi is still the
+preferred runtime. The WLG container gate tests the WLG SS01 caller, not an
+unmodified CPE caller. LAN tests use workflow basenames and distinguish SS01's
+51.1 default from CS07's 50.1. Production fleet CD was intentionally excluded:
+the boundary test checks WLG explicit secret allowlists and build-only behavior.
+The old wrtbak proxy-patch test was not part of the main snapshot and referenced
+a patch that this branch does not install; it is removed rather than injecting
+an unrelated backup transport change.

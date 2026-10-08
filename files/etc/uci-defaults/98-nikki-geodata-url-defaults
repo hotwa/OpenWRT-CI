@@ -1,0 +1,23 @@
+#!/bin/sh
+
+[ -f /etc/config/nikki ] || exit 0
+command -v uci >/dev/null 2>&1 || exit 0
+
+changed=0
+
+set_url() {
+	option="$1"
+	url="$2"
+	current="$(uci -q get "$option" 2>/dev/null || true)"
+
+	[ "$current" = "$url" ] && return 0
+	uci set "$option=$url"
+	changed=1
+}
+
+set_url nikki.mixin.geoip_dat_url 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat'
+set_url nikki.mixin.geosite_url 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat'
+set_url nikki.mixin.geoip_asn_url 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb'
+
+[ "$changed" -eq 1 ] && uci commit nikki
+exit 0

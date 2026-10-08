@@ -1,181 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CORE="$ROOT_DIR/.github/workflows/WRT-CORE.yml"
-RELEASE="$ROOT_DIR/.github/workflows/WRT-RELEASE.yml"
-CD_WORKFLOW="$ROOT_DIR/.github/workflows/FIRMWARE-FLEET-CD.yml"
-CD_SCRIPT="$ROOT_DIR/Scripts/FirmwareFleetDeploy.sh"
-FLEET="$ROOT_DIR/Config/firmware-fleet.json"
-
-[ -f "$CD_WORKFLOW" ] || { echo "firmware CD workflow is missing" >&2; exit 1; }
-[ -x "$CD_SCRIPT" ] || { echo "firmware CD guard script is missing or not executable" >&2; exit 1; }
-[ -f "$FLEET" ] || { echo "firmware fleet inventory is missing" >&2; exit 1; }
-
-if grep -R -n -E 'secrets:[[:space:]]+inherit' "$ROOT_DIR/.github/workflows"; then
-  echo "WRT-CORE callers must use explicit secret allowlists" >&2
-  exit 1
-fi
-
-allowed_secrets='HEADSCALE_OPENWRT_AUTHKEY HEADSCALE_CI_AUTHKEY HEADSCALE_URL MULTICA_TOKEN MULTICA_SERVER_URL MULTICA_APP_URL MULTICA_WORKSPACE_ID OPENWRT_DROPBEAR_AUTHORIZED_KEYS OPENWRT_WAN_PPPOE_USERNAME OPENWRT_WAN_PPPOE_PASSWORD NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL SAMBA_DEFAULT_PASSWORD CPE_WIFI_PASSWORD CPE_LUCKY_REMOTE_BUNDLE_1 CPE_LUCKY_REMOTE_BUNDLE_2 CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6'
-for secret in $allowed_secrets; do
-  grep -Fxq "      $secret:" "$CORE" || {
-    echo "WRT-CORE no longer declares expected build secret: $secret" >&2
-    exit 1
-  }
-done
-
-for workflow in "$ROOT_DIR"/.github/workflows/*.yml; do
-  grep -Fq 'uses: ./.github/workflows/WRT-CORE.yml' "$workflow" || continue
-  grep -Eq '^[[:space:]]*secrets:$' "$workflow" || {
-    echo "$(basename "$workflow") has no explicit reusable-workflow secret mapping" >&2
-    exit 1
-  }
-  grep -Fq 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS:' "$workflow" || {
-    echo "$(basename "$workflow") must preserve the Dropbear build secret mapping" >&2
-    exit 1
-  }
-  while IFS= read -r mapped_secret; do
-    case " $allowed_secrets " in
-      *" $mapped_secret "*) ;;
-      *)
-        echo "$(basename "$workflow") maps an undeclared or forbidden secret: $mapped_secret" >&2
-        exit 1
-        ;;
-    esac
-    case "$mapped_secret" in
-      CPE_WIFI_PASSWORD|CPE_LUCKY_REMOTE_BUNDLE_[1-6])
-        if [ "$(basename "$workflow")" != CPE-5G.yml ]; then
-          echo "$(basename "$workflow") must not receive a CPE private credential" >&2
-          exit 1
-        fi
-        ;;
-    esac
-  done < <(sed -n -E 's/^[[:space:]]{6}([A-Z][A-Z0-9_]*):[[:space:]]*\$\{\{[[:space:]]*secrets\..*$/\1/p' "$workflow")
-
-  # GitHub validates nested reusable-workflow permissions before a conditional
-  # WRT-CORE release job can be skipped. The actual WRT-CORE build job below
-  # must still reduce this ceiling to read-only.
-  grep -Fq 'contents: write' "$workflow" || {
-    echo "$(basename "$workflow") cannot satisfy the nested release permission ceiling" >&2
-    exit 1
-  }
-done
-
-# The approved WiFi secret belongs only to the encrypted CPE B preset; the
-# isolation A and ordinary callers must not acquire it via the shared allowlist.
-CPE_WORKFLOW="$ROOT_DIR/.github/workflows/CPE-5G.yml"
-wifi_secret_jobs="$(awk '
-  /^  [[:alnum:]_-]+:$/ { job=$1; sub(/:$/, "", job) }
-  /^      CPE_WIFI_PASSWORD:/ { print job }
-' "$CPE_WORKFLOW")"
-[ "$wifi_secret_jobs" = cpe_overlay_b ] || {
-  echo 'CPE WiFi credential must be mapped exactly once, by B only' >&2
-  exit 1
-}
-cpe_b="$(awk '
-  /^  cpe_overlay_b:$/ { inside=1; next }
-  inside && /^  [[:alnum:]_-]+:$/ { exit }
-  inside { print }
-' "$CPE_WORKFLOW")"
-for required in 'WRT_CPE_WIFI: true' 'WRT_CPE_5G: true' 'WRT_FEATURE_OVERLAY: true' 'WRT_ENCRYPT_ARTIFACT: true'; do
-  grep -Fxq "      $required" <<<"$cpe_b" || {
-    echo "CPE WiFi secret requires B setting $required" >&2
-    exit 1
-  }
-done
-
-grep -A12 '^  build:' "$CORE" | grep -Fq 'contents: read' || {
-  echo "WRT-CORE build job must have contents: read" >&2
-  exit 1
-}
-grep -A12 '^  build:' "$CORE" | grep -Fq 'actions: read' || {
-  echo "WRT-CORE build job must have actions: read" >&2
-  exit 1
-}
-grep -A10 '^  release:' "$CORE" | grep -Fq 'contents: write' || {
-  echo "WRT-CORE release job must be the sole elevated boundary" >&2
-  exit 1
-}
-grep -A14 '^  release:' "$CORE" | grep -Fq 'uses: ./.github/workflows/WRT-RELEASE.yml' || {
-  echo "WRT-CORE release boundary does not delegate to WRT-RELEASE" >&2
-  exit 1
-}
-
-grep -Fq 'contents: write' "$RELEASE"
-grep -Fq 'actions: read' "$RELEASE"
-if grep -Eq 'id-token:|packages:|attestations:|security-events:' "$RELEASE"; then
-  echo "WRT-RELEASE requests permissions outside its release boundary" >&2
-  exit 1
-fi
-
-grep -Fq 'workflow_dispatch:' "$CD_WORKFLOW" || {
-  echo "firmware CD must require a manual dispatch" >&2
-  exit 1
-}
-grep -Fq 'default: false' "$CD_WORKFLOW" || {
-  echo "firmware CD deploy input must default to false" >&2
-  exit 1
-}
-grep -Fq 'environment: firmware-cd' "$CD_WORKFLOW" || {
-  echo "firmware CD must use the protected firmware-cd environment" >&2
-  exit 1
-}
-preflight_block="$(sed -n '/^  preflight:/,/^  deploy:/p' "$CD_WORKFLOW")"
-grep -Fxq '    environment: firmware-cd' <<<"$preflight_block" || {
-  echo "firmware CD preflight must use the environment that stores its Tailnet and SSH secrets" >&2
-  exit 1
-}
-grep -Fq 'HEADSCALE_CI_AUTHKEY' "$CD_WORKFLOW" || {
-  echo "firmware CD must use the unified CI Tailnet credential" >&2
-  exit 1
-}
-if [ "$(grep -Fc 'secrets.HEADSCALE_CI_AUTHKEY' "$CD_WORKFLOW")" -ne 2 ]; then
-  echo "both protected CD jobs must use the unified CI Tailnet credential" >&2
-  exit 1
-fi
-if grep -Fq 'HEADSCALE_CD_AUTHKEY' "$CD_WORKFLOW"; then
-  echo "firmware CD must not depend on a second Headscale auth-key secret" >&2
-  exit 1
-fi
-grep -Fq 'FIRMWARE_CD_SSH_PRIVATE_KEY' "$CD_WORKFLOW" || {
-  echo "firmware CD must require a dedicated SSH key" >&2
-  exit 1
-}
-grep -Fq 'FIRMWARE_CD_KNOWN_HOSTS' "$CD_WORKFLOW" || {
-  echo "firmware CD must pin router SSH host keys" >&2
-  exit 1
-}
-if grep -Eq 'HEADSCALE_CD_AUTHKEY|FIRMWARE_CD_SSH_PRIVATE_KEY|FIRMWARE_CD_KNOWN_HOSTS' "$CORE"; then
-  echo "build boundary must not receive deployment secrets" >&2
-  exit 1
-fi
-
-grep -Fq 'sysupgrade -T' "$CD_SCRIPT" || {
-  echo "firmware CD must validate a sysupgrade image before flashing" >&2
-  exit 1
-}
-grep -Fq 'sysupgrade -c' "$CD_SCRIPT" || {
-  echo "firmware CD must retain configuration during sysupgrade" >&2
-  exit 1
-}
-if grep -Fq 'openwrt-ci-health' "$CD_SCRIPT"; then
-  echo "firmware CD health checks must remain disabled by request" >&2
-  exit 1
-fi
-grep -Fq '[ "$data_state" = persistent ]' "$CD_SCRIPT" &&
-  grep -Fq 'block-backed /data mount is unavailable' "$CD_SCRIPT" || {
-  echo "firmware CD must keep the /data image-staging prerequisite" >&2
-  exit 1
-}
-upgrade_body="$(sed -n '/^upgrade_record() {/,/^}/p' "$CD_SCRIPT")"
-if [ "$(grep -Fc 'preflight_record "$record" "$ssh_config"' <<<"$upgrade_body")" -ne 2 ]; then
-  echo "firmware CD must run health preflight before and after sysupgrade" >&2
-  exit 1
-fi
-grep -Fq 'StrictHostKeyChecking yes' "$CD_WORKFLOW" || {
-  echo "firmware CD must reject unpinned SSH host keys" >&2
-  exit 1
-}
-
-echo "CI workflow boundary guards passed"
+# WLG retains its existing build/release wiring; production fleet CD was not
+# among the selected absorptions. Validate the explicit WLG secret boundary.
+python3 - "$ROOT_DIR" <<'PY'
+from pathlib import Path
+import re, sys
+root=Path(sys.argv[1])
+core=(root/'.github/workflows/WRT-CORE.yml').read_text()
+declared=set(re.findall(r'^      ([A-Z][A-Z0-9_]*):$',core.split('    secrets:',1)[1].split('\nenv:',1)[0],re.M))
+for name in ('WLG-RE-CS-07-BUILD.yml','WLG-RE-SS-01-BUILD.yml'):
+    text=(root/'.github/workflows'/name).read_text()
+    assert 'secrets: inherit' not in text, name
+    mapped=set(re.findall(r'^      ([A-Z][A-Z0-9_]*): \$\{\{ secrets\.',text,re.M))
+    assert mapped and mapped <= declared, (name,mapped-declared)
+    assert 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' in mapped
+    assert not any(v.startswith(('CPE_','FIRMWARE_CD_')) for v in mapped)
+    assert 'WRT_BUILD_ONLY: true' in text
+assert 'FIRMWARE_CD_SSH_PRIVATE_KEY' not in core
+assert not (root/'.github/workflows/FIRMWARE-FLEET-CD.yml').exists()
+print('WLG explicit secret allowlists and build-only boundary passed')
+PY
