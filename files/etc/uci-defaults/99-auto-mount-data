@@ -283,7 +283,7 @@ select_candidate() {
 		# Exactly one candidate is required; multiple matches are ambiguous
 		# and refused (count check below). Approval-file legacy fallback
 		# (select_legacy_data) runs only when no label candidate exists.
-		matches="$(find_label_opted_data_devices)" 
+		matches="$(find_label_opted_data_devices)"
 	fi
 
 	count="$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')"
