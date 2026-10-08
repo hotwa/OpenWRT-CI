@@ -23,6 +23,8 @@ r=Path(sys.argv[1]); pin='0fb9b10cb9df51fb076470e1dd93d1c30dd89d83'
 for model in ['RE-CS-07','RE-SS-01']:
  j=yaml.safe_load((r/f'.github/workflows/WLG-{model}-BUILD.yml').read_text());w=j['jobs']['build']['with'];assert w['WRT_COMMIT']==pin and w['WRT_PROXY_PROFILE']=='openclash';assert w['WRT_EMMC_DATA_PROVISIONING'] is True;assert w['WRT_CONTAINER_RUNTIME_TEST'] is True
 j=yaml.safe_load((r/'.github/workflows/WLG-RE-SS-01-BUILD.yml').read_text());assert j['jobs']['build']['with']['WRT_REQUIRED_DEVICE']=='jdcloud_re-ss-01';assert j['jobs']['build']['with']['WRT_CONFIG']=='IPQ60XX-RE-SS-01'
+import json
+assert json.loads((r/'files/etc/pi/agent/modes.config.json').read_text())['defaultMode']=='yolo'
 assert 'vernesong/OpenClash" "master"' in (r/'Scripts/Packages.sh').read_text()
 PY
 echo 'WLG proxy isolation and two model gates passed'
