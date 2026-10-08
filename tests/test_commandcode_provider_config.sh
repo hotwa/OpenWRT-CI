@@ -28,7 +28,7 @@ sh -n "$AUTO_MOUNT"
 # first-boot migrator must carry auth.json onto /data for both Pi and CommandCode CLI.
 grep -Fq 'COMMANDCODE_API_KEY' "$CORE_WF"
 grep -Fq 'CommandCodeProviderConfig.sh' "$CORE_WF"
-grep -Fq 'COMMANDCODE_API_KEY' "$WLG_WF"
+! grep -Fq 'secrets.COMMANDCODE_API_KEY' "$WLG_WF"
 grep -Fq 'auth.json' "$AUTO_MOUNT"
 grep -Fq 'commandcode/auth.json' "$AUTO_MOUNT"
 

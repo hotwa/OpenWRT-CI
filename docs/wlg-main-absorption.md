@@ -12,7 +12,7 @@ Excluded: CPE SIM/IPv6/Lucky/quota overlays, Gecoos automatic provisioning, main
 - Dedicated `WLG-RE-SS-01-BUILD.yml` uses the ordinary Wi-Fi RE-SS-01 target; default LAN is 192.168.51.1. CS07 remains NOWIFI and default LAN 192.168.50.1.
 - `WRT_PROXY_PROFILE=openclash` selects luci-app-openclash, dnsmasq-full, tun, nft-tproxy and inet-diag, rejects overlapping Nikki/Momo/DAE packages, and removes Nikki overlay jobs only from this staging tree. Other workflows retain Nikki by default.
 - OpenClash package is built from the official pinned master source. No subscription or provider login is included. The plugin manages its Mihomo core through its own installation/update UI; a prebundled Mihomo executable is not introduced by this change.
-- Pi default remains CommandCode; its API secret is explicitly forwarded by WLG. Magic Context is installed but not loaded by default.
+- WLG installs Pi and the CommandCode provider but never forwards COMMANDCODE_API_KEY. Users configure authentication after installation; public Pi settings remain unchanged without a key. Magic Context is installed but not loaded by default.
 - Validation: scoped proxy/model fixture, native MCP/Magic Context/Node guards, persistence and upgrade-memory regressions. Full firmware compilation and real-device tests are separate gates.
 
 ## Smoke-test integration repair (2026-10-08)
@@ -42,3 +42,6 @@ location as private (including malformed nonempty files), without printing
 credentials. An offline integration regression executes the real injector and
 classifier together and verifies private classification, suffix and log redaction;
 individual canonical auth paths are covered. Public release gates remain intact.
+
+User override: WLG callers must not inject the repository CommandCode API key.
+Other firmware callers and the shared injector remain unchanged.

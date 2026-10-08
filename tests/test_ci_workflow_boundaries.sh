@@ -15,6 +15,7 @@ for name in ('WLG-RE-CS-07-BUILD.yml','WLG-RE-SS-01-BUILD.yml'):
     mapped=set(re.findall(r'^      ([A-Z][A-Z0-9_]*): \$\{\{ secrets\.',text,re.M))
     assert mapped and mapped <= declared, (name,mapped-declared)
     assert 'OPENWRT_DROPBEAR_AUTHORIZED_KEYS' in mapped
+    assert 'COMMANDCODE_API_KEY' not in mapped, 'WLG must not inject provider credentials'
     assert not any(v.startswith(('CPE_','FIRMWARE_CD_')) for v in mapped)
     assert 'WRT_BUILD_ONLY: true' in text
 assert 'FIRMWARE_CD_SSH_PRIVATE_KEY' not in core
