@@ -29,3 +29,8 @@ the boundary test checks WLG explicit secret allowlists and build-only behavior.
 The old wrtbak proxy-patch test was not part of the main snapshot and referenced
 a patch that this branch does not install; it is removed rather than injecting
 an unrelated backup transport change.
+
+The follow-up CI run exposed stale historical-SHA assertions in the shared-tool
+and CommandCode role-link tests after importing the current role card. These
+are now aligned with the same main snapshot. The final 118-script local scan
+completed; its sole reported role-link failure passed after that correction.
