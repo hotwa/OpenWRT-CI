@@ -33,21 +33,3 @@ case "${DATA_RUNTIME_STATE:-}:${DATA_RUNTIME_ROOT:-}" in
 		unset PNPM_HOME PNPM_STORE_DIR NPM_CONFIG_CACHE npm_config_cache NODE_COMPILE_CACHE MAGIC_CONTEXT_STORAGE_DIR
 		;;
 esac
-
-# The Pi executable lives in an immutable signed generation. Keep its familiar
-# update command useful in interactive shells without writing into that tree.
-# Both forms update the complete tested Pi + extensions generation together.
-pi() {
-	if [ "${1:-}" = update ]; then
-		shift
-		case "${1:-}" in
-			''|--extensions|--extension)
-				[ "$#" -le 1 ] || { printf 'Unsupported Pi update arguments.\n' >&2; return 2; }
-				printf 'Checking signed Pi and extension runtime generation...\n' >&2
-				"${PI_RUNTIME_UPDATE_BIN:-/usr/sbin/agent-runtime-auto-upgrade}"
-				return $?
-				;;
-		esac
-	fi
-	command pi "$@"
-}

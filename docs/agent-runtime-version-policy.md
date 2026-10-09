@@ -79,7 +79,8 @@ CommandCode 的 CLI 自更新通过交互 shell 的 `COMMANDCODE_SKIP_UPDATES=1`
 npm/pnpm 全局写入应明确失败，不能修改 manifest 对应的签名文件。用户软件更新只能
 经签名 release、完整 generation 和 Runtime Manager 原子切换交付。
 
-交互 shell 中的 `pi update`、`pi update --extensions`（兼容单数
+独立的 `/etc/profile.d/25-pi-signed-update.sh` 也适用于升级时保留了旧
+`20-node-agent.sh` 的设备。交互 shell 中的 `pi update`、`pi update --extensions`（兼容单数
 `--extension`）转到 `/usr/sbin/agent-runtime-auto-upgrade`。这会先检查签名
 release 与活跃 Agent 任务，再决定是否切换完整 generation；它不会对
 `/data/node` 或只读 `/opt/node` 执行 npm 原地写入。该命令遵守

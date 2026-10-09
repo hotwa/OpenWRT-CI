@@ -886,6 +886,7 @@ jobs:
             cp -f ./files/etc/openwrt-ci/firmware-commit ./wrt/files/etc/openwrt-ci/firmware-commit
           fi
           cp -f ./files/etc/profile.d/99-data-runtime.sh ./wrt/files/etc/profile.d/99-data-runtime.sh
+          cp -f ./files/etc/profile.d/25-pi-signed-update.sh ./wrt/files/etc/profile.d/25-pi-signed-update.sh
           cp -f ./files/etc/rclone-data-backup/include.conf ./wrt/files/etc/rclone-data-backup/include.conf
           cp -f ./files/etc/uci-defaults/94-zram-swap-defaults ./wrt/files/etc/uci-defaults/94-zram-swap-defaults
           cp -f ./files/etc/uci-defaults/98-nikki-geodata-url-defaults ./wrt/files/etc/uci-defaults/98-nikki-geodata-url-defaults

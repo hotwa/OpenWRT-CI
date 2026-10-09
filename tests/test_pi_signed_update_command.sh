@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-profile="$root/files/etc/profile.d/20-node-agent.sh"
+profile="$root/files/etc/profile.d/25-pi-signed-update.sh"
 sh -n "$profile"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
