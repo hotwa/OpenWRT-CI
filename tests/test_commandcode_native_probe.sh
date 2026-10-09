@@ -30,6 +30,8 @@ print('CommandCode manifest-aware native probe: 7 fixture cases passed')
 # A repair branch must exit before channel downloads or publication decisions.
 workflow=(script.parent.parent/'.github/workflows/Agent-Runtime-Bump.yml').read_text()
 assert "VERIFY_ONLY: ${{ github.ref != 'refs/heads/main' }}" in workflow
+signing=workflow.split('      - name: Require signing material for a publishable run\n',1)[1].split('\n      - name:',1)[0]
+assert "if: inputs.dry_run != true && github.ref == 'refs/heads/main'" in signing
 step=workflow.split('      - name: Compare verified latest candidate with stable channel\n',1)[1]
 body=textwrap.dedent(step.split('        run: |\n',1)[1].split('\n      - name:',1)[0])
 body=body.replace('${{ inputs.force_release }}','true')

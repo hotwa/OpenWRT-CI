@@ -64,7 +64,7 @@ jobs:
           docker run --rm --platform linux/arm64 alpine:3.20 uname -m | grep -qx aarch64
 
       - name: Require signing material for a publishable run
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && github.ref == 'refs/heads/main'
         env:
           AGENT_RUNTIME_USIGN_SECRET_KEY: ${{ secrets.AGENT_RUNTIME_USIGN_SECRET_KEY }}
         run: |
