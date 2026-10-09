@@ -14,6 +14,11 @@ sequence and publishes only when the verified candidate differs or the channel
 is incomplete. `force_release=true` remains available for an intentional
 republish even when the candidate is byte-for-byte equivalent.
 
+Dispatches on a branch other than `main` build and probe both complete musl
+generations but never advance the release sequence, commit inputs, sign or
+publish the stable channel. This provides a safe CI gate for runtime repair PRs;
+`force_release` cannot override the branch boundary.
+
 The release is an all-or-nothing stack. A router must never run `npm install
 latest`, `pnpm update`, or CLI self-update from the Runtime Manager. Registry
 resolution belongs only to the CI staging directory; the installed generation

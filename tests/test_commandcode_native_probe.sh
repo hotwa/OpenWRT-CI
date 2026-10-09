@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 python3 - "$ROOT" <<'PY'
-import json, pathlib, subprocess, sys, tempfile
+import json, os, pathlib, subprocess, sys, tempfile, textwrap
 script=pathlib.Path(sys.argv[1])/'Scripts/verify_commandcode_native.js'
 with tempfile.TemporaryDirectory() as td:
     prefix=pathlib.Path(td)
@@ -25,4 +25,20 @@ with tempfile.TemporaryDirectory() as td:
     run(False);write();run(False) # Installed but undeclared broken backend also fails.
     manifest.unlink();run(False)
 print('CommandCode manifest-aware native probe: 7 fixture cases passed')
+
+# Execute the workflow's actual shell guard with force_release enabled.
+# A repair branch must exit before channel downloads or publication decisions.
+workflow=(script.parent.parent/'.github/workflows/Agent-Runtime-Bump.yml').read_text()
+assert "VERIFY_ONLY: ${{ github.ref != 'refs/heads/main' }}" in workflow
+step=workflow.split('      - name: Compare verified latest candidate with stable channel\n',1)[1]
+body=textwrap.dedent(step.split('        run: |\n',1)[1].split('\n      - name:',1)[0])
+body=body.replace('${{ inputs.force_release }}','true')
+with tempfile.TemporaryDirectory() as td:
+    output=pathlib.Path(td)/'output'
+    env=dict(os.environ,VERIFY_ONLY='true',DRY_RUN='false',GITHUB_OUTPUT=str(output))
+    result=subprocess.run(['bash','-eu','-c',body],env=env,capture_output=True,text=True)
+    assert result.returncode==0, result.stdout+result.stderr
+    assert output.read_text()=='changed=false\n'
+    assert 'only main may publish' in result.stdout
+print('Runtime branch validation blocks forced stable publication')
 PY

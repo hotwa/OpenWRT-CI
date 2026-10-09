@@ -33,6 +33,7 @@ jobs:
     timeout-minutes: 100
     env:
       DRY_RUN: ${{ inputs.dry_run }}
+      VERIFY_ONLY: ${{ github.ref != 'refs/heads/main' }}
       GITHUB_TOKEN: ${{ github.token }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -144,6 +145,11 @@ jobs:
         id: changes
         run: |
           set -euo pipefail
+          if [ "$VERIFY_ONLY" = "true" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Branch validation completed; only main may publish the stable runtime channel.'
+            exit 0
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             echo 'Dry run reports source-controlled updates only; it does not construct a registry candidate.'
