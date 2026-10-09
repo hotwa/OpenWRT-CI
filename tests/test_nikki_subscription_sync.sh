@@ -179,7 +179,22 @@ PATH="$BIN_DIR:$PATH" \
 grep -Fxq 'nikki.subscription.url=<redacted>' "$UCI_SET_LOG"
 grep -Fxq 'nikki.subscription.prefer=local' "$UCI_SET_LOG"
 grep -Fxq 'nikki.config.profile=subscription:subscription' "$UCI_SET_LOG"
-grep -Fxq 'nikki.config.enabled=0' "$UCI_SET_LOG"
+if grep -q '^nikki.config.enabled=' "$UCI_SET_LOG"; then
+  echo 'bootstrap changed retained Nikki enable intent' >&2
+  exit 1
+fi
+# The private ROM bootstrap must also preserve an enabled retained profile.
+: >"$UCI_SET_LOG"
+PATH="$BIN_DIR:$PATH" UCI_NIKKI_ENABLED=1 \
+  NIKKI_SUBSCRIPTION_NIKKI_CONFIG="$BOOTSTRAP_NIKKI_CONFIG" \
+  NIKKI_SUBSCRIPTION_SYNC_INIT="$BOOTSTRAP_SYNC_INIT" \
+  UCI_SET_LOG="$UCI_SET_LOG" \
+  NIKKI_BOOTSTRAP_SYNC_LOG="$NIKKI_BOOTSTRAP_SYNC_LOG" \
+  sh "$DEFAULTS"
+if grep -q '^nikki.config.enabled=' "$UCI_SET_LOG"; then
+  echo 'bootstrap disabled retained enabled Nikki' >&2
+  exit 1
+fi
 grep -Fxq nikki "$UCI_COMMIT_LOG"
 grep -Fxq enable "$NIKKI_BOOTSTRAP_SYNC_LOG"
 grep -Fxq start "$NIKKI_BOOTSTRAP_SYNC_LOG"

@@ -24,7 +24,10 @@ url="\$(printf '%s' '$URL_B64' | base64 -d)"
 uci set "nikki.subscription.url=\$url"
 uci set 'nikki.subscription.prefer=local'
 uci set 'nikki.config.profile=subscription:subscription'
-uci set 'nikki.config.enabled=0'
+# Preserve retained enable intent when a subscription refresh fails at boot.
+if [ -z "\$(uci -q get nikki.config.enabled 2>/dev/null || true)" ]; then
+  uci set 'nikki.config.enabled=0'
+fi
 uci commit nikki
 sync_init="\${NIKKI_SUBSCRIPTION_SYNC_INIT:-/etc/init.d/nikki-subscription-sync}"
 [ -x "\$sync_init" ] && "\$sync_init" enable
