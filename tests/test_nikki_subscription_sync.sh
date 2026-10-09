@@ -33,7 +33,7 @@ fi
 grep -Fq 'flock -n 9' "$SYNC"
 grep -Fq 'ip route show table main default' "$SYNC"
 grep -Fq 'nikki.config.profile' "$SYNC"
-grep -Fq 'subscription content unchanged; Nikki left running' "$SYNC"
+grep -Fq 'subscription content unchanged; Nikki core verified' "$SYNC"
 grep -Fq 'service nikki update_subscription' "$SYNC"
 grep -Fq 'nikki.config.enabled=' "$SYNC"
 grep -Fq 'NIKKI_SUBSCRIPTION_NIKKI_INIT' "$SYNC"
@@ -142,6 +142,15 @@ EOF
 cat >"$BIN_DIR/nikki-init" <<'EOF'
 #!/bin/sh
 printf '%s\n' "${1:-}" >>"${NIKKI_INIT_LOG:?}"
+[ "${MOCK_INIT_START_CORE:-0}" != 1 ] || : >"${MOCK_CORE_MARKER:?}"
+EOF
+cat >"$BIN_DIR/pgrep" <<'EOF'
+#!/bin/sh
+[ -e "${MOCK_CORE_MARKER:?}" ]
+EOF
+cat >"$BIN_DIR/sleep" <<'EOF'
+#!/bin/sh
+exit 0
 EOF
 chmod 0755 "$BIN_DIR"/*
 
@@ -290,7 +299,10 @@ grep -Fxq 'last_result=unconfigured' "$SYNC_STATUS"
 
 printf '%s\n' 'same' >"$SYNC_SUBSCRIPTION_FILE"
 : >"$SYNC_INIT_LOG"
+MOCK_CORE_MARKER="$WORK_DIR/core"
+: >"$MOCK_CORE_MARKER"
 PATH="$BIN_DIR:$PATH" \
+  MOCK_CORE_MARKER="$MOCK_CORE_MARKER" \
   UCI_NIKKI_PROFILE='subscription:subscription' \
   UCI_NIKKI_ENABLED=1 \
   UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=do-not-leak' \
@@ -306,6 +318,40 @@ PATH="$BIN_DIR:$PATH" \
   "$SYNC"
 grep -Fxq 'last_result=unchanged' "$SYNC_STATUS"
 [ ! -s "$SYNC_INIT_LOG" ] || { echo 'unchanged subscription restarted Nikki'; exit 1; }
+
+# An unchanged subscription must still repair a core that went missing after
+# boot or a prior update. A failed recovery is recorded, not reported as good.
+rm -f "$MOCK_CORE_MARKER"
+: >"$SYNC_INIT_LOG"
+PATH="$BIN_DIR:$PATH" \
+  MOCK_CORE_MARKER="$MOCK_CORE_MARKER" MOCK_INIT_START_CORE=1 \
+  UCI_NIKKI_ENABLED=1 UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=do-not-leak' \
+  NIKKI_SUBSCRIPTION_NIKKI_CONFIG="$SYNC_CONFIG" \
+  NIKKI_SUBSCRIPTION_NIKKI_INIT="$BIN_DIR/nikki-init" \
+  NIKKI_SUBSCRIPTION_STATUS_FILE="$SYNC_STATUS" \
+  NIKKI_SUBSCRIPTION_LOCK_FILE="$SYNC_LOCK_FILE" \
+  NIKKI_SUBSCRIPTION_FILE="$SYNC_SUBSCRIPTION_FILE" \
+  NIKKI_SERVICE_CONTENT='same' NIKKI_INIT_LOG="$SYNC_INIT_LOG" NIKKI_SERVICE_LOG="$SYNC_SERVICE_LOG" \
+  "$SYNC"
+grep -Fxq start "$SYNC_INIT_LOG"
+[ -e "$MOCK_CORE_MARKER" ]
+grep -Fxq 'last_result=unchanged' "$SYNC_STATUS"
+
+rm -f "$MOCK_CORE_MARKER"
+if PATH="$BIN_DIR:$PATH" \
+  MOCK_CORE_MARKER="$MOCK_CORE_MARKER" MOCK_INIT_START_CORE=0 \
+  UCI_NIKKI_ENABLED=1 UCI_SUBSCRIPTION_URL='https://secret.example/subscription?token=do-not-leak' \
+  NIKKI_SUBSCRIPTION_NIKKI_CONFIG="$SYNC_CONFIG" \
+  NIKKI_SUBSCRIPTION_NIKKI_INIT="$BIN_DIR/nikki-init" \
+  NIKKI_SUBSCRIPTION_STATUS_FILE="$SYNC_STATUS" \
+  NIKKI_SUBSCRIPTION_LOCK_FILE="$SYNC_LOCK_FILE" \
+  NIKKI_SUBSCRIPTION_FILE="$SYNC_SUBSCRIPTION_FILE" \
+  NIKKI_SERVICE_CONTENT='same' NIKKI_INIT_LOG="$SYNC_INIT_LOG" NIKKI_SERVICE_LOG="$SYNC_SERVICE_LOG" \
+  "$SYNC"; then
+  echo 'absent core unexpectedly passed subscription verification' >&2
+  exit 1
+fi
+grep -Fxq 'last_result=core-unavailable' "$SYNC_STATUS"
 
 PATH="$BIN_DIR:$PATH" \
   WAN_UP=0 \

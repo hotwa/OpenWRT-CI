@@ -72,6 +72,30 @@ content_hash() {
   return 0
 }
 
+core_running() {
+  pgrep -x "${NIKKI_SUBSCRIPTION_CORE:-mihomo}" >/dev/null 2>&1
+}
+
+ensure_core_after_update() {
+  [ "$enabled_before" -eq 1 ] || return 0
+  attempt=0
+  while [ "$attempt" -lt 5 ]; do
+    core_running && return 0
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  log 'Nikki was enabled but its core is absent after subscription update; retrying start'
+  timeout 120 "$NIKKI_INIT" start >/dev/null 2>&1 || true
+  attempt=0
+  while [ "$attempt" -lt 5 ]; do
+    core_running && return 0
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  log 'Nikki core remains absent after subscription update'
+  return 1
+}
+
 acquire_lock() {
   parent="${LOCK_FILE%/*}"
   [ "$parent" != "$LOCK_FILE" ] || return 1
@@ -145,6 +169,7 @@ if service nikki update_subscription "$SECTION"; then
   update_success="$(uci -q get "nikki.$SECTION.success" 2>/dev/null || true)"
   after_hash="$(content_hash "$SUBSCRIPTION_FILE")"
   if [ "$update_success" != 1 ] || [ -z "$after_hash" ]; then
+    ensure_core_after_update || true
     write_status failed "$attempt_epoch" "$last_success_epoch" 1 || true
     log 'subscription update was not confirmed; preserving existing Nikki service state'
     exit 1
@@ -153,14 +178,23 @@ if service nikki update_subscription "$SECTION"; then
   uci commit nikki
   success_epoch="$(now_epoch)"
   if [ "$enabled_before" -eq 1 ] && [ -n "$before_hash" ] && [ "$before_hash" = "$after_hash" ]; then
+    if ! ensure_core_after_update; then
+      write_status core-unavailable "$attempt_epoch" "$last_success_epoch" 1 || true
+      exit 1
+    fi
     write_status unchanged "$attempt_epoch" "$success_epoch" 1 || true
-    log 'subscription content unchanged; Nikki left running'
+    log 'subscription content unchanged; Nikki core verified'
   else
-    "$NIKKI_INIT" restart
+    timeout 120 "$NIKKI_INIT" restart >/dev/null 2>&1 || true
+    if ! ensure_core_after_update; then
+      write_status core-unavailable "$attempt_epoch" "$last_success_epoch" 1 || true
+      exit 1
+    fi
     write_status success "$attempt_epoch" "$success_epoch" 1 || true
     log 'subscription updated and Nikki restarted'
   fi
 else
+  ensure_core_after_update || true
   write_status failed "$attempt_epoch" "$last_success_epoch" 1 || true
   log 'subscription update failed; preserving existing profile and service state'
   exit 1
