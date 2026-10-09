@@ -443,6 +443,7 @@ jobs:
             esac
           done
           python3 -m unittest tests.test_nikki_dns_overlay_patch
+          python3 -m unittest tests.test_nikki_cron_self_restart_patch
           python3 -m unittest tests.test_nikki_router_selector_guard
 
       - name: Compute Build Cache Identity
@@ -816,6 +817,7 @@ jobs:
               exit 1
             }
             python3 ./Scripts/patch_nikki_dns_overlay.py "$nikki_package_init"
+            python3 ./Scripts/patch_nikki_cron_self_restart.py "$nikki_package_init"
           else
             echo "Nikki package init is absent for this target; skipping its startup-order assertion"
           fi
@@ -915,6 +917,8 @@ jobs:
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
           cp -f ./files/usr/sbin/nikki-boot-guard ./wrt/files/usr/sbin/nikki-boot-guard
+          cp -f ./files/usr/sbin/multica-pi-cli ./wrt/files/usr/sbin/multica-pi-cli
+          cp -f ./files/usr/sbin/multica-opencode-cli ./wrt/files/usr/sbin/multica-opencode-cli
           cp -f ./files/usr/sbin/openwrt-ci-health ./wrt/files/usr/sbin/openwrt-ci-health
           cp -f ./files/usr/sbin/openwrt-upgrade-space ./wrt/files/usr/sbin/openwrt-upgrade-space
           chmod 0755 \
@@ -970,6 +974,8 @@ jobs:
             ./wrt/files/usr/sbin/multica-runtime-guard \
             ./wrt/files/usr/sbin/nikki-dns-failopen \
             ./wrt/files/usr/sbin/nikki-boot-guard \
+            ./wrt/files/usr/sbin/multica-pi-cli \
+            ./wrt/files/usr/sbin/multica-opencode-cli \
             ./wrt/files/usr/sbin/openwrt-ci-health \
             ./wrt/files/usr/sbin/openwrt-upgrade-space
           ln -sf ../init.d/upgrade-tmp-capacity ./wrt/files/etc/rc.d/S08upgrade-tmp-capacity

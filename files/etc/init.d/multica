@@ -326,6 +326,8 @@ EOF
 		MULTICA_WORKSPACES_ROOT="$workspaces_root" \
 		MULTICA_WORKSPACE_ID="$workspace_id" \
 		MULTICA_DAEMON_MAX_CONCURRENT_TASKS="$max_tasks" \
+		MULTICA_PI_PATH=/usr/sbin/multica-pi-cli \
+		MULTICA_OPENCODE_PATH=/usr/sbin/multica-opencode-cli \
 		MULTICA_DAEMON_POLL_INTERVAL="$poll_interval" \
 		MULTICA_DAEMON_HEARTBEAT_INTERVAL="$heartbeat_interval"
 	# DNS and the default route can legitimately become ready after this service

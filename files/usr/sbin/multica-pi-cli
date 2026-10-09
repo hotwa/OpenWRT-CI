@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fast, truthful --version for Multica's 10-second runtime registration probe.
+# Every other invocation runs the unchanged signed Pi CLI.
+real="${MULTICA_PI_REAL_BIN:-/data/node/bin/pi}"
+[ -x "$real" ] || real=/opt/node/bin/pi
+if [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -x "$real" ]; then
+	manifest="${MULTICA_PI_MANIFEST:-/data/agent-runtime/current/manifest.json}"
+	if [ -r "$manifest" ] && command -v jsonfilter >/dev/null 2>&1; then
+		version="$(jsonfilter -i "$manifest" -e '@.components["@earendil-works/pi-coding-agent"]' 2>/dev/null || true)"
+		if printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+.-][0-9A-Za-z.-]+)?$'; then
+			printf '%s\n' "$version"
+			exit 0
+		fi
+	fi
+fi
+exec "$real" "$@"

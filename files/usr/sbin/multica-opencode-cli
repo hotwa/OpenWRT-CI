@@ -1,0 +1,15 @@
+#!/bin/sh
+# Keep OpenCode's expensive Bun startup out of Multica's version probe.
+# Its managed current link points at a versioned immutable directory.
+real="${MULTICA_OPENCODE_REAL_BIN:-/usr/bin/opencode}"
+if [ "$#" -eq 1 ] && [ "$1" = --version ] && [ -x "$real" ]; then
+	current="${MULTICA_OPENCODE_CURRENT:-/data/opt/opencode/current}"
+	if [ -x "$current/bin/opencode" ]; then
+		version="$(basename "$(readlink -f "$current" 2>/dev/null || true)")"
+		if printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+.-][0-9A-Za-z.-]+)?$'; then
+			printf '%s\n' "$version"
+			exit 0
+		fi
+	fi
+fi
+exec "$real" "$@"
