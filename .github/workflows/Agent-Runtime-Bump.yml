@@ -33,6 +33,7 @@ jobs:
     timeout-minutes: 100
     env:
       DRY_RUN: ${{ inputs.dry_run }}
+      VERIFY_ONLY: ${{ github.ref != 'refs/heads/main' }}
       GITHUB_TOKEN: ${{ github.token }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -63,7 +64,7 @@ jobs:
           docker run --rm --platform linux/arm64 alpine:3.20 uname -m | grep -qx aarch64
 
       - name: Require signing material for a publishable run
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && github.ref == 'refs/heads/main'
         env:
           AGENT_RUNTIME_USIGN_SECRET_KEY: ${{ secrets.AGENT_RUNTIME_USIGN_SECRET_KEY }}
         run: |
@@ -118,6 +119,7 @@ jobs:
             docker run --rm --platform "$platform" \
               -v "$RUNNER_TEMP/generation/$arch:/generation:ro" \
               -v "$GITHUB_WORKSPACE/Scripts/verify_pi_extensions.js:/verify_pi_extensions.js:ro" \
+              -v "$GITHUB_WORKSPACE/Scripts/verify_commandcode_native.js:/verify_commandcode_native.js:ro" \
               -v "$GITHUB_WORKSPACE/Scripts/verify_pi_extension_conflicts.js:/verify_pi_extension_conflicts.js:ro" \
               -v "$GITHUB_WORKSPACE/files/etc/pi/agent/settings.json:/pi-settings.json:ro" \
               alpine:3.20 /bin/sh -ec '
@@ -135,8 +137,7 @@ jobs:
               test -s /generation/node/lib/node_modules/command-code/dist/index.mjs
               node /verify_pi_extensions.js --directory /generation/node
               node /verify_pi_extension_conflicts.js --directory /generation/node --settings /pi-settings.json
-              NODE_PATH=/generation/node/lib/node_modules node -e \
-                "require(\"@napi-rs/keyring\"); require(\"zigpty\");"
+              node /verify_commandcode_native.js /generation/node
             '
           done
 
@@ -144,6 +145,11 @@ jobs:
         id: changes
         run: |
           set -euo pipefail
+          if [ "$VERIFY_ONLY" = "true" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Branch validation completed; only main may publish the stable runtime channel.'
+            exit 0
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             echo 'Dry run reports source-controlled updates only; it does not construct a registry candidate.'

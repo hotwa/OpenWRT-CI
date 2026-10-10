@@ -120,3 +120,11 @@ Pi 扩展在每次候选固件/运行时构建时从 registry 解析 latest。�
 peer 对齐结果和 lock 一起写入 generation 并做双架构 Jiti import 验收；失败不会进入
 固件或已签名通道。手动 dispatch 可用 `dry_run` 仅查看 source-controlled 更新，或用
 `force_release` 重建并验证当前 latest catalog 的签名通道。
+
+### CommandCode 原生后端探测
+
+2026-10-08 的 generation 中 CommandCode 1.79.1 已不再声明历史
+`@napi-rs/keyring` / `zigpty` 依赖。CI 不再无条件要求这些旧模块存在，
+改由 `verify_commandcode_native.js` 从本次 CommandCode package.json 和实际
+安装树决定是否探测，并从包自身解析嵌套依赖。声明了依赖却缺失、或已安装
+模块加载失败仍阻止发布。CLI、Pi 扩展、musl/架构、签名和双架构闸门保留。

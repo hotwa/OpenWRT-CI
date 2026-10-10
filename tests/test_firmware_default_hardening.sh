@@ -36,15 +36,14 @@ if grep -Eq '127\.0\.0\.1:9090|\[::\]:9090' "$NIKKI"; then
 	fail "nikki script hardcodes an address instead of deriving the LAN IP"
 fi
 
-# --- 3. Agent-Runtime-Bump musl probe must not nest single quotes inside the
-# outer sh -ec '...' literal: the shell strips them and node receives an
-# unquoted require() argument (SyntaxError). The fix uses \" escapes.
+# --- 3. Keep native probes in an external script: legacy backends may be
+# retired, and inline require() expressions can break the outer sh quote.
 BUMP="$ROOT_DIR/.github/workflows/Agent-Runtime-Bump.yml"
 [ -f "$BUMP" ] || fail "missing $BUMP"
-grep -Fq 'require(\"@napi-rs/keyring\")' "$BUMP" || fail "musl probe still nests single quotes around @napi-rs/keyring"
-grep -Fq 'require(\"zigpty\")' "$BUMP" || fail "musl probe still nests single quotes around zigpty"
-if grep -Fq "require('@napi-rs/keyring')" "$BUMP"; then
-	fail "musl probe reintroduced single-quote nesting"
+grep -Fq 'node /verify_commandcode_native.js /generation/node' "$BUMP" || fail "missing manifest-aware native probe"
+grep -Fq '$GITHUB_WORKSPACE/Scripts/verify_commandcode_native.js:/verify_commandcode_native.js:ro' "$BUMP" || fail "native probe script is not mounted"
+if grep -Eq 'require\(.*(@napi-rs/keyring|zigpty)' "$BUMP"; then
+	fail "musl probe reintroduced unconditional inline legacy requires"
 fi
 
 echo "firmware default hardening tests passed"
