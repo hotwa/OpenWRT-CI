@@ -443,6 +443,7 @@ jobs:
             esac
           done
           python3 -m unittest tests.test_nikki_dns_overlay_patch
+          python3 -m unittest tests.test_nikki_cron_self_restart_patch
           python3 -m unittest tests.test_nikki_router_selector_guard
 
       - name: Compute Build Cache Identity
@@ -816,6 +817,7 @@ jobs:
               exit 1
             }
             python3 ./Scripts/patch_nikki_dns_overlay.py "$nikki_package_init"
+            python3 ./Scripts/patch_nikki_cron_self_restart.py "$nikki_package_init"
           else
             echo "Nikki package init is absent for this target; skipping its startup-order assertion"
           fi
@@ -851,6 +853,7 @@ jobs:
           cp -f ./files/etc/init.d/emmc-data-provision ./wrt/files/etc/init.d/emmc-data-provision
           cp -f ./files/etc/init.d/rclone-data-backup ./wrt/files/etc/init.d/rclone-data-backup
           cp -f ./files/etc/init.d/nikki-dns-failopen ./wrt/files/etc/init.d/nikki-dns-failopen
+          cp -f ./files/etc/init.d/nikki-boot-guard ./wrt/files/etc/init.d/nikki-boot-guard
           cp -f ./files/etc/init.d/upgrade-tmp-capacity ./wrt/files/etc/init.d/upgrade-tmp-capacity
           cp -f ./files/etc/multica/openwrt-agent.md ./wrt/files/etc/multica/openwrt-agent.md
           cp -f ./files/etc/uci-defaults/93-logd-ring-size ./wrt/files/etc/uci-defaults/93-logd-ring-size
@@ -875,6 +878,7 @@ jobs:
             chmod 0755 ./wrt/files/usr/sbin/gecoosac-auto ./wrt/files/usr/libexec/gecoosac-auto.js ./wrt/files/etc/init.d/gecoosac-auto ./wrt/files/etc/uci-defaults/99-gecoosac-auto
           fi
           cp -f ./files/etc/uci-defaults/99-enable-nikki-dns-failopen ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen
+          cp -f ./files/etc/uci-defaults/99-enable-nikki-boot-guard ./wrt/files/etc/uci-defaults/99-enable-nikki-boot-guard
           mkdir -p ./wrt/files/etc/agent-tools
           cp -f ./files/etc/agent-tools/README.md ./wrt/files/etc/agent-tools/README.md
           mkdir -p ./wrt/files/etc/openwrt-ci
@@ -884,6 +888,7 @@ jobs:
             cp -f ./files/etc/openwrt-ci/firmware-commit ./wrt/files/etc/openwrt-ci/firmware-commit
           fi
           cp -f ./files/etc/profile.d/99-data-runtime.sh ./wrt/files/etc/profile.d/99-data-runtime.sh
+          cp -f ./files/etc/profile.d/25-pi-signed-update.sh ./wrt/files/etc/profile.d/25-pi-signed-update.sh
           cp -f ./files/etc/rclone-data-backup/include.conf ./wrt/files/etc/rclone-data-backup/include.conf
           cp -f ./files/etc/uci-defaults/94-zram-swap-defaults ./wrt/files/etc/uci-defaults/94-zram-swap-defaults
           cp -f ./files/etc/uci-defaults/98-nikki-geodata-url-defaults ./wrt/files/etc/uci-defaults/98-nikki-geodata-url-defaults
@@ -911,6 +916,9 @@ jobs:
           cp -f ./files/usr/sbin/multica-log-hygiene ./wrt/files/usr/sbin/multica-log-hygiene
           cp -f ./files/usr/sbin/multica-runtime-guard ./wrt/files/usr/sbin/multica-runtime-guard
           cp -f ./files/usr/sbin/nikki-dns-failopen ./wrt/files/usr/sbin/nikki-dns-failopen
+          cp -f ./files/usr/sbin/nikki-boot-guard ./wrt/files/usr/sbin/nikki-boot-guard
+          cp -f ./files/usr/sbin/multica-pi-cli ./wrt/files/usr/sbin/multica-pi-cli
+          cp -f ./files/usr/sbin/multica-opencode-cli ./wrt/files/usr/sbin/multica-opencode-cli
           cp -f ./files/usr/sbin/openwrt-ci-health ./wrt/files/usr/sbin/openwrt-ci-health
           cp -f ./files/usr/sbin/openwrt-upgrade-space ./wrt/files/usr/sbin/openwrt-upgrade-space
           chmod 0755 \
@@ -922,6 +930,7 @@ jobs:
             ./wrt/files/etc/init.d/emmc-data-provision \
             ./wrt/files/etc/init.d/rclone-data-backup \
             ./wrt/files/etc/init.d/nikki-dns-failopen \
+            ./wrt/files/etc/init.d/nikki-boot-guard \
             ./wrt/files/etc/init.d/pi-dhcp-sync \
             ./wrt/files/etc/hotplug.d/dhcp/95-pi-dhcp-sync \
             ./wrt/files/etc/uci-defaults/98-pi-service-dns \
@@ -945,6 +954,7 @@ jobs:
             ./wrt/files/etc/uci-defaults/99-auto-mount-data \
             ./wrt/files/etc/uci-defaults/99-enable-data-runtime \
             ./wrt/files/etc/uci-defaults/99-enable-nikki-dns-failopen \
+            ./wrt/files/etc/uci-defaults/99-enable-nikki-boot-guard \
             ./wrt/files/usr/sbin/multica-device-profile \
             ./wrt/files/usr/sbin/emmc-data-provision \
             ./wrt/files/usr/sbin/auto-mount-data \
@@ -963,6 +973,9 @@ jobs:
             ./wrt/files/usr/sbin/multica-log-hygiene \
             ./wrt/files/usr/sbin/multica-runtime-guard \
             ./wrt/files/usr/sbin/nikki-dns-failopen \
+            ./wrt/files/usr/sbin/nikki-boot-guard \
+            ./wrt/files/usr/sbin/multica-pi-cli \
+            ./wrt/files/usr/sbin/multica-opencode-cli \
             ./wrt/files/usr/sbin/openwrt-ci-health \
             ./wrt/files/usr/sbin/openwrt-upgrade-space
           ln -sf ../init.d/upgrade-tmp-capacity ./wrt/files/etc/rc.d/S08upgrade-tmp-capacity

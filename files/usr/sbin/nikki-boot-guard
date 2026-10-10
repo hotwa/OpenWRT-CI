@@ -1,0 +1,36 @@
+#!/bin/sh
+# One bounded post-boot retry when Nikki is enabled but its core did not start.
+set -eu
+
+INIT="${NIKKI_BOOT_GUARD_INIT:-/etc/init.d/nikki}"
+LOCK="${NIKKI_BOOT_GUARD_LOCK:-/var/run/nikki-boot-guard.lock}"
+SYNC_LOCK="${NIKKI_BOOT_GUARD_SYNC_LOCK:-/var/run/nikki-subscription-sync.lock}"
+CORE="${NIKKI_BOOT_GUARD_CORE:-mihomo}"
+
+case "$(uci -q get nikki.config.enabled 2>/dev/null || true)" in
+	1|true|yes|on) ;;
+	*) exit 0 ;;
+esac
+
+# This one-shot check runs after Nikki's normal init and network setup. A
+# missing WAN route is a deferred check, not a reason to start a proxy with an
+# incomplete network.
+ip route show table main default 2>/dev/null | grep -q '^default ' || exit 0
+pgrep -x "$CORE" >/dev/null 2>&1 && exit 0
+[ -x "$INIT" ] || exit 1
+
+exec 9>"$LOCK"
+flock -n 9 || exit 0
+exec 8>"$SYNC_LOCK"
+flock -n 8 || exit 0
+pgrep -x "$CORE" >/dev/null 2>&1 && exit 0
+
+logger -t nikki-boot-guard 'Nikki enabled but core absent after boot; retrying start'
+timeout 120 "$INIT" start >/dev/null 2>&1 || true
+sleep 5
+if pgrep -x "$CORE" >/dev/null 2>&1; then
+	logger -t nikki-boot-guard 'Nikki core recovered after boot'
+	exit 0
+fi
+logger -t nikki-boot-guard 'Nikki core still absent after bounded retry'
+exit 1

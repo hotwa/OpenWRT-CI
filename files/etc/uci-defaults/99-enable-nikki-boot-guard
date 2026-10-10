@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -x /etc/init.d/nikki-boot-guard ] || exit 0
+/etc/init.d/nikki-boot-guard enable >/dev/null 2>&1 || true
+/etc/init.d/nikki-boot-guard start >/dev/null 2>&1 || true
