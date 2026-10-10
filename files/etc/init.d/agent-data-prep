@@ -364,11 +364,47 @@ reconcile_firmware_pi_extension_links() {
 		log_warn "cannot reconcile pi-commandcode-provider"
 }
 
+migrate_stale_overlay_data() {
+	# /data is a mount point. Before it was mounted, agents that created
+	# /data/pi, /data/multica, etc. wrote into /overlay/upper/data (the f2fs
+	# rootfs_data partition, ~656 MB). Once /data mounts, those files are
+	# hidden by the mount but still consume overlay space. On every boot,
+	# after /data is confirmed mounted, copy any such stale content onto
+	# /data and free the overlay space.
+	local stale_dir=/overlay/upper/data
+	[ -d "$stale_dir" ] || return 0
+	[ "$(ls -A "$stale_dir" 2>/dev/null)" ] || return 0
+
+	log_warn "stale agent data found on overlay: $stale_dir — migrating to $DATA_ROOT"
+	local entry
+	for entry in "$stale_dir"/*; do
+		[ -e "$entry" ] || continue
+		local name="${entry##*/}"
+		if [ -d "$DATA_ROOT/$name" ]; then
+			cp -a "$entry/." "$DATA_ROOT/$name/" 2>/dev/null || \
+				log_warn "partial copy: $entry -> $DATA_ROOT/$name"
+		else
+			cp -a "$entry" "$DATA_ROOT/$name" 2>/dev/null || \
+				log_warn "copy failed: $entry -> $DATA_ROOT/$name"
+		fi
+	done
+	local freed
+	freed="$(du -sk "$stale_dir" 2>/dev/null | awk '{print $1}')"
+	rm -rf "$stale_dir"/* "$stale_dir"/.[!.]* 2>/dev/null || true
+	log_info "overlay data migration complete (~${freed} KB freed)"
+}
+
 start() {
 	if ! wait_data_mount; then
 		log_warn "skipped: $DATA_ROOT not mounted within 90s"
 		return 0
 	fi
+
+	# Migrate any stale agent data that was written to the overlay before /data
+	# mounted (e.g. first boot, or a time when /data was unmounted). The f2fs
+	# rootfs_data partition is only ~656 MB; if it fills up, mount_root falls
+	# back to a RAM overlay and ALL UCI config is lost on reboot.
+	migrate_stale_overlay_data
 
 	local directory
 	for directory in \
