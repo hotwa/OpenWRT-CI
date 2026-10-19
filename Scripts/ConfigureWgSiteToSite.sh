@@ -22,6 +22,23 @@ case "$ROLE" in server|client) ;; *) echo "ROLE 必须为 server|client"; exit 1
 
 mkdir -p "$FILES_DIR/etc/wg-site"
 
+# ============================================================
+# 已知上游 feeds 回归修复（编译期处理，不进入固件内容）：
+# ImmortalWRT packages 的 miniupnpd 020-descr-filter-fix.patch 已过时——
+# miniupnp 上游 2.3.11 tarball（2026 重发）已合入等价修复
+# （upnppermissions.c 含 iseol/get_sep/get_range/get_addr_or_mask，
+#   upnppermissions.h 的 read_permission_line 已是 const char *）。
+# 保留该 patch 会在 package/compile 阶段重复打补丁 → Hunk FAILED → 编译必失败
+# （"miniupnpd failed to build (build variant: nftables)"）。
+# 此处删除过时 patch：编译可继续，且安全修复已在上游源码内，功能无损失。
+# 若未来 ImmortalWRT 更新该 patch 使其重新匹配，本段自动失效（文件不存在）。
+WRT_ROOT="$(cd "$FILES_DIR/.." && pwd)"
+if [ -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/020-descr-filter-fix.patch" ]; then
+    rm -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/020-descr-filter-fix.patch"
+    echo "[wg-site] 已移除过时 feeds patch: miniupnpd 020-descr-filter-fix.patch"
+fi
+# ============================================================
+
 cat > "$FILES_DIR/etc/wg-site/site.conf" <<EOF
 # 由 ConfigureWgSiteToSite.sh 生成（CI secrets 注入）；刷机首启由 99-wg-site-init 读取
 ROLE=$ROLE
