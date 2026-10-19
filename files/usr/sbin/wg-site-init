@@ -1,0 +1,139 @@
+#!/bin/sh
+# ============================================================
+# wg-site-init — 首次启动/手动重配 WG site-to-site
+# 固件编译期由 CI 注入 /etc/wg-site/site.conf（含角色/密钥/DDNS 参数）
+# 刷机后 uci-defaults 调用一次；之后可手动重跑：/usr/sbin/wg-site-init
+# 幂等：重复执行安全（重新生成 uci 配置，不破坏 /data/wg 密钥）
+# ============================================================
+TAG="wg-site-init"
+CFG="/etc/wg-site/site.conf"
+LOG="/tmp/wg-site-init.log"
+
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; logger -t "$TAG" "$*"; }
+
+[ -f "$CFG" ] || { log "no $CFG — 跳过（非 WG 站点设备）"; exit 0; }
+. "$CFG"
+
+ROLE="${ROLE:-}"
+[ -n "$ROLE" ] || { log "site.conf 缺少 ROLE"; exit 1; }
+
+WG_IF="${WG_IF:-wg0}"
+WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
+TUN_PREFIX="${TUN_PREFIX:-10.99.0}"
+KEEPALIVE="${KEEPALIVE:-25}"
+TABLE_WG="${TABLE_WG:-60}"
+
+# ---------- 密钥持久化 ----------
+if [ -n "$WG_PRIV_KEY" ] && [ "$WG_PRIV_KEY" != "__GENERATE__" ]; then
+    mkdir -p /data/wg
+    echo "$WG_PRIV_KEY" > /data/wg/wg.key
+    chmod 600 /data/wg/wg.key
+    log "私钥已落盘 /data/wg/wg.key"
+elif [ "$WG_PRIV_KEY" = "__GENERATE__" ] || [ ! -s /data/wg/wg.key ]; then
+    # 无内置密钥 → 首启生成（需配套带外互换流程，见维护手册 §首启引导）
+    mkdir -p /data/wg
+    [ -s /data/wg/wg.key ] || wg genkey > /data/wg/wg.key
+    chmod 600 /data/wg/wg.key
+    log "已生成新私钥 /data/wg/wg.key"
+fi
+
+# ---------- 按角色确定 wg0 本端地址（server=.1/30，client=.2/32，避免两端同 IP） ----------
+case "$ROLE" in
+    server) WG_ADDR="${TUN_PREFIX}.1/30" ;;
+    client) WG_ADDR="${TUN_PREFIX}.2/32" ;;
+    *) log "site.conf ROLE 非法: $ROLE"; exit 1 ;;
+esac
+
+# ---------- uci network：wg0 接口 ----------
+uci -q batch <<EOF
+set network.${WG_IF}=interface
+set network.${WG_IF}.proto='wireguard'
+set network.${WG_IF}.private_key='/data/wg/wg.key'
+set network.${WG_IF}.addresses='${WG_ADDR}'
+set network.${WG_IF}.mtu='1420'
+EOF
+[ "$ROLE" = "server" ] && uci set network.${WG_IF}.listen_port="$WG_LISTEN_PORT"
+
+# ---------- uci network：peer（注意 section 类型 = wireguard_<接口名>） ----------
+uci -q batch <<EOF
+set network.${WG_IF}_peer_remote=wireguard_${WG_IF}
+set network.${WG_IF}_peer_remote.public_key='${WG_PEER_PUB}'
+set network.${WG_IF}_peer_remote.description='site-to-site'
+set network.${WG_IF}_peer_remote.persistent_keepalive='${KEEPALIVE}'
+EOF
+case "$ROLE" in
+    server)
+        # server：等 client 连；allowed_ips 通告 11.x
+        uci set network.${WG_IF}_peer_remote.allowed_ips="${TUN_PREFIX}.0/30,192.168.11.0/24"
+        ;;
+    client)
+        # client：主动连 DDNS 域名；通告 12.x
+        uci set network.${WG_IF}_peer_remote.allowed_ips="${TUN_PREFIX}.0/30,192.168.12.0/24"
+        [ -n "$DDNS_HOST" ] && {
+            uci set network.${WG_IF}_peer_remote.endpoint_host="$DDNS_HOST"
+            uci set network.${WG_IF}_peer_remote.endpoint_port="$WG_LISTEN_PORT"
+        }
+        ;;
+esac
+uci commit network
+log "network.${WG_IF} 配置完成（role=$ROLE）"
+
+# ---------- 策略路由（仅 client 侧需要；幂等） ----------
+if [ "$ROLE" = "client" ]; then
+    ip rule del to 192.168.12.0/24 lookup "$TABLE_WG" 2>/dev/null
+    ip rule del to "${TUN_PREFIX}.0/30" lookup "$TABLE_WG" 2>/dev/null
+    ip rule add to 192.168.12.0/24 lookup "$TABLE_WG" pref 9000
+    ip rule add to "${TUN_PREFIX}.0/30" lookup "$TABLE_WG" pref 9001
+    ip route flush table "$TABLE_WG" 2>/dev/null
+    ip route add 192.168.12.0/24 dev "$WG_IF" table "$TABLE_WG"
+    ip route add "${TUN_PREFIX}.0/30" dev "$WG_IF" table "$TABLE_WG"
+    log "策略路由 table $TABLE_WG 已配置（client）"
+fi
+
+# ---------- 防火墙：放行 WG UDP ----------
+uci -q batch <<EOF
+delete firewall.wg_in
+set firewall.wg_in=rule
+set firewall.wg_in.name='Allow-WG-${WG_IF}'
+set firewall.wg_in.src='wan'
+set firewall.wg_in.proto='udp'
+set firewall.wg_in.dest_port='${WG_LISTEN_PORT}'
+set firewall.wg_in.target='ACCEPT'
+EOF
+uci commit firewall
+/etc/init.d/firewall reload 2>/dev/null
+log "防火墙放行 wan→${WG_LISTEN_PORT}/udp"
+
+# ---------- wg_endpoint_watchdog（动态端点：拨号时刷新 DDNS 域名→WG） ----------
+uci -q batch <<EOF
+set wg_endpoint_watchdog.${WG_IF}=instance
+set wg_endpoint_watchdog.${WG_IF}.enabled='1'
+set wg_endpoint_watchdog.${WG_IF}.interface='${WG_IF}'
+set wg_endpoint_watchdog.${WG_IF}.max_handshake_age='600'
+set wg_endpoint_watchdog.${WG_IF}.boot_delay='60'
+set wg_endpoint_watchdog.${WG_IF}.wan_ifup_delay='20'
+set wg_endpoint_watchdog.${WG_IF}.refresh_ddns_service='ddns-go'
+set wg_endpoint_watchdog.${WG_IF}.endpoint_host_option='network.${WG_IF}_peer_remote.endpoint_host'
+set wg_endpoint_watchdog.${WG_IF}.proxy_bypass='1'
+set wg_endpoint_watchdog.${WG_IF}.proxy_bypass_udp_sport='${WG_LISTEN_PORT}'
+EOF
+uci commit wg_endpoint_watchdog
+/etc/init.d/wg_endpoint_watchdog restart 2>/dev/null
+log "wg_endpoint_watchdog 已启用（动态端点 + nikki 绕过）"
+
+# ---------- ddns-go（基础参数；AccessKey 明细见 /etc/config/ddns-go 由 CI 注入或 WebUI 填） ----------
+uci -q batch <<EOF
+set ddns-go.config.enabled='1'
+set ddns-go.config.port='9876'
+set ddns-go.config.time='300'
+EOF
+uci commit ddns-go
+/etc/init.d/ddns-go restart 2>/dev/null
+log "ddns-go 已启用（port 9876）"
+
+# ---------- 启动 WG ----------
+ifup "$WG_IF" 2>/dev/null
+sleep 2
+wg show "$WG_IF" 2>/dev/null | grep -E "interface|peer|endpoint|latest handshake" | head -8 >> "$LOG"
+log "=== wg-site-init 完成（role=$ROLE） ==="
+exit 0

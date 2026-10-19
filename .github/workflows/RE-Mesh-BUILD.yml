@@ -66,6 +66,10 @@ jobs:
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+      WG_SITE_PRIV: ${{ secrets.WG_SITE_SS01_PRIV }}
+      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_CS02_PEER }}
+      WG_SITE_DDNSGO_AK: ${{ secrets.ALIYUN_DDNS_AK }}
+      WG_SITE_DDNSGO_SK: ${{ secrets.ALIYUN_DDNS_SK }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-RE-SS-01
@@ -90,6 +94,9 @@ jobs:
       CI_NAME: RE-SS-01-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
+      WG_SITE_ROLE: server
+      WG_SITE_U2R_ENABLE: '0'
+      WG_SITE_DDNSGO_DOMAIN: ss0112.jmsu.top
 
   re_cs_02:
     name: RE-CS-02
@@ -112,6 +119,10 @@ jobs:
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
+      WG_SITE_PRIV: ${{ secrets.WG_SITE_CS02_PRIV }}
+      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_SS01_PEER }}
+      WG_SITE_DDNSGO_AK: ${{ secrets.ALIYUN_DDNS_AK }}
+      WG_SITE_DDNSGO_SK: ${{ secrets.ALIYUN_DDNS_SK }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-RE-CS-02
@@ -136,3 +147,8 @@ jobs:
       CI_NAME: RE-CS-02-BUILD
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
+      WG_SITE_ROLE: client
+      WG_SITE_DDNS_HOST: ss0112.jmsu.top
+      WG_SITE_DDNS_FALLBACK: 218.199.161.221
+      WG_SITE_U2R_ENABLE: '0'
+      WG_SITE_DDNSGO_DOMAIN: cs0211.jmsu.top

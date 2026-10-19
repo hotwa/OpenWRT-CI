@@ -150,6 +150,24 @@ on:
         required: false
         type: boolean
         default: true
+      WG_SITE_ROLE:
+        required: false
+        type: string
+      WG_SITE_DDNS_HOST:
+        required: false
+        type: string
+      WG_SITE_DDNS_FALLBACK:
+        required: false
+        type: string
+      WG_SITE_U2R_ENABLE:
+        required: false
+        type: string
+      WG_SITE_U2R_KEY:
+        required: false
+        type: string
+      WG_SITE_DDNSGO_DOMAIN:
+        required: false
+        type: string
     secrets:
       CPE_LUCKY_REMOTE_BUNDLE_1:
         required: false
@@ -197,6 +215,14 @@ on:
         required: false
       CLIPROXYAPI_BASE_URL:
         required: false
+      WG_SITE_PRIV:
+        required: false
+      WG_SITE_PEER_PUB:
+        required: false
+      WG_SITE_DDNSGO_AK:
+        required: false
+      WG_SITE_DDNSGO_SK:
+        required: false
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   WRT_CONFIG: ${{inputs.WRT_CONFIG}}
@@ -236,6 +262,12 @@ env:
   CI_NAME: ${{inputs.CI_NAME}}
   WRT_ARCH: ${{inputs.WRT_ARCH}}
   DEBUG_SSH: ${{inputs.DEBUG_SSH}}
+  WG_SITE_ROLE: ${{inputs.WG_SITE_ROLE}}
+  WG_SITE_DDNS_HOST: ${{inputs.WG_SITE_DDNS_HOST}}
+  WG_SITE_DDNS_FALLBACK: ${{inputs.WG_SITE_DDNS_FALLBACK}}
+  WG_SITE_U2R_ENABLE: ${{inputs.WG_SITE_U2R_ENABLE}}
+  WG_SITE_U2R_KEY: ${{inputs.WG_SITE_U2R_KEY}}
+  WG_SITE_DDNSGO_DOMAIN: ${{inputs.WG_SITE_DDNSGO_DOMAIN}}
   WRT_PRIVATE_BUILD: 'false'
   WRT_PRIVATE_BUILD_REASON: ''
   WRT_ARTIFACT_PRIVACY_SUFFIX: public
@@ -1058,6 +1090,20 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
+            # WG site-to-site（可选）：配置 WG_SITE_ROLE 后自动注入 site.conf 打进固件
+            # 敏感项走 secrets（WG_SITE_PRIV/PUB、DDNSGO_AK/SK），非敏感项走 inputs（域名/udp2raw 参数）
+            if [ -n "${WG_SITE_ROLE:-}" ]; then
+              WG_PRIV_KEY="${{ secrets.WG_SITE_PRIV }}" \
+              WG_PEER_PUB="${{ secrets.WG_SITE_PEER_PUB }}" \
+              DDNS_HOST="${WG_SITE_DDNS_HOST:-}" \
+              DDNS_FALLBACK_IP="${WG_SITE_DDNS_FALLBACK:-}" \
+              U2R_ENABLE="${WG_SITE_U2R_ENABLE:-0}" \
+              U2R_KEY="${WG_SITE_U2R_KEY:-udp2rawtestkey}" \
+              DDNSGO_AK="${{ secrets.WG_SITE_DDNSGO_AK }}" \
+              DDNSGO_SK="${{ secrets.WG_SITE_DDNSGO_SK }}" \
+              DDNSGO_DOMAIN="${WG_SITE_DDNSGO_DOMAIN:-}" \
+              $GITHUB_WORKSPACE/Scripts/ConfigureWgSiteToSite.sh "$GITHUB_WORKSPACE/wrt/files" "${WG_SITE_ROLE}"
+            fi
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
             [ "$(grep -c '^WRT_PRIVATE_BUILD=' "$guard_env")" -eq 1 ]
             [ "$(grep -c '^WRT_PRIVATE_BUILD_REASON=' "$guard_env")" -eq 1 ]

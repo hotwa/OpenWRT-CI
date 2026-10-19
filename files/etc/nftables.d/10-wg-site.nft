@@ -1,0 +1,11 @@
+# wg-site — udp2raw faketcp 支持（fw4 include，随防火墙自动加载，不被 reload 清除）
+# 仅在固件内置可用 udp2raw 且 U2R_ENABLE=1 时需要；纯 UDP WG 直连不受影响
+# 端口默认 28900，与 site.conf U2R_PORT 保持一致
+chain raw_prerouting {
+    type filter hook prerouting priority raw; policy accept;
+    tcp dport 28900 notrack
+}
+
+chain output_wan {
+    tcp sport 28900 tcp flags rst drop
+}

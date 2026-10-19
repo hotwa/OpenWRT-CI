@@ -1,0 +1,280 @@
+#!/bin/sh
+# ============================================================
+# wg-path-daemon.sh — WG 智能路径守护（自动 + 手动切换）
+# 部署：RE-CS-02-11（192.168.11.1） /data/bin/wg-path-daemon.sh（chmod +x）
+# 运行：/data/bin/wg-path-daemon.sh start|stop|status|manual <tcp|udp|ts|auto>
+# 自启：crontab 加两行（见文末）
+# 职责：DDNS 动态端点 → UDP 直连探测 →（可选 udp2raw TCP）→ tailscale 兜底，自动切换/恢复
+# 手动切换：仅需在 CLIENT 端（192.168.11.1）执行——远端 SS-01 的 udp2raw server 常驻自动接收
+# 安全：只操作 table 60 + wg endpoint + udp2raw 进程；绝不触碰 tailscale/table 52。
+#       table 60 失效 → 内核策略路由自然 fallthrough 到 tailscale(table 52)。
+# ============================================================
+
+# ---- 站点配置（固件编译期由 CI 注入 /etc/wg-site/site.conf；运行时可选） ----
+if [ -f /etc/wg-site/site.conf ]; then
+    . /etc/wg-site/site.conf
+fi
+
+# ---- 可调参数 ----
+DDNS_HOST="${DDNS_HOST:-ss0112.jmsu.top}"      # SS-01 WAN IP 的 DDNS 域名（ddns-go 维护，阿里云 A 记录）
+DDNS_FALLBACK_IP="${DDNS_FALLBACK_IP:-218.199.161.221}"  # 域名解析失败时回退
+WG_IF="wg0"
+WG_PEER_PUB="${WG_PEER_PUB:-9lbDEwTZu2Grg1FJsXU/irQ7obeiwLEZSMVfUdQWdh8=}"
+WG_TUN_PEER_IP="${WG_TUN_PEER_IP:-10.99.0.1}"
+WG_REMOTE_NET="${WG_REMOTE_NET:-192.168.12.0/24}"
+WG_TUN_NET="${WG_TUN_NET:-10.99.0.0/30}"
+WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
+TABLE_WG="60"                                    # WG 专属表（勿动）
+U2R_PORT="${U2R_PORT:-28900}"                    # udp2raw TCP 档（SS-01 端口）
+U2R_LOCAL_UDP="${U2R_LOCAL_UDP:-51822}"         # 本机 udp2raw client 监听 UDP
+U2R_KEY="${U2R_KEY:-udp2rawtestkey}"
+MANUAL_FILE="/tmp/wg-path-daemon.manual"         # 手动模式标志（重启回自动）
+
+GOOD_LATENCY=80      # ms，低于且稳定 → 快
+BAD_LATENCY=150      # ms，高于 → 慢
+JITTER_LIMIT=50      # ms，抖动超此 → 不稳
+GOOD_THROUGHPUT=10   # MB/s，延迟中带时的吞吐阈值
+THROUGHPUT_MB=5      # 吞吐探测数据量
+PROBE_INTERVAL=120   # 完整重测间隔（秒）
+DDNS_INTERVAL=60     # DDNS 解析间隔（秒）
+
+LOG="/tmp/wg-path-daemon.log"
+PIDFILE="/tmp/wg-path-daemon.pid"
+STATE_FILE="/tmp/wg-path-daemon.state"
+BAD_COUNTER_FILE="/tmp/wg-path-daemon.bad"
+
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+# ---------- DDNS 端点刷新（wg set 运行时更新，不重连） ----------
+resolve_and_update_endpoint() {
+    local ip cur
+    # busybox 兼容解析：提取全部 IPv4，过滤私网/环回，取最后一条（解析结果）
+    ip=$(nslookup "$DDNS_HOST" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+        | grep -vE '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | tail -1)
+    if [ -z "$ip" ]; then ip="$DDNS_FALLBACK_IP"; log "DDNS 解析失败，回退静态 $ip"; fi
+    cur=$(wg show "$WG_IF" endpoints 2>/dev/null | awk -v p="$WG_PEER_PUB" '$1==p{print $2}')
+    case "$cur" in
+        "$ip":${WG_LISTEN_PORT}) ;;
+        *) wg set "$WG_IF" peer "$WG_PEER_PUB" endpoint "${ip}:${WG_LISTEN_PORT}" 2>/dev/null \
+             && log "endpoint → ${ip}:${WG_LISTEN_PORT}" ;;
+    esac
+}
+
+# 返回对端最新公网 IP（优先 DDNS 解析，失败回退静态 IP）
+resolve_remote_ip() {
+    local ip
+    ip=$(nslookup "$DDNS_HOST" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+        | grep -vE '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' | tail -1)
+    [ -z "$ip" ] && ip="$DDNS_FALLBACK_IP"
+    echo "$ip"
+}
+
+# ---------- 隧道内 ping（延迟 + 抖动） ----------
+tun_ping() {
+    # 输出 "lat jit"，失败输出空
+    local out lat jit
+    out=$(ping -c 3 -W 1 -q "$WG_TUN_PEER_IP" 2>/dev/null | sed -n 's/.*= [0-9.]*\/*\([0-9.]*\)\/\([0-9.]*\)\/.*/\1 \2/p')
+    # busybox ping 输出: rtt min/avg/max/mdev = a/b/c/d ms → 取 avg 和 mdev
+    [ -z "$out" ] && out=$(ping -c 3 -W 1 -q "$WG_TUN_PEER_IP" 2>/dev/null | awk -F'[ =/]' '/rtt/{print $5, $7}')
+    echo "$out"
+}
+
+# ---------- 快速吞吐（经隧道 ssh dd，≤8s） ----------
+probe_throughput() {
+    local s e
+    s=$(date +%s)
+    dd if=/dev/zero bs=1M count=$THROUGHPUT_MB 2>/dev/null | \
+        ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=accept-new \
+            root@"$WG_TUN_PEER_IP" 'cat >/dev/null' 2>/dev/null || { echo 0; return; }
+    e=$(date +%s)
+    [ $((e-s)) -lt 1 ] && e=$((s+1))
+    echo $((THROUGHPUT_MB / (e-s)))
+}
+
+# ---------- 判定：0=快 1=慢 2=不可用 ----------
+judge_path() {
+    local hs now lat jit th
+    now=$(date +%s)
+    hs=$(wg show "$WG_IF" latest-handshakes 2>/dev/null | awk -v p="$WG_PEER_PUB" '$1==p{print $2}')
+    if [ -z "$hs" ] || [ $((now-hs)) -gt 90 ]; then
+        log "握手过期/缺失 (age=$([ -n "$hs" ] && echo $((now-hs)) || echo none))"
+        return 2
+    fi
+    read lat jit <<EOF
+$(tun_ping)
+EOF
+    if [ -z "$lat" ]; then log "隧道 ping 不可达"; return 2; fi
+    if awk "BEGIN{exit !($lat<$GOOD_LATENCY && $jit<$JITTER_LIMIT)}"; then
+        log "快: ${lat}ms jit=${jit}ms"; return 0
+    fi
+    if awk "BEGIN{exit !($lat>$BAD_LATENCY || $jit>$JITTER_LIMIT*2)}"; then
+        log "慢: ${lat}ms jit=${jit}ms"; return 1
+    fi
+    # 中带 → 吞吐补充判定
+    th=$(probe_throughput)
+    log "中带延迟 ${lat}ms 吞吐 ${th}MB/s"
+    [ "$th" -ge "$GOOD_THROUGHPUT" ] && return 0
+    return 1
+}
+
+# ---------- table 60 路由管理 ----------
+ensure_table_wg() {
+    ip route replace "$WG_REMOTE_NET" dev "$WG_IF" table "$TABLE_WG" 2>/dev/null
+    ip route replace "$WG_TUN_NET" dev "$WG_IF" table "$TABLE_WG" 2>/dev/null
+}
+clear_table_wg() {
+    ip route flush table "$TABLE_WG" 2>/dev/null
+    log "table 60 已清空 → 流量落 tailscale(table 52)"
+}
+# ts 状态临时探测路由（仅 tun 段，用于检测恢复）
+temp_tun_route() {
+    ip route replace "$WG_TUN_NET" dev "$WG_IF" table "$TABLE_WG" 2>/dev/null
+}
+
+# ---------- udp2raw TCP 档（可选：需可用版本 + nikki 排除） ----------
+start_udp2raw() {
+    command -v udp2raw >/dev/null 2>&1 || { log "udp2raw 未安装，跳过 TCP 档"; return 1; }
+    local srv_ip
+    srv_ip=$(resolve_remote_ip)
+    if ! pgrep -f "udp2raw -c" >/dev/null 2>&1; then
+        udp2raw -c -l 127.0.0.1:$U2R_LOCAL_UDP -r "${srv_ip}:${U2R_PORT}" -k "$U2R_KEY" --log-level 3 \
+            > /tmp/udp2raw-client.log 2>&1 &
+        sleep 2
+    fi
+    pgrep -f "udp2raw -c" >/dev/null 2>&1 || { log "udp2raw client 启动失败"; return 1; }
+    log "udp2raw client 就绪"
+    return 0
+}
+stop_udp2raw() { pkill -f "udp2raw -c" 2>/dev/null; log "udp2raw 已停止"; }
+switch_wg_tcp() {  # WG 出站 UDP 改走本机 udp2raw client
+    if start_udp2raw; then
+        wg set "$WG_IF" peer "$WG_PEER_PUB" endpoint "127.0.0.1:$U2R_LOCAL_UDP" 2>/dev/null
+        log "WG endpoint → 本地 udp2raw($U2R_LOCAL_UDP)"
+        return 0
+    fi
+    return 1
+}
+switch_wg_udp() {  # WG 回公网 UDP 直连
+    stop_udp2raw
+    resolve_and_update_endpoint
+}
+
+# ---------- 状态机（每轮：UDP → TCP → TS，降级需 2 轮确认防抖动） ----------
+run_once() {
+    local state bad manual
+    # 手动模式：仅 DDNS 刷新 + 健康保持，不做自动切换（手动优先）
+    if [ -f "$MANUAL_FILE" ]; then
+        manual=$(cat "$MANUAL_FILE")
+        case "$manual" in
+            tcp) switch_wg_tcp; ensure_table_wg ;;
+            udp) switch_wg_udp; ensure_table_wg ;;
+            ts)  stop_udp2raw; clear_table_wg ;;
+        esac
+        return
+    fi
+    state=$(cat "$STATE_FILE" 2>/dev/null || echo udp)
+    resolve_and_update_endpoint
+    case "$state" in
+        udp)
+            if judge_path; then
+                ensure_table_wg; echo udp > "$STATE_FILE"; echo 0 > "$BAD_COUNTER_FILE"; return
+            fi
+            bad=$(cat "$BAD_COUNTER_FILE" 2>/dev/null || echo 0); bad=$((bad+1)); echo "$bad" > "$BAD_COUNTER_FILE"
+            [ "$bad" -lt 2 ] && { log "UDP 差(第${bad}轮)，再确认一轮"; ensure_table_wg; return; }
+            if switch_wg_tcp; then
+                echo tcp > "$STATE_FILE"; echo 0 > "$BAD_COUNTER_FILE"; log "→ TCP 档"
+            else
+                clear_table_wg; echo ts > "$STATE_FILE"; log "→ tailscale 兜底"
+            fi
+            ;;
+        tcp)
+            if judge_path; then
+                switch_wg_udp; ensure_table_wg; echo udp > "$STATE_FILE"; log "→ 恢复 UDP 直连"
+            else
+                bad=$(cat "$BAD_COUNTER_FILE" 2>/dev/null || echo 0); bad=$((bad+1)); echo "$bad" > "$BAD_COUNTER_FILE"
+                [ "$bad" -lt 2 ] && { log "TCP 差(第${bad}轮)，再确认一轮"; ensure_table_wg; return; }
+                clear_table_wg; stop_udp2raw; echo ts > "$STATE_FILE"; log "→ tailscale 兜底"
+            fi
+            ;;
+        ts)
+            temp_tun_route   # 临时探测路由（ts 态 ping 用）
+            if judge_path; then
+                ensure_table_wg; echo udp > "$STATE_FILE"; log "→ 恢复 WG UDP 直连"
+            else
+                clear_table_wg   # 清掉（含临时探测路由）
+            fi
+            ;;
+    esac
+}
+
+case "${1:-start}" in
+    start)
+        echo $$ > "$PIDFILE"
+        log "=== 守护启动 ==="
+        [ -f "$STATE_FILE" ] || echo udp > "$STATE_FILE"
+        echo 0 > "$BAD_COUNTER_FILE"
+        while :; do
+            run_once
+            sleep "$PROBE_INTERVAL"
+        done
+        ;;
+    stop)
+        [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null && rm -f "$PIDFILE"
+        stop_udp2raw
+        ensure_table_wg    # 停止守护时恢复 WG 直连（由 WG 自身 keepalive 维护）
+        log "=== 守护停止 ==="
+        ;;
+    manual)
+        # 手动切换隧道类型：wg-path-daemon manual <tcp|udp|ts|auto>
+        # 仅需在 client 端执行；远端 udp2raw server 常驻自动接收，无需操作
+        case "${2:-}" in
+            tcp)
+                if switch_wg_tcp; then
+                    ensure_table_wg
+                    echo tcp > "$MANUAL_FILE"
+                    echo "$(date '+%F %T') 手动 → TCP 承载（udp2raw）" >> "$LOG"
+                    echo "已切换 TCP 承载；远端 SS-01 无需操作"
+                else
+                    echo "udp2raw 不可用（未安装或版本无效）——已跳过；可用: manual udp/ts"
+                    exit 1
+                fi
+                ;;
+            udp)
+                switch_wg_udp; ensure_table_wg
+                echo udp > "$MANUAL_FILE"
+                echo "$(date '+%F %T') 手动 → UDP 直连" >> "$LOG"
+                echo "已切换 UDP 直连"
+                ;;
+            ts)
+                stop_udp2raw; clear_table_wg
+                echo ts > "$MANUAL_FILE"
+                echo "$(date '+%F %T') 手动 → tailscale 兜底" >> "$LOG"
+                echo "已切换 tailscale 兜底（table 60 清空）"
+                ;;
+            auto)
+                rm -f "$MANUAL_FILE"
+                echo "$(date '+%F %T') 恢复自动判定" >> "$LOG"
+                echo "已恢复自动判定（下一轮起生效）"
+                ;;
+            *)
+                echo "用法: $0 manual <tcp|udp|ts|auto>"; exit 1 ;;
+        esac
+        ;;
+    status)
+        echo "state=$(cat "$STATE_FILE" 2>/dev/null)$([ -f "$MANUAL_FILE" ] && echo "（手动 $(cat "$MANUAL_FILE")）")"
+        wg show "$WG_IF" 2>/dev/null | grep -E "endpoint|handshake|transfer" | head -6
+        echo "--- table 60 ---"
+        ip route show table "$TABLE_WG" 2>/dev/null
+        echo "--- 实际路径 ---"
+        ip route get "$WG_REMOTE_NET" 2>/dev/null | head -1
+        echo "--- 进程 ---"
+        pgrep -af "wg-path-daemon|udp2raw -c" 2>/dev/null | head -4
+        ;;
+    *) echo "用法: $0 start|stop|status|manual <tcp|udp|ts|auto>"; exit 1 ;;
+esac
+
+# ============================================================
+# crontab 自启 + 健康兜底（root 执行：crontab -e 添加两行）
+# @reboot /data/bin/wg-path-daemon.sh start
+# */5 * * * * /data/bin/wg-path-health.sh
+# ============================================================

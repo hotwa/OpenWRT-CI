@@ -1,0 +1,17 @@
+#!/bin/sh
+# ============================================================
+# 99-wg-site-ddns — WAN 就绪后立即同步 ddns-go（仿 nikki 等网络再行动）
+# 逻辑：只有 pppoe 拨号 / DHCP 获取到地址（wan ifup）才触发 ddns-go 重启，
+#       让 ddns-go 立刻把当前 WAN IP 同步到 ss0112.jmsu.top / cs0211.jmsu.top。
+# 配合：wg_endpoint_watchdog（wan ifup 时同样刷新 ddns）+ ddns-go time=300 兜底。
+# ============================================================
+[ "$ACTION" = "ifup" ] || exit 0
+case "$INTERFACE" in
+    wan|pppoe-wan|wan6)
+        # 稍等路由/地址收敛后再同步
+        sleep 5
+        /etc/init.d/ddns-go restart 2>/dev/null
+        logger -t wg-site-ddns "wan($INTERFACE) ifup → ddns-go 立即同步 WAN IP"
+        ;;
+esac
+exit 0

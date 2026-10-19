@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# wg-udp2raw-server — SS-01（server 角色）常驻 udp2raw server
+# 作用：把 TCP(伪装) 28900 解回本地 UDP 51820，client 手动切 TCP 时无需操作 server
+# 仅 site.conf 中 ROLE=server 且 U2R_ENABLE=1 且 udp2raw 可用时启动
+START=97
+STOP=03
+
+CFG="/etc/wg-site/site.conf"
+[ -f "$CFG" ] && . "$CFG"
+
+start() {
+    [ "$ROLE" = "server" ] || return 0
+    [ "$U2R_ENABLE" = "1" ] || return 0
+    command -v udp2raw >/dev/null 2>&1 || { logger -t wg-udp2raw-server "udp2raw 不可用，跳过"; return 0; }
+    pgrep -f "udp2raw -s" >/dev/null 2>&1 && return 0
+    udp2raw -s -l "0.0.0.0:${U2R_PORT:-28900}" -r "127.0.0.1:${WG_LISTEN_PORT:-51820}" \
+        -k "${U2R_KEY:-udp2rawtestkey}" --log-level 3 > /tmp/udp2raw-server.log 2>&1 &
+    logger -t wg-udp2raw-server "udp2raw server 已启动 :${U2R_PORT:-28900} → UDP ${WG_LISTEN_PORT:-51820}"
+}
+
+stop() {
+    pkill -f "udp2raw -s" 2>/dev/null
+    logger -t wg-udp2raw-server "已停止"
+}

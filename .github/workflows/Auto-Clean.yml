@@ -20,7 +20,8 @@ jobs:
       - name: Delete all Actions caches
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh cache delete --all
+        # 显式指定仓库：本 job 未 checkout，gh 无法从 git 上下文推断 base repo
+        run: gh cache delete --all --repo "${GITHUB_REPOSITORY}"
 
       - name: Delete completed failed workflow runs
         env:
