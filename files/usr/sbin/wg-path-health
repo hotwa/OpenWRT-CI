@@ -3,19 +3,19 @@
 # wg-path-health.sh — 健康兜底（每 5 分钟，crontab 调）
 # 职责：守护进程若崩溃且 WG 握手过期 → 清 table 60 → 保 tailscale 兜底；并尝试重启守护
 # ============================================================
-DAEMON="/data/bin/wg-path-daemon.sh"
+DAEMON="/usr/sbin/wg-path-daemon"
 WG_IF="wg0"
 PEER="9lbDEwTZu2Grg1FJsXU/irQ7obeiwLEZSMVfUdQWdh8="
 TABLE_WG="60"
 HLOG="/tmp/wg-path-health.log"
 
-if ! pgrep -f "wg-path-daemon.sh" >/dev/null 2>&1; then
+if ! pgrep -f "wg-path-daemon" >/dev/null 2>&1; then
     now=$(date +%s)
     hs=$(wg show "$WG_IF" latest-handshakes 2>/dev/null | awk -v p="$PEER" '$1==p{print $2}')
     if [ -z "$hs" ] || [ $((now-hs)) -gt 90 ]; then
         ip route flush table "$TABLE_WG" 2>/dev/null
         echo "$(date '+%F %T') 守护崩溃+握手过期 → 清 table 60，tailscale 兜底" >> "$HLOG"
     fi
-    # 尝试重启守护（重复执行由 start 的 PIDFILE/进程检查保护，防多实例）
-    pgrep -f "wg-path-daemon.sh" >/dev/null 2>&1 || $DAEMON start >/dev/null 2>&1 &
+    # 尝试重启守护（由 procd 接管，防双实例）
+    pgrep -f "wg-path-daemon" >/dev/null 2>&1 || /etc/init.d/wg-path-daemon restart >/dev/null 2>&1 &
 fi

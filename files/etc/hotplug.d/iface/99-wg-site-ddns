@@ -8,10 +8,9 @@
 [ "$ACTION" = "ifup" ] || exit 0
 case "$INTERFACE" in
     wan|pppoe-wan|wan6)
-        # 稍等路由/地址收敛后再同步
-        sleep 5
-        /etc/init.d/ddns-go restart 2>/dev/null
-        logger -t wg-site-ddns "wan($INTERFACE) ifup → ddns-go 立即同步 WAN IP"
+        # 稍等路由/地址收敛后再同步（后台执行，不阻塞 netifd 事件队列）
+        ( sleep 5; /etc/init.d/ddns-go restart 2>/dev/null ) &
+        logger -t wg-site-ddns "wan($INTERFACE) ifup → ddns-go 后台同步 WAN IP"
         ;;
 esac
 exit 0
