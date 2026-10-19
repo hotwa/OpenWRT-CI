@@ -24,19 +24,24 @@ mkdir -p "$FILES_DIR/etc/wg-site"
 
 # ============================================================
 # 已知上游 feeds 回归修复（编译期处理，不进入固件内容）：
-# ImmortalWRT packages 的 miniupnpd 020-descr-filter-fix.patch 已过时——
-# miniupnp 上游 2.3.11 tarball（2026 重发）已合入等价修复
-# （upnppermissions.c 含 iseol/get_sep/get_range/get_addr_or_mask，
-#   upnppermissions.h 的 read_permission_line 已是 const char *）。
-# 保留该 patch 会在 package/compile 阶段重复打补丁 → Hunk FAILED → 编译必失败
+# ImmortalWRT packages 的 miniupnpd 补丁已过时——miniupnp 上游 2.3.11
+# tarball（2026 重发）已合入等价修复，保留这些 patch 会在 package/compile
+# 阶段重复打补丁 → Hunk FAILED → 编译必失败
 # （"miniupnpd failed to build (build variant: nftables)"）。
-# 此处删除过时 patch：编译可继续，且安全修复已在上游源码内，功能无损失。
-# 若未来 ImmortalWRT 更新该 patch 使其重新匹配，本段自动失效（文件不存在）。
+# 已逐项本地实证（tarball hash 91994b12... 校验通过 + 源码 grep）：
+#  020-descr-filter-fix.patch  → upnppermissions.c/h 已含 iseol/get_sep/get_range/
+#                                get_addr_or_mask 与 const char * 声明（已冗余）
+#  030-allow-private-fix.patch → upnpsoap.c:421 已是 if (GETFLAG(ALLOWPRIVATEIPV4MASK))
+#                                （修复已合入，仅行号漂移 370→421 导致 hunk 失败）
+# 删除过时 patch：编译可继续，安全修复已在上游源码内，功能无损失。
+# 若未来 ImmortalWRT 更新这些 patch 使其重新匹配，本段自动失效（文件不存在）。
 WRT_ROOT="$(cd "$FILES_DIR/.." && pwd)"
-if [ -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/020-descr-filter-fix.patch" ]; then
-    rm -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/020-descr-filter-fix.patch"
-    echo "[wg-site] 已移除过时 feeds patch: miniupnpd 020-descr-filter-fix.patch"
-fi
+for stale_patch in 020-descr-filter-fix.patch 030-allow-private-fix.patch; do
+    if [ -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/$stale_patch" ]; then
+        rm -f "$WRT_ROOT/feeds/packages/net/miniupnpd/patches/$stale_patch"
+        echo "[wg-site] 已移除过时 feeds patch: miniupnpd $stale_patch"
+    fi
+done
 # ============================================================
 
 cat > "$FILES_DIR/etc/wg-site/site.conf" <<EOF
