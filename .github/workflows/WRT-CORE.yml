@@ -514,6 +514,8 @@ jobs:
           add_file config/general               "$GITHUB_WORKSPACE/Config/GENERAL.txt"
           add_file "config/device/${WRT_CONFIG}" "$device_config"
           add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          add_file script/libffi-compat         "$GITHUB_WORKSPACE/Scripts/ensure_libffi_recipe.py"
+          add_file package/libffi-compat        "$GITHUB_WORKSPACE/Scripts/compat/libffi/Makefile"
           add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
           add_file script/patch-nikki-router-selector-guard "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
@@ -645,6 +647,7 @@ jobs:
           cd ./wrt/
 
           retry_cmd 5 15 ./scripts/feeds update -a
+          python3 "$GITHUB_WORKSPACE/Scripts/ensure_libffi_recipe.py" "$PWD"
           retry_cmd 5 15 ./scripts/feeds install -a
 
       - name: Record Go Cache Path Evidence
