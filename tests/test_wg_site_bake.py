@@ -54,6 +54,8 @@ exit 0
         config=self.files/'etc/wg-site/site.conf';self.assertEqual(config.stat().st_mode&0o777,0o600)
         d=json.loads((self.files/'etc/ddns-go/ddns-go-config.yaml').read_text())
         self.assertEqual(d['dnsconf'][0]['dns']['secret'],self.env['DDNSGO_SK'])
+        self.assertEqual(d['dnsconf'][0]['ipv4']['gettype'],'netInterface')
+        self.assertEqual(d['dnsconf'][0]['ipv4']['netinterface'],'pppoe-wan')
         self.assertNotIn(self.env['DDNSGO_SK'],r.stdout+r.stderr)
         r=subprocess.run(['bash',str(ROOT/'Scripts/PrivateFirmwareGuard.sh'),str(self.files)],text=True,capture_output=True)
         self.assertIn('WRT_PRIVATE_BUILD=true',r.stdout);self.assertIn('wg-site-private-seed',r.stdout)

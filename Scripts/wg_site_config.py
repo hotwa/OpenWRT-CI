@@ -64,8 +64,9 @@ def stage(root, role):
     ddns.parent.mkdir(parents=True, exist_ok=True)
     # JSON is valid YAML; quoting safely retains punctuation in credentials.
     ddns.write_text(json.dumps(dict(dnsconf=[dict(name='aliyun-wg-site',
-        ipv4=dict(enable=True, gettype='url', url='https://4.ipw.cn,https://api.ipify.org',
-                  netinterface='', cmd='', domains=[domain]),
+        ipv4=dict(enable=True, gettype='netInterface', url='',
+                  netinterface=os.environ.get('DDNSGO_NETINTERFACE', 'pppoe-wan'),
+                  cmd='', domains=[domain]),
         ipv6=dict(enable=False, domains=[]), dns=dict(name='alidns', id=ak, secret=sk,
         extparam=''), ttl='600', httpinterface='')], notallowwanaccess=True), indent=2) + '\n')
     ddns.chmod(0o600)
