@@ -1066,6 +1066,10 @@ jobs:
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
+          WG_PRIV_KEY: ${{secrets.WG_SITE_PRIV}}
+          WG_PEER_PUB: ${{secrets.WG_SITE_PEER_PUB}}
+          DDNSGO_AK: ${{secrets.WG_SITE_DDNSGO_AK}}
+          DDNSGO_SK: ${{secrets.WG_SITE_DDNSGO_SK}}
         run: |
             guard_env="$(mktemp)"
             trap 'rm -f "$guard_env"' EXIT
@@ -1093,14 +1097,11 @@ jobs:
             # WG site-to-site（可选）：配置 WG_SITE_ROLE 后自动注入 site.conf 打进固件
             # 敏感项走 secrets（WG_SITE_PRIV/PUB、DDNSGO_AK/SK），非敏感项走 inputs（域名/udp2raw 参数）
             if [ -n "${WG_SITE_ROLE:-}" ]; then
-              WG_PRIV_KEY="${{ secrets.WG_SITE_PRIV }}" \
-              WG_PEER_PUB="${{ secrets.WG_SITE_PEER_PUB }}" \
+              [ "${WRT_ENCRYPT_ARTIFACT:-false}" = true ] || { echo "ERROR: WG credentials require encrypted artifacts" >&2; exit 1; }
+              credential_supplied=true
               DDNS_HOST="${WG_SITE_DDNS_HOST:-}" \
               DDNS_FALLBACK_IP="${WG_SITE_DDNS_FALLBACK:-}" \
               U2R_ENABLE="${WG_SITE_U2R_ENABLE:-0}" \
-              U2R_KEY="${WG_SITE_U2R_KEY:-udp2rawtestkey}" \
-              DDNSGO_AK="${{ secrets.WG_SITE_DDNSGO_AK }}" \
-              DDNSGO_SK="${{ secrets.WG_SITE_DDNSGO_SK }}" \
               DDNSGO_DOMAIN="${WG_SITE_DDNSGO_DOMAIN:-}" \
               $GITHUB_WORKSPACE/Scripts/ConfigureWgSiteToSite.sh "$GITHUB_WORKSPACE/wrt/files" "${WG_SITE_ROLE}"
             fi
@@ -1444,6 +1445,7 @@ jobs:
               --arg source_branch "$WRT_BRANCH" \
               --arg source_commit "$WRT_HASH" \
               --arg config "$WRT_CONFIG" \
+              --arg wg_site_role "${WG_SITE_ROLE:-}" \
               --arg required_device "$WRT_REQUIRED_DEVICE" \
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
@@ -1452,7 +1454,7 @@ jobs:
               --arg cpe_ipv6 "${WRT_CPE_IPV6:-false}" \
               --arg emmc_data_provisioning "${WRT_EMMC_DATA_PROVISIONING:-false}" \
               --arg headscale_hostname "${WRT_HEADSCALE_HOSTNAME:-}" \
-              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,wg_site_role:$wg_site_role,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt

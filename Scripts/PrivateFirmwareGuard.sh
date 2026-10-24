@@ -161,6 +161,14 @@ if [ -s "$cliproxyapi_base_secret" ]; then
 	add_reason cliproxyapi-base-url
 fi
 
+# WG seed and DDNS provider credentials are private even in isolation.
+if [ -s "$TARGET_FILES/etc/wg-site/site.conf" ]; then
+    add_reason wg-site-private-seed
+fi
+if [ -s "$TARGET_FILES/etc/ddns-go/ddns-go-config.yaml" ]; then
+    add_reason ddns-provider-credential
+fi
+
 if [ -n "$reasons" ]; then
 	printf 'WRT_PRIVATE_BUILD=true\n'
 	printf 'WRT_PRIVATE_BUILD_REASON=%s\n' "$reasons"

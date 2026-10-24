@@ -29,8 +29,12 @@ assert len(re.findall(r'^      WRT_ENCRYPT_ARTIFACT:\s*$', core, re.M)) == 1
 assert 'WRT_ENCRYPT_ARTIFACT: true' in mapping(cpe, 'cpe_overlay_b', 2)
 assert 'WRT_ENCRYPT_ARTIFACT: true' in mapping(cpe, 'baseline_a', 2)
 for workflow in (root / '.github/workflows').glob('*.yml'):
-    if workflow.name not in ('WRT-CORE.yml', 'CPE-5G.yml'):
+    if workflow.name not in ('WRT-CORE.yml', 'CPE-5G.yml', 'RE-Mesh-BUILD.yml'):
         assert not re.search(r'^\s*WRT_ENCRYPT_ARTIFACT:\s*true\s*$', workflow.read_text(), re.M), workflow.name
+
+mesh = (root / '.github/workflows/RE-Mesh-BUILD.yml').read_text()
+for job in ('re_ss_01', 're_cs_02'):
+    assert 'WRT_ENCRYPT_ARTIFACT: true' in mapping(mesh, job, 2)
 
 step_marks = list(re.finditer(r'^      - name: (.+)$', core, re.M))
 steps = {}
