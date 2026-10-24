@@ -72,7 +72,7 @@ def stage(root, role):
     ddns.chmod(0o600)
     uci = root / 'etc/config/ddns-go'
     uci.parent.mkdir(parents=True, exist_ok=True)
-    uci.write_text("config ddns-go 'config'\n\toption enabled '1'\n\toption port '9876'\n\toption time '300'\n\toption logger '1'\n\toption skipverify '0'\n")
+    uci.write_text("config basic 'ddns-go'\n\toption enabled '1'\n\toption port '9876'\n\toption time '300'\n\toption logger '1'\n\toption skipverify '0'\n")
     uci.chmod(0o600)
     print('Validated private WG/DDNS seed: role=' + role)
 

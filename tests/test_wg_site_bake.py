@@ -16,6 +16,19 @@ class SiteTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.dir = Path(self.temp.name)
         self.files = self.dir / 'files'
+        self.ddns_init = self.dir/'package/luci-app-ddns-go/ddns-go/files/ddns-go.init'
+        self.ddns_init.parent.mkdir(parents=True)
+        self.ddns_init.write_text('''#!/bin/sh /etc/rc.common
+CONFDIR=/etc/ddns-go
+CONF=$CONFDIR/ddns-go-config.yaml
+init_yaml() {
+    chown -R ddns-go:ddns-go "$CONFDIR"
+    chmod 755 "$CONFDIR"
+    [ -f "$CONF" ] && chmod 644 "$CONF"
+}
+start_instance() { procd_set_param user ddns-go; }
+start_service() { config_foreach start_instance 'basic'; }
+''')
         self.env = {**os.environ, 'WG_PRIV_KEY': base64.b64encode(bytes(range(1,33))).decode(),
                     'WG_PEER_PUB': base64.b64encode(bytes(range(33,65))).decode(),
                     'DDNSGO_DOMAIN':'ss0112.jmsu.top','DDNSGO_AK':'fixture-ak',
@@ -71,6 +84,17 @@ exit 0
         self.assertEqual(self.seed('client',DDNS_HOST='ss0112.jmsu.top').returncode,0)
         self.assertNotEqual(self.seed(DDNS_HOST='ss0112.jmsu.top').returncode,0)
         self.assertNotEqual(self.seed(U2R_ENABLE='1').returncode,0)
+    def test_ddns_service_contract_and_private_runtime_permissions(self):
+        self.assertEqual(self.seed().returncode,0)
+        cfg=(self.files/'etc/config/ddns-go').read_text()
+        self.assertIn("config basic 'ddns-go'",cfg)
+        init=(self.files/'etc/init.d/ddns-go').read_text()
+        self.assertIn('chmod 700 "$CONFDIR"',init)
+        self.assertIn('chmod 600 "$CONF"',init)
+        self.assertIn('procd_set_param user ddns-go',init)
+        self.assertNotIn('chmod 644 "$CONF"',init)
+        self.ddns_init.write_text(self.ddns_init.read_text().replace("'basic'","'changed'"))
+        self.assertNotEqual(self.seed().returncode,0)
     def test_bootstrap_roles_and_identity_preservation(self):
         for role in ['server','client']:
             with self.subTest(role=role):

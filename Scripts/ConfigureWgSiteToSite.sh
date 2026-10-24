@@ -53,5 +53,6 @@ done
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 python3 "$SCRIPT_DIR/wg_site_config.py" "$FILES_DIR" "$ROLE"
+python3 "$SCRIPT_DIR/stage_ddns_go_service.py" "$FILES_DIR"
 # No faketcp firewall exceptions when the unvalidated TCP carrier is disabled.
 [ "${U2R_ENABLE:-0}" != 0 ] || rm -f "$FILES_DIR/etc/nftables.d/10-wg-site.nft"
