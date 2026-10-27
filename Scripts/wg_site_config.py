@@ -2,7 +2,6 @@
 """Validate and stage a private WG seed; never print credential values."""
 import base64
 import ipaddress
-import json
 import os
 from pathlib import Path
 import re
@@ -37,14 +36,12 @@ def stage(root, role):
         raise ValueError('peer key equals local identity; check per-device secret mapping')
     if os.environ.get('U2R_ENABLE', '0') != '0':
         raise ValueError('TCP carrier is not validated; keep U2R_ENABLE=0')
-    domain = required('DDNSGO_DOMAIN').lower()
     endpoint = os.environ.get('DDNS_HOST', '').lower()
     pattern = r'(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}'
-    if not re.fullmatch(pattern, domain) or (role == 'client' and not re.fullmatch(pattern, endpoint)):
+    if endpoint and not re.fullmatch(pattern, endpoint):
         raise ValueError('invalid DDNS hostname')
     if role == 'server' and endpoint:
         raise ValueError('server must learn the client endpoint')
-    ak, sk = required('DDNSGO_AK'), required('DDNSGO_SK')
     # These two fixed sites are intentionally scoped, not an arbitrary LAN publisher.
     remote = '192.168.11.0/24' if role == 'server' else '192.168.12.0/24'
     config = dict(ROLE=role, WG_IF='wg0', WG_PRIV_KEY=private,
@@ -60,21 +57,13 @@ def stage(root, role):
     site.parent.mkdir(parents=True, exist_ok=True)
     site.write_text(''.join(k + '=' + shlex.quote(v) + '\n' for k, v in config.items()))
     site.chmod(0o600)
-    ddns = root / 'etc/ddns-go/ddns-go-config.yaml'
-    ddns.parent.mkdir(parents=True, exist_ok=True)
-    # JSON is valid YAML; quoting safely retains punctuation in credentials.
-    ddns.write_text(json.dumps(dict(dnsconf=[dict(name='aliyun-wg-site',
-        ipv4=dict(enable=True, gettype='netInterface', url='',
-                  netinterface=os.environ.get('DDNSGO_NETINTERFACE', 'pppoe-wan'),
-                  cmd='', domains=[domain]),
-        ipv6=dict(enable=False, domains=[]), dns=dict(name='alidns', id=ak, secret=sk,
-        extparam=''), ttl='600', httpinterface='')], notallowwanaccess=True), indent=2) + '\n')
-    ddns.chmod(0o600)
+    # Do not bake provider credentials, including leftovers from a reused stage.
+    (root / 'etc/ddns-go/ddns-go-config.yaml').unlink(missing_ok=True)
     uci = root / 'etc/config/ddns-go'
     uci.parent.mkdir(parents=True, exist_ok=True)
-    uci.write_text("config basic 'ddns-go'\n\toption enabled '1'\n\toption port '9876'\n\toption time '300'\n\toption logger '1'\n\toption skipverify '0'\n")
+    uci.write_text("config basic 'ddns-go'\n\toption enabled '0'\n\toption port '9876'\n\toption time '300'\n\toption logger '1'\n\toption skipverify '0'\n")
     uci.chmod(0o600)
-    print('Validated private WG/DDNS seed: role=' + role)
+    print('Validated private WG seed; DDNS disabled: role=' + role)
 
 
 if __name__ == '__main__':

@@ -33,6 +33,23 @@ fi
 chmod 600 "$KEY"
 PRIVATE_KEY=$(cat "$KEY")
 case "$ROLE" in server) local_addr="$TUN_PREFIX.1/30";; client) local_addr="$TUN_PREFIX.2/32";; esac
+# Preserve an existing managed endpoint before rebuilding the peer section.
+# A fresh image has no default DNS/static endpoint; Tailscale remains available
+# until the administrator configures a verified address.
+endpoint_host=$(uci -q get network.wg0_peer_remote.endpoint_host 2>/dev/null || true)
+endpoint_port=$(uci -q get network.wg0_peer_remote.endpoint_port 2>/dev/null || true)
+# Prefer the kernel's authenticated/learned endpoint over a stale retained UCI value.
+live_endpoint=$(wg show wg0 endpoints 2>/dev/null | awk -v peer="$WG_PEER_PUB" '$1==peer {print $2; exit}')
+case "$live_endpoint" in
+    *:*)
+        endpoint_port=${live_endpoint##*:}
+        endpoint_host=${live_endpoint%:*}
+        endpoint_host=${endpoint_host#\[}
+        endpoint_host=${endpoint_host%\]}
+        ;;
+esac
+if [ -z "$endpoint_host" ]; then endpoint_host="${DDNS_HOST:-}"; fi
+case "$endpoint_port" in ''|*[!0-9]*) endpoint_port="$WG_LISTEN_PORT";; esac
 # netifd expects an actual key, not a pathname. No secret is passed in argv.
 for section in network.wg0.addresses network.wg0_peer_remote; do
     uci -q delete "$section" 2>/dev/null || true
@@ -67,9 +84,9 @@ set network.wg_site_remote.lookup='60'
 set network.wg_site_remote.priority='1001'
 EOF
 unset PRIVATE_KEY
-if [ "$ROLE" = client ]; then
-    uci set "network.wg0_peer_remote.endpoint_host=$DDNS_HOST"
-    uci set "network.wg0_peer_remote.endpoint_port=$WG_LISTEN_PORT"
+if [ "$ROLE" = client ] && [ -n "$endpoint_host" ]; then
+    uci set "network.wg0_peer_remote.endpoint_host=$endpoint_host"
+    uci set "network.wg0_peer_remote.endpoint_port=$endpoint_port"
 fi
 uci commit network
 [ -n "${WG_SITE_TEST:-}" ] || chmod 600 /etc/config/network
@@ -115,8 +132,7 @@ uci set wg_endpoint_watchdog.wg0.enabled='0'
 uci set wg_endpoint_watchdog.wg0.max_handshake_age='900'
 uci commit wg_endpoint_watchdog
 "$INIT/firewall" reload
-"$INIT/ddns-go" enable
-"$INIT/ddns-go" restart
+"${WG_SITE_DDNS_STOP_HELPER:-/usr/sbin/wg-site-disable-ddns}"
 "$INIT/wg-path-daemon" enable
 ubus call network reload >/dev/null
 ifup wg0

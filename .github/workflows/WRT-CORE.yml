@@ -1071,8 +1071,6 @@ jobs:
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
           WG_PRIV_KEY: ${{secrets.WG_SITE_PRIV}}
           WG_PEER_PUB: ${{secrets.WG_SITE_PEER_PUB}}
-          DDNSGO_AK: ${{secrets.WG_SITE_DDNSGO_AK}}
-          DDNSGO_SK: ${{secrets.WG_SITE_DDNSGO_SK}}
         run: |
             guard_env="$(mktemp)"
             trap 'rm -f "$guard_env"' EXIT
@@ -1098,14 +1096,12 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             # WG site-to-site（可选）：配置 WG_SITE_ROLE 后自动注入 site.conf 打进固件
-            # 敏感项走 secrets（WG_SITE_PRIV/PUB、DDNSGO_AK/SK），非敏感项走 inputs（域名/udp2raw 参数）
+            # Only WG credentials are injected; mesh DDNS publishing is disabled.
             if [ -n "${WG_SITE_ROLE:-}" ]; then
               [ "${WRT_ENCRYPT_ARTIFACT:-false}" = true ] || { echo "ERROR: WG credentials require encrypted artifacts" >&2; exit 1; }
               credential_supplied=true
               DDNS_HOST="${WG_SITE_DDNS_HOST:-}" \
-              DDNS_FALLBACK_IP="${WG_SITE_DDNS_FALLBACK:-}" \
               U2R_ENABLE="${WG_SITE_U2R_ENABLE:-0}" \
-              DDNSGO_DOMAIN="${WG_SITE_DDNSGO_DOMAIN:-}" \
               $GITHUB_WORKSPACE/Scripts/ConfigureWgSiteToSite.sh "$GITHUB_WORKSPACE/wrt/files" "${WG_SITE_ROLE}"
             fi
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"

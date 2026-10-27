@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-# ConfigureWgSiteToSite.sh — CI 编译期注入 WG site-to-site 站点配置 + ddns-go 完整配置
-# 用法: ConfigureWgSiteToSite.sh <wrt/files目录> <ROLE:server|client>
-# 环境变量（由 GitHub Actions secrets / job env 提供）：
-#   WG_PRIV_KEY / WG_PEER_PUB / DDNS_HOST / DDNS_FALLBACK_IP
-#   U2R_ENABLE(0|1) / U2R_KEY / WG_LISTEN_PORT / TUN_PREFIX
-#   DDNSGO_AK / DDNSGO_SK / DDNSGO_DOMAIN（阿里云 AccessKey + 本机上报域名）
-#   DDNSGO_IPV4_URL（可选，获取公网 IP 的接口，默认国内源）
-# 域名约定：ss0112.jmsu.top（SS-01 WAN）/ cs0211.jmsu.top（CS-02 WAN）
-#   DDNS_HOST = WG endpoint 用（client 填对端域名 ss0112.jmsu.top）
-#   DDNSGO_DOMAIN = ddns-go 本机上报的域名（SS-01 填 ss0112，CS-02 填 cs0211）
-# 说明：WG 私钥与阿里云 AK/SK 不进 Git；由仓库 secrets 注入。刷机通电即用，无需任何配置。
-#   ddns-go 配置文件格式已按 jeessy2/ddns-go v6 源码确认（config/config.go）：
-#   DnsConfig.Ipv4.Domains / DNS{Name,ID,Secret}；provider 名 "alidns"。
+# ConfigureWgSiteToSite.sh — private WG seed; DDNS is disabled for mesh builds.
+# Usage: ConfigureWgSiteToSite.sh <wrt/files> <server|client>
+# Required env: WG_PRIV_KEY / WG_PEER_PUB. Optional DDNS_HOST is only an
+# administrator-supplied initial client endpoint; it is never refreshed by the daemon.
+# DDNSGO provider credentials are intentionally ignored and never staged.
 # ============================================================
 set -euo pipefail
 

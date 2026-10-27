@@ -13,25 +13,8 @@ log() { logger -t wg-path-daemon "$*"; }
 clear_lan() {
     ip -4 route del "$WG_REMOTE_NET" dev wg0 table 60 2>/dev/null || true
 }
-# Resolve only answer records from an explicit resolver; never use a DNS-server
-# address, Fake-IP range or a hardcoded historical WAN as the remote endpoint.
-resolve_endpoint() {
-    [ "$ROLE" = client ] || return 0
-    answer=$(nslookup "$DDNS_HOST" 223.5.5.5 2>/dev/null | awk '
-        /^Name:/ {answer=1; next}
-        answer && /^Address[^:]*:/ {for(i=2;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print $i}')
-    for address in $answer; do
-        if ! printf '%s\n' "$address" | awk -F. '
-          NF!=4 {exit 1} {for(i=1;i<=4;i++) if($i<0 || $i>255) exit 1;
-          if($1==0 || $1==10 || $1==127 || $1>=224 || ($1==169&&$2==254) ||
-             ($1==172&&$2>=16&&$2<=31) || ($1==192&&$2==168) ||
-             ($1==100&&$2>=64&&$2<=127) || ($1==198&&($2==18||$2==19))) exit 1}'
-        then continue; fi
-        wg set wg0 peer "$WG_PEER_PUB" endpoint "$address:$WG_LISTEN_PORT" || return 1
-        return 0
-    done
-    return 1
-}
+# Endpoint discovery is deliberately disabled. Retain WireGuard's learned
+# endpoint and leave address changes to the administrator, never stale DNS/IPs.
 run_once() {
     exec 9>"$STATE/lock"
     flock -n 9 || return 0
@@ -51,7 +34,6 @@ run_once() {
         fi
         return
     fi
-    resolve_endpoint || true
     bad=$(cat "$STATE/bad" 2>/dev/null || echo 0)
     case "$bad" in ''|*[!0-9]*) bad=0;; esac
     bad=$((bad+1)); echo "$bad" > "$STATE/bad"
@@ -59,15 +41,8 @@ run_once() {
     if [ "$bad" -ge 2 ] || [ "$old" != udp ]; then
         clear_lan; echo ts > "$STATE/state"
     fi
-    now=$(date +%s)
-    handshake=$(wg show wg0 latest-handshakes 2>/dev/null | awk -v peer="$WG_PEER_PUB" '$1==peer {print $2}')
-    case "$handshake" in ''|*[!0-9]*) handshake=0;; esac
-    last=$(cat "$STATE/restart" 2>/dev/null || echo 0)
-    if [ $((now-handshake)) -gt 900 ] && [ $((now-last)) -ge 120 ]; then
-        echo "$now" > "$STATE/restart"
-        ifup wg0 >/dev/null 2>&1 || true
-        log 'direct probe failed and handshake stale; bounded interface recovery'
-    fi
+    # Do not ifup here: reloading a stale UCI endpoint can destroy a newer
+    # endpoint learned by WireGuard. The probe route permits passive recovery.
 }
 case "${1:-start}" in
     once) run_once ;;
