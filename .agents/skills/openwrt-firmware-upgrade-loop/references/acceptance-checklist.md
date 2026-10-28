@@ -45,7 +45,7 @@ Apply relevant checks to every device after the candidate has booted. “Service
 
 For this site's current fleet:
 
-- RE-CS-02: `radio0=149/HE80/CN`, `radio1=6/HT20/CN`, `radio2=36/HE80/CN`; radios enabled as intended and no DFS-state error.
+- RE-CS-02: `radio0=149/HE80/CN`, `2.4 GHz=6/no HT or HE/CN` (match by `band=2g`, WPA2/CCMP, PMF disabled; C1Pro compatibility preset), `radio2=36/HE80/CN`; radios enabled as intended and no DFS-state error.
 - RE-CS-07: wireless configuration remains absent for the NOWIFI build.
 - RE-SS-01: apply only its current approved wireless/storage baseline; do not copy RE-CS-02 radio mapping merely because both use IPQ60xx.
 

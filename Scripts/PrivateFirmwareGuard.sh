@@ -89,6 +89,10 @@ if [ -s "$TARGET_FILES/etc/cpe5g/wifi.key" ]; then
 	add_reason cpe-wifi-credential
 fi
 
+if [ -s "$TARGET_FILES/etc/re-cs-02/iot-wifi.key" ]; then
+    add_reason recs02-iot-wifi-credential
+fi
+
 # Lucky configuration, API tokens and certificate material are private seeds,
 # even when no other build credential was provided. Only file metadata is read.
 lucky_private=false

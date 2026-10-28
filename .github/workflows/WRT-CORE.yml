@@ -207,6 +207,8 @@ on:
         required: false
       GECOOSAC_WIFI_PASSWORD:
         required: false
+      RE_CS02_IOT_WIFI_PASSWORD:
+        required: false
       COMMANDCODE_API_KEY:
         required: false
       CLIPROXYAPI_API_KEY:
@@ -1066,6 +1068,7 @@ jobs:
           OPENWRT_WAN_PPPOE_PASSWORD: ${{secrets.OPENWRT_WAN_PPPOE_PASSWORD}}
           NIKKI_SUBSCRIPTION_URL: ${{secrets.NIKKI_SUBSCRIPTION_URL}}
           GECOOSAC_WIFI_PASSWORD: ${{secrets.GECOOSAC_WIFI_PASSWORD}}
+          RE_CS02_IOT_WIFI_PASSWORD: ${{secrets.RE_CS02_IOT_WIFI_PASSWORD}}
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
@@ -1080,7 +1083,7 @@ jobs:
               CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 \
               CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6 \
               HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
-              NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD \
+              NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD RE_CS02_IOT_WIFI_PASSWORD \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
@@ -1092,6 +1095,7 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             bash "$GITHUB_WORKSPACE/Scripts/GecoosacAutoConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
+            bash "$GITHUB_WORKSPACE/Scripts/ConfigureReCs02IotWifi.sh" "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"

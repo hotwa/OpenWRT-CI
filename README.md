@@ -148,7 +148,7 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 
 # 设备支持与推广验证路线
 
-1. **RE-CS-02 (JDC AX6600-Athena / 雅典娜)**：首发已验证生产基线（默认 LAN IP `192.168.11.1`，WiFi `asdzxc147369`）；
+1. **RE-CS-02 (JDC AX6600-Athena / 雅典娜)**：首发已验证生产基线（默认 LAN IP `192.168.11.1`，Wi-Fi 凭据经私有 Secret 注入）；
 2. **RE-SS-01 (JDC AX1800 Pro / 亚瑟)**：当前已确认的亚瑟板型；推广测试时保持 mwan3 双网接入与 Agent 监控；
 3. **RE-CS-01**：该仓库没有将其与 RE-SS-01 共用 GPT/分区表的契约；部署前必须按实际板型单独核对；
 4. **RE-CS-07 (JDC AX1800 / 太乙 / ER1)**：后续推广测试；
@@ -162,3 +162,5 @@ hotwa 仓库需要长期保留京东云 `re-cs-07`、`re-ss-01`、`re-ss02` 三�
 3. `luci-app-nikki` 与 `luci-app-wrtbak` 插件及护栏测试；
 4. 京东云 `re-cs-02`, `re-cs-01`, `re-ss-01`, `re-cs-07` 设备适配与 Athena LED 双包规则；
 5. `CPE-5G` 双构建及 mwan3 链路规则。
+
+RE-CS-02 的 2.4 GHz IoT 兼容模式固定为无 HT/HE 的传统 b/g，保留两个 5 GHz HE80；见 [IoT 私有预设与验收](docs/re-cs-02-iot-wifi.md)。
