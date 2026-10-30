@@ -1,160 +1,141 @@
 #!/bin/sh
-# ============================================================
-# wg-site-init — 首次启动/手动重配 WG site-to-site
-# 固件编译期由 CI 注入 /etc/wg-site/site.conf（含角色/密钥/DDNS 参数）
-# 刷机后 uci-defaults 调用一次；之后可手动重跑：/usr/sbin/wg-site-init
-# 幂等：重复执行安全（重新生成 uci 配置，不破坏 /data/wg 密钥）
-# ============================================================
-TAG="wg-site-init"
-CFG="/etc/wg-site/site.conf"
-LOG="/tmp/wg-site-init.log"
-
-log() { echo "$(date '+%F %T') $*" >> "$LOG"; logger -t "$TAG" "$*"; }
-
-[ -f "$CFG" ] || { log "no $CFG — 跳过（非 WG 站点设备）"; exit 0; }
+# Private per-site bootstrap. Invoked after persistent storage is ready.
+set -eu
+umask 077
+CFG="${WG_SITE_CONFIG:-/etc/wg-site/site.conf}"
+[ -f "$CFG" ] || exit 0
 . "$CFG"
-
-ROLE="${ROLE:-}"
-[ -n "$ROLE" ] || { log "site.conf 缺少 ROLE"; exit 1; }
-
-WG_IF="${WG_IF:-wg0}"
-WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
-TUN_PREFIX="${TUN_PREFIX:-10.99.0}"
-KEEPALIVE="${KEEPALIVE:-25}"
-TABLE_WG="${TABLE_WG:-60}"
-
-# ---------- 密钥持久化 ----------
-if [ -n "$WG_PRIV_KEY" ] && [ "$WG_PRIV_KEY" != "__GENERATE__" ]; then
-    mkdir -p /data/wg
-    echo "$WG_PRIV_KEY" > /data/wg/wg.key
-    chmod 600 /data/wg/wg.key
-    log "私钥已落盘 /data/wg/wg.key"
-elif [ "$WG_PRIV_KEY" = "__GENERATE__" ] || [ ! -s /data/wg/wg.key ]; then
-    # 无内置密钥 → 首启生成（需配套带外互换流程，见维护手册 §首启引导）
-    mkdir -p /data/wg
-    [ -s /data/wg/wg.key ] || wg genkey > /data/wg/wg.key
-    chmod 600 /data/wg/wg.key
-    log "已生成新私钥 /data/wg/wg.key"
+case "${ROLE:-}" in server|client) ;; *) exit 1;; esac
+DATA="${WG_SITE_DATA:-/data/wg}"
+INIT="${WG_SITE_INIT_DIR:-/etc/init.d}"
+if [ -z "${WG_SITE_TEST:-}" ]; then
+    awk '$2=="/data" && $1 ~ /^\/dev\// && $3 ~ /^(ext4|f2fs)$/ {ok=1} END {exit !ok}' /proc/mounts || {
+        logger -t wg-site-init 'persistent /data unavailable; WG held, Tailscale unchanged'
+        exit 1
+    }
 fi
-
-# ---------- 按角色确定 wg0 本端地址（server=.1/30，client=.2/32，避免两端同 IP） ----------
-case "$ROLE" in
-    server) WG_ADDR="${TUN_PREFIX}.1/30" ;;
-    client) WG_ADDR="${TUN_PREFIX}.2/32" ;;
-    *) log "site.conf ROLE 非法: $ROLE"; exit 1 ;;
-esac
-
-# ---------- uci network：wg0 接口 ----------
-uci -q batch <<EOF
-set network.${WG_IF}=interface
-set network.${WG_IF}.proto='wireguard'
-set network.${WG_IF}.private_key='/data/wg/wg.key'
-set network.${WG_IF}.addresses='${WG_ADDR}'
-set network.${WG_IF}.mtu='1420'
-EOF
-[ "$ROLE" = "server" ] && uci set network.${WG_IF}.listen_port="$WG_LISTEN_PORT"
-
-# ---------- uci network：peer（注意 section 类型 = wireguard_<接口名>） ----------
-uci -q batch <<EOF
-set network.${WG_IF}_peer_remote=wireguard_${WG_IF}
-set network.${WG_IF}_peer_remote.public_key='${WG_PEER_PUB}'
-set network.${WG_IF}_peer_remote.description='site-to-site'
-set network.${WG_IF}_peer_remote.persistent_keepalive='${KEEPALIVE}'
-EOF
-case "$ROLE" in
-    server)
-        # server：等 client 连；allowed_ips 通告 11.x
-        uci set network.${WG_IF}_peer_remote.allowed_ips="${TUN_PREFIX}.0/30,192.168.11.0/24"
-        ;;
-    client)
-        # client：主动连 DDNS 域名；通告 12.x
-        uci set network.${WG_IF}_peer_remote.allowed_ips="${TUN_PREFIX}.0/30,192.168.12.0/24"
-        [ -n "$DDNS_HOST" ] && {
-            uci set network.${WG_IF}_peer_remote.endpoint_host="$DDNS_HOST"
-            uci set network.${WG_IF}_peer_remote.endpoint_port="$WG_LISTEN_PORT"
-        }
+mkdir -p "$DATA"
+chmod 700 "$DATA"
+KEY="$DATA/wg-$ROLE.key"
+if [ -s "$KEY" ]; then
+    [ "$(wg pubkey < "$KEY")" = "$WG_LOCAL_PUB" ] || {
+        logger -t wg-site-init 'persistent identity mismatch; refusing overwrite'
+        exit 1
+    }
+else
+    tmp="$DATA/.key.$$"
+    trap 'rm -f "$tmp"' EXIT
+    printf '%s\n' "$WG_PRIV_KEY" > "$tmp"
+    [ "$(wg pubkey < "$tmp")" = "$WG_LOCAL_PUB" ] || exit 1
+    mv "$tmp" "$KEY"
+    trap - EXIT
+fi
+chmod 600 "$KEY"
+PRIVATE_KEY=$(cat "$KEY")
+case "$ROLE" in server) local_addr="$TUN_PREFIX.1/30";; client) local_addr="$TUN_PREFIX.2/32";; esac
+# Preserve an existing managed endpoint before rebuilding the peer section.
+# A fresh image has no default DNS/static endpoint; Tailscale remains available
+# until the administrator configures a verified address.
+endpoint_host=$(uci -q get network.wg0_peer_remote.endpoint_host 2>/dev/null || true)
+endpoint_port=$(uci -q get network.wg0_peer_remote.endpoint_port 2>/dev/null || true)
+# Prefer the kernel's authenticated/learned endpoint over a stale retained UCI value.
+live_endpoint=$(wg show wg0 endpoints 2>/dev/null | awk -v peer="$WG_PEER_PUB" '$1==peer {print $2; exit}')
+case "$live_endpoint" in
+    *:*)
+        endpoint_port=${live_endpoint##*:}
+        endpoint_host=${live_endpoint%:*}
+        endpoint_host=${endpoint_host#\[}
+        endpoint_host=${endpoint_host%\]}
         ;;
 esac
+if [ -z "$endpoint_host" ]; then endpoint_host="${DDNS_HOST:-}"; fi
+case "$endpoint_port" in ''|*[!0-9]*) endpoint_port="$WG_LISTEN_PORT";; esac
+# netifd expects an actual key, not a pathname. No secret is passed in argv.
+for section in network.wg0.addresses network.wg0_peer_remote; do
+    uci -q delete "$section" 2>/dev/null || true
+done
+uci -q batch <<EOF
+set network.wg0=interface
+set network.wg0.proto='wireguard'
+set network.wg0.private_key='$PRIVATE_KEY'
+set network.wg0.listen_port='$WG_LISTEN_PORT'
+set network.wg0.mtu='1420'
+set network.wg0.auto='1'
+set network.wg0.ip4table='60'
+add_list network.wg0.addresses='$local_addr'
+set network.wg0_peer_remote=wireguard_wg0
+set network.wg0_peer_remote.public_key='$WG_PEER_PUB'
+set network.wg0_peer_remote.persistent_keepalive='10'
+set network.wg0_peer_remote.route_allowed_ips='0'
+add_list network.wg0_peer_remote.allowed_ips='$WG_TUN_PEER_IP/32'
+add_list network.wg0_peer_remote.allowed_ips='$WG_REMOTE_NET'
+set network.wg_site_bypass=rule
+set network.wg_site_bypass.ipproto='udp'
+set network.wg_site_bypass.sport='$WG_LISTEN_PORT'
+set network.wg_site_bypass.lookup='main'
+set network.wg_site_bypass.priority='990'
+set network.wg_site_tunnel=rule
+set network.wg_site_tunnel.dest='$WG_TUN_NET'
+set network.wg_site_tunnel.lookup='60'
+set network.wg_site_tunnel.priority='1000'
+set network.wg_site_remote=rule
+set network.wg_site_remote.dest='$WG_REMOTE_NET'
+set network.wg_site_remote.lookup='60'
+set network.wg_site_remote.priority='1001'
+EOF
+unset PRIVATE_KEY
+if [ "$ROLE" = client ] && [ -n "$endpoint_host" ]; then
+    uci set "network.wg0_peer_remote.endpoint_host=$endpoint_host"
+    uci set "network.wg0_peer_remote.endpoint_port=$endpoint_port"
+fi
 uci commit network
-log "network.${WG_IF} 配置完成（role=$ROLE）"
-
-# ---------- 策略路由（仅 client 侧需要；幂等） ----------
-if [ "$ROLE" = "client" ]; then
-    ip rule del to 192.168.12.0/24 lookup "$TABLE_WG" 2>/dev/null
-    ip rule del to "${TUN_PREFIX}.0/30" lookup "$TABLE_WG" 2>/dev/null
-    ip rule add to 192.168.12.0/24 lookup "$TABLE_WG" pref 9000
-    ip rule add to "${TUN_PREFIX}.0/30" lookup "$TABLE_WG" pref 9001
-    ip route flush table "$TABLE_WG" 2>/dev/null
-    ip route add 192.168.12.0/24 dev "$WG_IF" table "$TABLE_WG"
-    ip route add "${TUN_PREFIX}.0/30" dev "$WG_IF" table "$TABLE_WG"
-    log "策略路由 table $TABLE_WG 已配置（client）"
-fi
-
-# ---------- 防火墙：放行 WG UDP ----------
+[ -n "${WG_SITE_TEST:-}" ] || chmod 600 /etc/config/network
+# Both roles require LAN forwarding; only the public server accepts new WAN UDP.
+uci -q delete firewall.wg_in 2>/dev/null || true
 uci -q batch <<EOF
-delete firewall.wg_in
+set firewall.wg_site=zone
+set firewall.wg_site.name='wg_site'
+set firewall.wg_site.network='wg0'
+set firewall.wg_site.input='ACCEPT'
+set firewall.wg_site.output='ACCEPT'
+set firewall.wg_site.forward='REJECT'
+set firewall.wg_site_lan=forwarding
+set firewall.wg_site_lan.src='wg_site'
+set firewall.wg_site_lan.dest='lan'
+set firewall.lan_wg_site=forwarding
+set firewall.lan_wg_site.src='lan'
+set firewall.lan_wg_site.dest='wg_site'
+EOF
+if [ "$ROLE" = server ]; then
+    uci -q batch <<EOF
 set firewall.wg_in=rule
-set firewall.wg_in.name='Allow-WG-${WG_IF}'
+set firewall.wg_in.name='Allow-WG-site'
 set firewall.wg_in.src='wan'
 set firewall.wg_in.proto='udp'
-set firewall.wg_in.dest_port='${WG_LISTEN_PORT}'
+set firewall.wg_in.family='ipv4'
+set firewall.wg_in.dest_port='$WG_LISTEN_PORT'
 set firewall.wg_in.target='ACCEPT'
 EOF
+fi
+# Existing Tailnet zone/ACL stays managed by the firmware gateway reconcile.
+for section in tailscale_tailnet_to_lan tailscale_lan_to_tailnet; do
+    if uci -q get "firewall.$section" >/dev/null; then
+        uci set "firewall.$section.enabled=1"
+    fi
+done
 uci commit firewall
-/etc/init.d/firewall reload 2>/dev/null
-log "防火墙放行 wan→${WG_LISTEN_PORT}/udp"
-
-# ---------- wg_endpoint_watchdog（动态端点：拨号时刷新 DDNS 域名→WG） ----------
-uci -q batch <<EOF
-set wg_endpoint_watchdog.${WG_IF}=instance
-set wg_endpoint_watchdog.${WG_IF}.enabled='1'
-set wg_endpoint_watchdog.${WG_IF}.interface='${WG_IF}'
-set wg_endpoint_watchdog.${WG_IF}.max_handshake_age='600'
-set wg_endpoint_watchdog.${WG_IF}.boot_delay='60'
-set wg_endpoint_watchdog.${WG_IF}.wan_ifup_delay='20'
-set wg_endpoint_watchdog.${WG_IF}.refresh_ddns_service='ddns-go'
-set wg_endpoint_watchdog.${WG_IF}.endpoint_host_option='network.${WG_IF}_peer_remote.endpoint_host'
-set wg_endpoint_watchdog.${WG_IF}.proxy_bypass='1'
-set wg_endpoint_watchdog.${WG_IF}.proxy_bypass_udp_sport='${WG_LISTEN_PORT}'
-EOF
+uci set tailscale.settings.accept_routes='1'
+uci commit tailscale
+# The role-aware daemon owns endpoint recovery. Do not run a second ifdown watchdog.
+uci -q set wg_endpoint_watchdog.wg0=instance
+uci set wg_endpoint_watchdog.wg0.enabled='0'
+uci set wg_endpoint_watchdog.wg0.max_handshake_age='900'
 uci commit wg_endpoint_watchdog
-/etc/init.d/wg-endpoint-watchdog enable 2>/dev/null
-/etc/init.d/wg-endpoint-watchdog restart 2>/dev/null
-log "wg_endpoint_watchdog 已启用（动态端点 + nikki 绕过）"
-
-# ---------- ddns-go（基础参数；AccessKey 明细见 /etc/config/ddns-go 由 CI 注入或 WebUI 填） ----------
-uci -q batch <<EOF
-set ddns-go.config.enabled='1'
-set ddns-go.config.port='9876'
-set ddns-go.config.time='300'
-EOF
-uci commit ddns-go
-/etc/init.d/ddns-go restart 2>/dev/null
-log "ddns-go 已启用（port 9876）"
-
-# ---------- 启动 WG ----------
-ifup "$WG_IF" 2>/dev/null
-sleep 2
-wg show "$WG_IF" 2>/dev/null | grep -E "interface|peer|endpoint|latest handshake" | head -8 >> "$LOG"
-
-# ---------- 服务自启（enable 落 rc.d；否则刷机后守护/udp2raw 永不启动） ----------
-case "$ROLE" in
-    client)
-        /etc/init.d/wg-path-daemon enable 2>/dev/null
-        /etc/init.d/wg-path-daemon start 2>/dev/null
-        # 健康兜底：每 5 分钟 crontab（防重复追加）
-        crontab -l 2>/dev/null | grep -q 'wg-path-health' || {
-            ( crontab -l 2>/dev/null; echo '*/5 * * * * /usr/sbin/wg-path-health' ) | crontab - 2>/dev/null
-        }
-        log "wg-path-daemon 已启用（client 路径守护 + health cron）"
-        ;;
-    server)
-        if [ "${U2R_ENABLE:-0}" = "1" ]; then
-            /etc/init.d/wg-udp2raw-server enable 2>/dev/null
-            /etc/init.d/wg-udp2raw-server start 2>/dev/null
-            log "wg-udp2raw-server 已启用（ROLE=server + U2R_ENABLE=1）"
-        fi
-        ;;
-esac
-log "=== wg-site-init 完成（role=$ROLE） ==="
-exit 0
+"$INIT/firewall" reload
+"${WG_SITE_DDNS_STOP_HELPER:-/usr/sbin/wg-site-disable-ddns}"
+"$INIT/wg-path-daemon" enable
+ubus call network reload >/dev/null
+ifup wg0
+# Do not install an unprobed LAN route; the daemon admits it after a WG-bound ping.
+(crontab -l 2>/dev/null | sed '\|/usr/sbin/wg-path-health|d'; printf '%s\n' '*/5 * * * * /usr/sbin/wg-path-health') | crontab -
+logger -t wg-site-init 'WG site configured; waiting for direct-path probe, Tailscale preserved'

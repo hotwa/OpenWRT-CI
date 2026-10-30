@@ -1,0 +1,24 @@
+#!/bin/sh
+# Run before rc.local, including retained sysupgrade configurations.
+set -eu
+[ -s "${WG_SITE_CONFIG:-/etc/wg-site/site.conf}" ] || exit 0
+"${WG_SITE_DDNS_STOP_HELPER:-/usr/sbin/wg-site-disable-ddns}"
+RC="${WG_SITE_RC_LOCAL:-/etc/rc.local}"
+[ -f "$RC" ] && [ ! -L "$RC" ] || exit 0
+TMP="$RC.wg-cleanup.$$"
+trap 'rm -f "$TMP"' EXIT HUP INT TERM
+awk '
+{
+    # Only a command-position invocation of the two known daemon paths.
+    # Replace with a no-op so redirects/conditionals and later commands survive.
+    if (match($0, /^[ \t]*((\/usr\/bin\/|\/bin\/)?setsid[ \t]+)?((\/bin\/|\/usr\/bin\/)?(ba)?sh[ \t]+)?["\047]?(\/data\/bin\/wg-path-daemon[.]sh|\/usr\/sbin\/wg-path-daemon)["\047]?[ \t]+start/)) {
+        suffix = substr($0, RLENGTH + 1)
+        if (suffix ~ /^([ \t;&|<>#]|$)/) { print ": " suffix }
+        else { print }
+    } else { print }
+}' "$RC" > "$TMP"
+if ! cmp -s "$RC" "$TMP"; then
+    chmod "$(stat -c %a "$RC")" "$TMP"
+    mv -f "$TMP" "$RC"
+    logger -t wg-site-init 'retired legacy rc.local WG launch; procd owns the daemon' 2>/dev/null || true
+fi

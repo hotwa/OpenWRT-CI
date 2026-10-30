@@ -12,7 +12,7 @@ if [ ! -s /etc/config/wireless ]; then
 	wifi config >/dev/null 2>&1 || true
 fi
 
-for section in radio0 radio1 radio2 default_radio0 default_radio1 default_radio2; do
+for section in radio0 radio2 default_radio0 default_radio2; do
 	if ! uci -q get "wireless.$section" >/dev/null; then
 		logger -t "$TAG" "missing wireless.$section; leaving defaults script for retry"
 		exit 1
@@ -31,24 +31,10 @@ uci set wireless.default_radio0.network='lan'
 uci set wireless.default_radio0.mode='ap'
 uci set wireless.default_radio0.ssid='DAE-WRT-5.8G'
 uci set wireless.default_radio0.encryption='psk2+ccmp'
-uci set wireless.default_radio0.key='asdzxc147369'
+[ ! -s /etc/re-cs-02/iot-wifi.key ] || uci set "wireless.default_radio0.key=$(cat /etc/re-cs-02/iot-wifi.key)"
 uci set wireless.default_radio0.ieee80211w='0'
 
-# 2.4 GHz: IoT compatibility SSID, fixed to the cleanest observed channel.
-uci set wireless.radio1.band='2g'
-uci set wireless.radio1.channel='6'
-uci set wireless.radio1.htmode='HT20'
-uci set wireless.radio1.country='CN'
-uci set wireless.radio1.disabled='0'
-uci set wireless.radio1.cell_density='0'
-uci set wireless.radio1.legacy_rates='1'
-uci set wireless.default_radio1.device='radio1'
-uci set wireless.default_radio1.network='lan'
-uci set wireless.default_radio1.mode='ap'
-uci set wireless.default_radio1.ssid='DAE-WRT-IoT'
-uci set wireless.default_radio1.encryption='psk2+ccmp'
-uci set wireless.default_radio1.key='asdzxc147369'
-uci set wireless.default_radio1.ieee80211w='0'
+# The band-selected 2.4 GHz preset is owned by 99-iot-2g-wifi.
 
 # 5.2 GHz: IPQ6018 radio, HE80 stays below the CN DFS range.
 uci set wireless.radio2.band='5g'
@@ -62,7 +48,7 @@ uci set wireless.default_radio2.network='lan'
 uci set wireless.default_radio2.mode='ap'
 uci set wireless.default_radio2.ssid='DAE-WRT-5.2G'
 uci set wireless.default_radio2.encryption='psk2+ccmp'
-uci set wireless.default_radio2.key='asdzxc147369'
+[ ! -s /etc/re-cs-02/iot-wifi.key ] || uci set "wireless.default_radio2.key=$(cat /etc/re-cs-02/iot-wifi.key)"
 uci set wireless.default_radio2.ieee80211w='0'
 
 uci commit wireless

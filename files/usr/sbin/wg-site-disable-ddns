@@ -1,0 +1,17 @@
+#!/bin/sh
+# Mesh-only policy: preserve provider data, stop DDNS and all restored instances.
+set -eu
+[ -s "${WG_SITE_CONFIG:-/etc/wg-site/site.conf}" ] || exit 0
+INIT="${WG_SITE_INIT_DIR:-/etc/init.d}"
+# Stop first so an already-restored provider cannot publish during reconciliation.
+if [ -x "$INIT/ddns-go" ]; then
+    "$INIT/ddns-go" stop >/dev/null 2>&1 || true
+    "$INIT/ddns-go" disable >/dev/null 2>&1 || true
+fi
+uci -q show ddns-go 2>/dev/null | sed -n 's/^\(ddns-go\.[^.]*\)=.*/\1/p' |
+while IFS= read -r section; do
+    uci -q set "$section.enabled=0"
+done
+uci -q set 'ddns-go.ddns-go=basic'
+uci -q set 'ddns-go.ddns-go.enabled=0'
+uci commit ddns-go
