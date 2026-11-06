@@ -207,6 +207,8 @@ on:
         required: false
       GECOOSAC_WIFI_PASSWORD:
         required: false
+      RE_CS02_IOT_WIFI_PASSWORD:
+        required: false
       COMMANDCODE_API_KEY:
         required: false
       CLIPROXYAPI_API_KEY:
@@ -514,6 +516,8 @@ jobs:
           add_file config/general               "$GITHUB_WORKSPACE/Config/GENERAL.txt"
           add_file "config/device/${WRT_CONFIG}" "$device_config"
           add_file script/Packages.sh           "$GITHUB_WORKSPACE/Scripts/Packages.sh"
+          add_file script/libffi-compat         "$GITHUB_WORKSPACE/Scripts/ensure_libffi_recipe.py"
+          add_file package/libffi-compat        "$GITHUB_WORKSPACE/Scripts/compat/libffi/Makefile"
           add_file script/patch-nikki-subscription-status "$GITHUB_WORKSPACE/Scripts/patch_nikki_subscription_status.sh"
           add_file script/patch-nikki-router-selector-guard "$GITHUB_WORKSPACE/Scripts/patch_nikki_router_selector_guard.py"
           add_file script/Handles.sh            "$GITHUB_WORKSPACE/Scripts/Handles.sh"
@@ -645,6 +649,7 @@ jobs:
           cd ./wrt/
 
           retry_cmd 5 15 ./scripts/feeds update -a
+          python3 "$GITHUB_WORKSPACE/Scripts/ensure_libffi_recipe.py" "$PWD"
           retry_cmd 5 15 ./scripts/feeds install -a
 
       - name: Record Go Cache Path Evidence
@@ -1063,9 +1068,12 @@ jobs:
           OPENWRT_WAN_PPPOE_PASSWORD: ${{secrets.OPENWRT_WAN_PPPOE_PASSWORD}}
           NIKKI_SUBSCRIPTION_URL: ${{secrets.NIKKI_SUBSCRIPTION_URL}}
           GECOOSAC_WIFI_PASSWORD: ${{secrets.GECOOSAC_WIFI_PASSWORD}}
+          RE_CS02_IOT_WIFI_PASSWORD: ${{secrets.RE_CS02_IOT_WIFI_PASSWORD}}
           COMMANDCODE_API_KEY: ${{secrets.COMMANDCODE_API_KEY}}
           CLIPROXYAPI_API_KEY: ${{secrets.CLIPROXYAPI_API_KEY}}
           CLIPROXYAPI_BASE_URL: ${{secrets.CLIPROXYAPI_BASE_URL}}
+          WG_PRIV_KEY: ${{secrets.WG_SITE_PRIV}}
+          WG_PEER_PUB: ${{secrets.WG_SITE_PEER_PUB}}
         run: |
             guard_env="$(mktemp)"
             trap 'rm -f "$guard_env"' EXIT
@@ -1075,7 +1083,7 @@ jobs:
               CPE_LUCKY_REMOTE_BUNDLE_3 CPE_LUCKY_REMOTE_BUNDLE_4 \
               CPE_LUCKY_REMOTE_BUNDLE_5 CPE_LUCKY_REMOTE_BUNDLE_6 \
               HEADSCALE_OPENWRT_AUTHKEY MULTICA_TOKEN \
-              NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD \
+              NIKKI_SUBSCRIPTION_URL GECOOSAC_WIFI_PASSWORD RE_CS02_IOT_WIFI_PASSWORD \
               COMMANDCODE_API_KEY CLIPROXYAPI_API_KEY CLIPROXYAPI_BASE_URL; do
               [ -z "${!credential_name:-}" ] || credential_supplied=true
             done
@@ -1087,21 +1095,17 @@ jobs:
             $GITHUB_WORKSPACE/Scripts/DropbearAuthorizedKeys.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/NikkiSubscriptionConfig.sh "$GITHUB_WORKSPACE/wrt/files"
             bash "$GITHUB_WORKSPACE/Scripts/GecoosacAutoConfig.sh" "$GITHUB_WORKSPACE/wrt/files"
+            bash "$GITHUB_WORKSPACE/Scripts/ConfigureReCs02IotWifi.sh" "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureWanProtocol.sh "$GITHUB_WORKSPACE/wrt/files"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeWifi.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_WIFI:-false}"
             $GITHUB_WORKSPACE/Scripts/ConfigureCpeLuckyRemote.sh "$GITHUB_WORKSPACE/wrt/files" "${WRT_CPE_5G:-false}"
             # WG site-to-site（可选）：配置 WG_SITE_ROLE 后自动注入 site.conf 打进固件
-            # 敏感项走 secrets（WG_SITE_PRIV/PUB、DDNSGO_AK/SK），非敏感项走 inputs（域名/udp2raw 参数）
+            # Only WG credentials are injected; mesh DDNS publishing is disabled.
             if [ -n "${WG_SITE_ROLE:-}" ]; then
-              WG_PRIV_KEY="${{ secrets.WG_SITE_PRIV }}" \
-              WG_PEER_PUB="${{ secrets.WG_SITE_PEER_PUB }}" \
+              [ "${WRT_ENCRYPT_ARTIFACT:-false}" = true ] || { echo "ERROR: WG credentials require encrypted artifacts" >&2; exit 1; }
+              credential_supplied=true
               DDNS_HOST="${WG_SITE_DDNS_HOST:-}" \
-              DDNS_FALLBACK_IP="${WG_SITE_DDNS_FALLBACK:-}" \
               U2R_ENABLE="${WG_SITE_U2R_ENABLE:-0}" \
-              U2R_KEY="${WG_SITE_U2R_KEY:-udp2rawtestkey}" \
-              DDNSGO_AK="${{ secrets.WG_SITE_DDNSGO_AK }}" \
-              DDNSGO_SK="${{ secrets.WG_SITE_DDNSGO_SK }}" \
-              DDNSGO_DOMAIN="${WG_SITE_DDNSGO_DOMAIN:-}" \
               $GITHUB_WORKSPACE/Scripts/ConfigureWgSiteToSite.sh "$GITHUB_WORKSPACE/wrt/files" "${WG_SITE_ROLE}"
             fi
             $GITHUB_WORKSPACE/Scripts/PrivateFirmwareGuard.sh "$GITHUB_WORKSPACE/wrt/files" > "$guard_env"
@@ -1444,6 +1448,7 @@ jobs:
               --arg source_branch "$WRT_BRANCH" \
               --arg source_commit "$WRT_HASH" \
               --arg config "$WRT_CONFIG" \
+              --arg wg_site_role "${WG_SITE_ROLE:-}" \
               --arg required_device "$WRT_REQUIRED_DEVICE" \
               --arg feature_overlay "$WRT_FEATURE_OVERLAY" \
               --arg route_reconcile "$WRT_TAILSCALE_ROUTE_RECONCILE" \
@@ -1452,7 +1457,7 @@ jobs:
               --arg cpe_ipv6 "${WRT_CPE_IPV6:-false}" \
               --arg emmc_data_provisioning "${WRT_EMMC_DATA_PROVISIONING:-false}" \
               --arg headscale_hostname "${WRT_HEADSCALE_HOSTNAME:-}" \
-              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
+              '{workflow_commit:$workflow_commit,source_repository:$source_repository,source_branch:$source_branch,source_commit:$source_commit,config:$config,wg_site_role:$wg_site_role,required_device:$required_device,feature_overlay:$feature_overlay,route_reconcile:$route_reconcile,container_runtime_mode:$container_runtime_mode,cpe_5g:$cpe_5g,cpe_ipv6:$cpe_ipv6,emmc_data_provisioning:$emmc_data_provisioning,headscale_hostname:$headscale_hostname}' \
               > ./upload/metadata.json
             if [ -f ./files/usr/share/container-runtime/versions ]; then
               cp -f ./files/usr/share/container-runtime/versions ./upload/ContainerRuntime-versions.txt

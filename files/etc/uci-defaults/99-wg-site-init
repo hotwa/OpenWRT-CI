@@ -1,5 +1,5 @@
 #!/bin/sh
-# 首次启动：配置 WG site-to-site（读 /etc/wg-site/site.conf，无配置则跳过）
-# 幂等：可重复执行
-/usr/sbin/wg-site-init >/dev/null 2>&1
+# Network configuration needs the real persistent mount; procd runs at START=98.
+[ -s /etc/wg-site/site.conf ] || exit 0
+/etc/init.d/wg-path-daemon enable
 exit 0

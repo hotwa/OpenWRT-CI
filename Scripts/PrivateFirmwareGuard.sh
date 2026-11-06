@@ -89,6 +89,10 @@ if [ -s "$TARGET_FILES/etc/cpe5g/wifi.key" ]; then
 	add_reason cpe-wifi-credential
 fi
 
+if [ -s "$TARGET_FILES/etc/re-cs-02/iot-wifi.key" ]; then
+    add_reason recs02-iot-wifi-credential
+fi
+
 # Lucky configuration, API tokens and certificate material are private seeds,
 # even when no other build credential was provided. Only file metadata is read.
 lucky_private=false
@@ -159,6 +163,14 @@ if [ -s "$cliproxyapi_key" ]; then
 fi
 if [ -s "$cliproxyapi_base_secret" ]; then
 	add_reason cliproxyapi-base-url
+fi
+
+# WG seed and DDNS provider credentials are private even in isolation.
+if [ -s "$TARGET_FILES/etc/wg-site/site.conf" ]; then
+    add_reason wg-site-private-seed
+fi
+if [ -s "$TARGET_FILES/etc/ddns-go/ddns-go-config.yaml" ]; then
+    add_reason ddns-provider-credential
 fi
 
 if [ -n "$reasons" ]; then

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Private seed validation, real bootstrap command contract and path failover."""
+import base64
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+class SiteTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.dir = Path(self.temp.name)
+        self.files = self.dir / 'files'
+        self.ddns_init = self.dir/'package/luci-app-ddns-go/ddns-go/files/ddns-go.init'
+        self.ddns_init.parent.mkdir(parents=True)
+        self.ddns_init.write_text('''#!/bin/sh /etc/rc.common
+CONFDIR=/etc/ddns-go
+CONF=$CONFDIR/ddns-go-config.yaml
+init_yaml() {
+    chown -R ddns-go:ddns-go "$CONFDIR"
+    chmod 755 "$CONFDIR"
+    [ -f "$CONF" ] && chmod 644 "$CONF"
+}
+start_instance() { procd_set_param user ddns-go; }
+start_service() { config_foreach start_instance 'basic'; }
+''')
+        self.env = {**os.environ, 'WG_PRIV_KEY': base64.b64encode(bytes(range(1,33))).decode(),
+                    'WG_PEER_PUB': base64.b64encode(bytes(range(33,65))).decode(),
+                    'DDNSGO_DOMAIN':'ss0112.jmsu.top','DDNSGO_AK':'fixture-ak',
+                    'DDNSGO_SK': 'fixture-secret-"\\\\$', 'U2R_ENABLE':'0'}
+    def seed(self, role='server', **overrides):
+        return subprocess.run(['bash',str(ROOT/'Scripts/ConfigureWgSiteToSite.sh'),str(self.files),role],
+                              env={**self.env,**overrides},text=True,capture_output=True)
+    def setup_bin(self):
+        b=self.dir/'bin'; b.mkdir(); log=self.dir/'calls'; log.write_text('')
+        script='''#!/bin/sh
+printf '%s %s\\n' "$(basename "$0")" "$*" >> "$CALLS"
+case "$(basename "$0"):$*" in
+  "wg:pubkey") cat >/dev/null; printf '%s\\n' "$LOCAL_PUB";;
+  "uci:-q get network.wg0_peer_remote.endpoint_host") printf '%s' "${EXISTING_ENDPOINT:-}";;
+  "uci:-q get network.wg0_peer_remote.endpoint_port") printf '%s' "${EXISTING_PORT:-}";;
+  "uci:-q show ddns-go") printf '%s\\n' 'ddns-go.legacy=basic' 'ddns-go.config=ddns-go';;
+  "wg:show wg0 endpoints") printf '%s %s\\n' "$PEER" "${LEARNED_ENDPOINT:-(none)}";;
+  "wg:show wg0 latest-handshakes") printf '%s 1\\n' "$PEER";;
+  "ping:"*) exit "${PING_RC:-0}";;
+  "uci:-q batch") cat >> "$CALLS";;
+  "crontab:-l") exit 0;;
+  "crontab:-") cat >> "$CALLS";;
+esac
+exit 0
+'''
+        for cmd in ['wg','ip','ping','uci','ifup','logger','ubus','crontab','nslookup']:
+            f=b/cmd; f.write_text(script); f.chmod(0o700)
+        init=self.dir/'init';init.mkdir()
+        for cmd in ['firewall','ddns-go','wg-path-daemon']:
+            f=init/cmd;f.write_text(script);f.chmod(0o700)
+        config=self.files/'etc/wg-site/site.conf'
+        vals=subprocess.check_output(['sh','-c','. "$1"; printf "%s\\n%s" "$WG_LOCAL_PUB" "$WG_PEER_PUB"','sh',str(config)],text=True).splitlines()
+        env={**os.environ,'PATH':str(b)+':'+os.environ['PATH'],'CALLS':str(log),
+             'LOCAL_PUB':vals[0],'PEER':vals[1], 'WG_SITE_CONFIG':str(config),
+             'WG_SITE_STATE':str(self.dir/'state'),'WG_SITE_DATA':str(self.dir/'data'),
+             'WG_SITE_INIT_DIR':str(init),'WG_SITE_TEST':'1',
+             'WG_SITE_DDNS_STOP_HELPER':str(ROOT/'files/usr/sbin/wg-site-disable-ddns')}
+        return env,log
+    def test_private_seed_and_safe_quoting(self):
+        stale=self.files/'etc/ddns-go/ddns-go-config.yaml'
+        stale.parent.mkdir(parents=True)
+        stale.write_text('stale-build-provider-secret')
+        r=self.seed();self.assertEqual(r.returncode,0,r.stderr)
+        config=self.files/'etc/wg-site/site.conf';self.assertEqual(config.stat().st_mode&0o777,0o600)
+        self.assertFalse((self.files/'etc/ddns-go/ddns-go-config.yaml').exists())
+        self.assertIn("option enabled '0'",(self.files/'etc/config/ddns-go').read_text())
+        self.assertNotIn(self.env['DDNSGO_SK'],r.stdout+r.stderr)
+        r=subprocess.run(['bash',str(ROOT/'Scripts/PrivateFirmwareGuard.sh'),str(self.files)],text=True,capture_output=True)
+        self.assertIn('WRT_PRIVATE_BUILD=true',r.stdout);self.assertIn('wg-site-private-seed',r.stdout)
+    def test_missing_and_self_peer_rejected(self):
+        self.assertNotEqual(self.seed(WG_PRIV_KEY='').returncode,0)
+        self.assertEqual(self.seed().returncode,0)
+        c=self.files/'etc/wg-site/site.conf'
+        pub=subprocess.check_output(['sh','-c','. "$1"; printf %s "$WG_LOCAL_PUB"','sh',str(c)],text=True)
+        self.assertNotEqual(self.seed(WG_PEER_PUB=pub).returncode,0)
+        self.assertEqual(self.seed(DDNSGO_AK='',DDNSGO_SK='',DDNSGO_DOMAIN='').returncode,0)
+    def test_role_validation(self):
+        self.assertEqual(self.seed('client').returncode,0)
+        self.assertNotEqual(self.seed('client',DDNS_HOST='invalid-host').returncode,0)
+        self.assertEqual(self.seed('client',DDNS_HOST='ss0112.jmsu.top').returncode,0)
+        self.assertNotEqual(self.seed(DDNS_HOST='ss0112.jmsu.top').returncode,0)
+        self.assertNotEqual(self.seed(U2R_ENABLE='1').returncode,0)
+    def test_ddns_service_contract_and_private_runtime_permissions(self):
+        self.assertEqual(self.seed().returncode,0)
+        cfg=(self.files/'etc/config/ddns-go').read_text()
+        self.assertIn("config basic 'ddns-go'",cfg)
+        init=(self.files/'etc/init.d/ddns-go').read_text()
+        self.assertIn('chmod 700 "$CONFDIR"',init)
+        self.assertIn('chmod 600 "$CONF"',init)
+        self.assertIn('procd_set_param user ddns-go',init)
+        self.assertNotIn('chmod 644 "$CONF"',init)
+        self.ddns_init.write_text(self.ddns_init.read_text().replace("'basic'","'changed'"))
+        self.assertNotEqual(self.seed().returncode,0)
+    def test_bootstrap_roles_and_identity_preservation(self):
+        for role in ['server','client']:
+            with self.subTest(role=role):
+                self.assertEqual(self.seed(role,DDNS_HOST='ss0112.jmsu.top' if role=='client' else '').returncode,0)
+                # Separate stubs per invocation of the bootstrap.
+                if (self.dir/'bin').exists():
+                    import shutil
+                    shutil.rmtree(self.dir/'bin');shutil.rmtree(self.dir/'init')
+                env,log=self.setup_bin()
+                r=subprocess.run(['sh',str(ROOT/'files/usr/sbin/wg-site-init')],env=env,text=True,capture_output=True)
+                self.assertEqual(r.returncode,0,r.stderr)
+                calls=log.read_text()
+                self.assertIn('network.wg0_peer_remote=wireguard_wg0',calls)
+                self.assertIn("network.wg0.private_key='"+self.env['WG_PRIV_KEY']+"'",calls)
+                self.assertIn("route_allowed_ips='0'",calls)
+                self.assertIn("ipproto='udp'",calls)
+                self.assertNotIn('route flush',calls)
+                self.assertNotIn('route add',calls)
+                self.assertEqual("firewall.wg_in=rule" in calls,role=='server')
+                if role=='server':self.assertNotIn('endpoint_host=',calls)
+                self.assertIn('ubus call network reload',calls)
+                self.assertIn('ddns-go stop',calls)
+                self.assertIn('ddns-go disable',calls)
+                self.assertIn('ddns-go.legacy.enabled=0',calls)
+                self.assertIn('ddns-go.config.enabled=0',calls)
+                self.assertNotIn('ddns-go enable',calls)
+                self.assertNotIn('ddns-go restart',calls)
+                # An existing different key is never silently replaced.
+                original=env['LOCAL_PUB'];env['LOCAL_PUB']='different'
+                r=subprocess.run(['sh',str(ROOT/'files/usr/sbin/wg-site-init')],env=env,text=True,capture_output=True)
+                self.assertNotEqual(r.returncode,0)
+                env['LOCAL_PUB']=original
+    def test_failover_recovery_and_old_handshake_with_live_ping(self):
+        self.assertEqual(self.seed().returncode,0)
+        env,log=self.setup_bin();daemon=ROOT/'files/usr/sbin/wg-path-daemon'
+        def once(failed):
+            r=subprocess.run(['sh',str(daemon),'once'],env={**env,'PING_RC':str(int(failed))},text=True,capture_output=True)
+            self.assertEqual(r.returncode,0,r.stderr)
+        once(False)
+        self.assertEqual((self.dir/'state/state').read_text().strip(),'udp')
+        once(True);self.assertEqual((self.dir/'state/state').read_text().strip(),'udp')
+        once(True);self.assertEqual((self.dir/'state/state').read_text().strip(),'ts')
+        once(False);self.assertEqual((self.dir/'state/state').read_text().strip(),'udp')
+        calls=log.read_text()
+        self.assertIn('ping -I wg0',calls)
+        self.assertIn('route del 192.168.11.0/24 dev wg0 table 60',calls)
+        self.assertNotIn('table 52',calls)
+        self.assertNotIn('route flush',calls)
+        self.assertNotIn('ifdown',calls)
+        self.assertNotIn('ifup',calls)
+        self.assertNotIn('nslookup',calls)
+        self.assertNotIn('wg set',calls)
+
+    def test_existing_endpoint_preserved_and_fresh_client_has_no_stale_default(self):
+        self.assertEqual(self.seed('client').returncode,0)
+        env,log=self.setup_bin()
+        bootstrap=ROOT/'files/usr/sbin/wg-site-init'
+        subprocess.run(['sh',str(bootstrap)],env=env,check=True,capture_output=True)
+        self.assertNotIn('endpoint_host=',log.read_text())
+        log.write_text('')
+        subprocess.run(['sh',str(bootstrap)],env={**env,'EXISTING_ENDPOINT':'203.0.113.27','EXISTING_PORT':'51821'},check=True,capture_output=True)
+        self.assertIn('endpoint_host=203.0.113.27',log.read_text())
+        self.assertIn('endpoint_port=51821',log.read_text())
+        log.write_text('')
+        subprocess.run(['sh',str(bootstrap)],env={**env,'EXISTING_ENDPOINT':'stale.example.org','EXISTING_PORT':'51820','LEARNED_ENDPOINT':'203.0.113.28:51822'},check=True,capture_output=True)
+        self.assertIn('endpoint_host=203.0.113.28',log.read_text())
+        self.assertIn('endpoint_port=51822',log.read_text())
+        self.assertNotIn('endpoint_host=stale.example.org',log.read_text())
+
+    def test_early_migration_unblocks_rc_local_and_preserves_user_commands(self):
+        self.assertEqual(self.seed().returncode,0)
+        env,log=self.setup_bin()
+        rc=self.dir/'rc.local'
+        rc.write_text("""#!/bin/sh
+# Keep this comment mentioning /data/bin/wg-path-daemon.sh start
+printf 'before\\n'
+/bin/sh /data/bin/wg-path-daemon.sh start
+setsid /bin/sh /data/bin/wg-path-daemon.sh start </dev/null >/dev/null 2>&1 &
+/usr/sbin/wg-path-daemon start; printf 'mixed\\n'
+echo '/data/bin/wg-path-daemon.sh start is documentation'
+exit 0
+printf 'after-exit\\n'
+""")
+        rc.chmod(0o754)
+        env={**env,'WG_SITE_RC_LOCAL':str(rc)}
+        hook=ROOT/'files/etc/uci-defaults/97-wg-site-retire-legacy'
+        subprocess.run(['sh',str(hook)],env=env,check=True,capture_output=True)
+        first=rc.read_text()
+        self.assertIn('# Keep this comment',first)
+        self.assertIn("printf 'after-exit",first)
+        self.assertIn("echo '/data/bin/wg-path-daemon.sh",first)
+        self.assertNotIn('/bin/sh /data/bin/',first)
+        self.assertEqual(rc.stat().st_mode&0o777,0o754)
+        result=subprocess.run(['sh',str(rc)],env=env,text=True,capture_output=True,timeout=2)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('before',result.stdout);self.assertIn('mixed',result.stdout)
+        subprocess.run(['sh',str(hook)],env=env,check=True,capture_output=True)
+        self.assertEqual(rc.read_text(),first)
+        env['WG_SITE_CONFIG']=str(self.dir/'absent')
+        rc.write_text('/data/bin/wg-path-daemon.sh start\n')
+        log.write_text('')
+        subprocess.run(['sh',str(hook)],env=env,check=True,capture_output=True)
+        self.assertEqual(rc.read_text(),'/data/bin/wg-path-daemon.sh start\n')
+        self.assertEqual(log.read_text(),'')
+
+    def test_mesh_workflow_does_not_pass_aliyun_keys_or_stale_dns_default(self):
+        caller=(ROOT/'.github/workflows/RE-Mesh-BUILD.yml').read_text()
+        self.assertNotIn('ALIYUN_DDNS_',caller)
+        self.assertNotIn('WG_SITE_DDNS_HOST:',caller)
+        self.assertNotIn('WG_SITE_DDNSGO_DOMAIN:',caller)
+        self.assertNotIn('wg-path-daemon',(ROOT/'files/etc/rc.local').read_text())
+        procd=(ROOT/'files/etc/init.d/wg-path-daemon').read_text()
+        self.assertIn('procd_set_param command /usr/sbin/wg-path-daemon start',procd)
+
+if __name__=='__main__':unittest.main()

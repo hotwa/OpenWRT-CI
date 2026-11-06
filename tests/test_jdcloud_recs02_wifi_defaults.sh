@@ -16,11 +16,6 @@ grep -Fq 'jdcloud,re-cs-02' "$DEFAULTS" || {
 	exit 1
 }
 
-grep -Fq "uci set wireless.default_radio1.ssid='DAE-WRT-IoT'" "$DEFAULTS"
-grep -Fq "uci set wireless.radio1.channel='6'" "$DEFAULTS"
-grep -Fq "uci set wireless.radio1.htmode='HT20'" "$DEFAULTS"
-grep -Fq "uci set wireless.radio1.legacy_rates='1'" "$DEFAULTS"
-grep -Fq "uci set wireless.default_radio1.ieee80211w='0'" "$DEFAULTS"
 
 grep -Fq "uci set wireless.default_radio0.ssid='DAE-WRT-5.8G'" "$DEFAULTS"
 grep -Fq "uci set wireless.radio0.channel='149'" "$DEFAULTS"
@@ -35,9 +30,6 @@ for package in kmod-ath11k kmod-ath11k-ahb kmod-ath11k-pci wireless-regdb wpad-o
 	grep -qx "CONFIG_PACKAGE_${package}=y" "$CONFIG"
 done
 
-grep -Fq "uci set wireless.default_radio1.key='asdzxc147369'" "$DEFAULTS"
-grep -Fq "uci set wireless.default_radio0.key='asdzxc147369'" "$DEFAULTS"
-grep -Fq "uci set wireless.default_radio2.key='asdzxc147369'" "$DEFAULTS"
 grep -Fq "uci commit wireless" "$DEFAULTS"
 grep -Fq "wifi reload" "$DEFAULTS"
 
@@ -46,4 +38,5 @@ grep -Fq 'cp -rf ./files/. ./wrt/files/' "$WORKFLOW" || {
 	exit 1
 }
 
+python3 "$ROOT_DIR/tests/test_recs02_iot_wifi.py"
 echo "JDCloud RE-CS-02 WiFi defaults guard passed"

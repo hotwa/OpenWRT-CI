@@ -29,7 +29,7 @@ on:
         description: 'WAN protocol for both artifacts: DHCP keeps defaults; PPPoE uses private repository secrets.'
         required: false
         type: choice
-        default: dhcp
+        default: pppoe
         options: [dhcp, pppoe]
 
 permissions:
@@ -44,6 +44,10 @@ permissions:
 # reusable-workflow job's `if` before the matrix context exists. Each target
 # remains fully isolated, so a focused RE-CS-02 run never allocates an
 # RE-SS-01 runner or produces a second artifact.
+concurrency:
+  group: re-mesh-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   re_ss_01:
     name: RE-SS-01
@@ -58,8 +62,8 @@ jobs:
       MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
       MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
-      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
-      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_SS01_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_SS01_WAN_PPPOE_PASSWORD }}
       NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
       GECOOSAC_WIFI_PASSWORD: ${{ secrets.GECOOSAC_WIFI_PASSWORD }}
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
@@ -67,13 +71,12 @@ jobs:
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
       WG_SITE_PRIV: ${{ secrets.WG_SITE_SS01_PRIV }}
-      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_CS02_PEER }}
-      WG_SITE_DDNSGO_AK: ${{ secrets.ALIYUN_DDNS_AK }}
-      WG_SITE_DDNSGO_SK: ${{ secrets.ALIYUN_DDNS_SK }}
+      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_SS01_PEER }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-RE-SS-01
       WRT_THEME: argon
+      WRT_HEADSCALE_HOSTNAME: ss01-12
       WRT_NAME: RE-SS-01
       WRT_SSID: RE-SS-01
       WRT_IP: ${{ inputs.RE_SS_01_LAN_IP }}
@@ -83,10 +86,11 @@ jobs:
       WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
+      WRT_ENCRYPT_ARTIFACT: true
       WRT_SPLIT_DEVICE_ARTIFACTS: false
       WRT_EXPECTED_DEVICE: jdcloud_re-ss-01
       WRT_REQUIRED_DEVICE: jdcloud_re-ss-01
-      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'pppoe' }}
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
@@ -96,7 +100,6 @@ jobs:
       JOB_TIMEOUT_MINUTES: 360
       WG_SITE_ROLE: server
       WG_SITE_U2R_ENABLE: '0'
-      WG_SITE_DDNSGO_DOMAIN: ss0112.jmsu.top
 
   re_cs_02:
     name: RE-CS-02
@@ -111,22 +114,22 @@ jobs:
       MULTICA_APP_URL: ${{ secrets.MULTICA_APP_URL }}
       MULTICA_WORKSPACE_ID: ${{ secrets.MULTICA_WORKSPACE_ID }}
       OPENWRT_DROPBEAR_AUTHORIZED_KEYS: ${{ secrets.OPENWRT_DROPBEAR_AUTHORIZED_KEYS }}
-      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_WAN_PPPOE_USERNAME }}
-      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_WAN_PPPOE_PASSWORD }}
+      OPENWRT_WAN_PPPOE_USERNAME: ${{ secrets.OPENWRT_CS02_WAN_PPPOE_USERNAME }}
+      OPENWRT_WAN_PPPOE_PASSWORD: ${{ secrets.OPENWRT_CS02_WAN_PPPOE_PASSWORD }}
       NIKKI_SUBSCRIPTION_URL: ${{ secrets.NIKKI_SUBSCRIPTION_URL }}
       GECOOSAC_WIFI_PASSWORD: ${{ secrets.GECOOSAC_WIFI_PASSWORD }}
+      RE_CS02_IOT_WIFI_PASSWORD: ${{ secrets.RE_CS02_IOT_WIFI_PASSWORD }}
       COMMANDCODE_API_KEY: ${{ secrets.COMMANDCODE_API_KEY }}
       CLIPROXYAPI_API_KEY: ${{ secrets.CLIPROXYAPI_API_KEY }}
       CLIPROXYAPI_BASE_URL: ${{ secrets.CLIPROXYAPI_BASE_URL }}
       SAMBA_DEFAULT_PASSWORD: ${{ secrets.SAMBA_DEFAULT_PASSWORD }}
       WG_SITE_PRIV: ${{ secrets.WG_SITE_CS02_PRIV }}
-      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_SS01_PEER }}
-      WG_SITE_DDNSGO_AK: ${{ secrets.ALIYUN_DDNS_AK }}
-      WG_SITE_DDNSGO_SK: ${{ secrets.ALIYUN_DDNS_SK }}
+      WG_SITE_PEER_PUB: ${{ secrets.WG_SITE_CS02_PEER }}
     with:
       DEBUG_SSH: ${{ inputs.DEBUG_SSH }}
       WRT_CONFIG: IPQ60XX-RE-CS-02
       WRT_THEME: argon
+      WRT_HEADSCALE_HOSTNAME: cs02-11
       WRT_NAME: RE-CS-02
       WRT_SSID: RE-CS-02
       WRT_IP: ${{ inputs.RE_CS_02_LAN_IP }}
@@ -136,10 +139,11 @@ jobs:
       WRT_COMMIT: 0fb9b10cb9df51fb076470e1dd93d1c30dd89d83
       WRT_SOURCE: VIKINGYFY/immortalwrt
       WRT_BUILD_ONLY: true
+      WRT_ENCRYPT_ARTIFACT: true
       WRT_SPLIT_DEVICE_ARTIFACTS: false
       WRT_EXPECTED_DEVICE: jdcloud_re-cs-02
       WRT_REQUIRED_DEVICE: jdcloud_re-cs-02
-      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'dhcp' }}
+      WRT_WAN_PROTOCOL: ${{ inputs.WAN_PROTOCOL || 'pppoe' }}
       WRT_FEATURE_OVERLAY: true
       WRT_TAILSCALE_ROUTE_RECONCILE: true
       WRT_EMMC_DATA_PROVISIONING: true
@@ -148,7 +152,4 @@ jobs:
       RUNNER_LABELS: '["ubuntu-latest"]'
       JOB_TIMEOUT_MINUTES: 360
       WG_SITE_ROLE: client
-      WG_SITE_DDNS_HOST: ss0112.jmsu.top
-      WG_SITE_DDNS_FALLBACK: 218.199.161.221
       WG_SITE_U2R_ENABLE: '0'
-      WG_SITE_DDNSGO_DOMAIN: cs0211.jmsu.top
